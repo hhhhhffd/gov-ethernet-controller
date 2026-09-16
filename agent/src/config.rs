@@ -10,6 +10,7 @@ pub struct ProbeConfig {
     pub ping_port: u16,
     pub throughput_url: Option<String>,
     pub upload_url: Option<String>,
+    pub use_server_probe: bool,
     pub throughput_duration_seconds: u64,
     pub timeout_seconds: u64,
 }
@@ -22,6 +23,7 @@ impl Default for ProbeConfig {
             ping_port: 443,
             throughput_url: Some("https://speed.cloudflare.com/__down?bytes=1000000".into()),
             upload_url: Some("https://speed.cloudflare.com/__up".into()),
+            use_server_probe: false,
             throughput_duration_seconds: 3,
             timeout_seconds: 5,
         }
@@ -88,6 +90,13 @@ impl Config {
         config.server_url = config.server_url.trim_end_matches('/').to_string();
         if config.server_url.is_empty() {
             return Err("server_url must not be empty".into());
+        }
+        if config.probe.use_server_probe || use_server_probe() {
+            config.probe.use_server_probe = true;
+            config.probe.throughput_url =
+                Some(format!("{}/api/v1/agent/probe/download", config.server_url));
+            config.probe.upload_url =
+                Some(format!("{}/api/v1/agent/probe/upload", config.server_url));
         }
         let production = env::var("LINKWATCH_ENV")
             .or_else(|_| env::var("VKO_ENV"))
@@ -173,6 +182,12 @@ impl Config {
             "VKO_AGENT_VERSION"
         );
         text!(probe_type, "LINKWATCH_PROBE", "VKO_PROBE");
+        if let Some(value) = first_env(&["LINKWATCH_USE_SERVER_PROBE", "VKO_USE_SERVER_PROBE"]) {
+            self.probe.use_server_probe = matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            );
+        }
         if let Ok(value) = env::var("LINKWATCH_QUEUE_DIR")
             .or_else(|_| env::var("VKO_QUEUE_DIR"))
             .or_else(|_| env::var("VKO_BUFFER_PATH"))
@@ -252,6 +267,17 @@ fn first_env(names: &[&str]) -> Option<String> {
     names
         .iter()
         .find_map(|name| env::var(name).ok().filter(|value| !value.is_empty()))
+}
+
+fn use_server_probe() -> bool {
+    first_env(&["LINKWATCH_USE_SERVER_PROBE", "VKO_USE_SERVER_PROBE"])
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[cfg(test)]

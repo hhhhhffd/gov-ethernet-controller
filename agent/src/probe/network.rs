@@ -2,29 +2,44 @@ use super::Probe;
 use crate::config::ProbeConfig;
 use serde_json::{json, Map, Value};
 use std::{
-    io::Read,
+    io::{self, Read},
     net::{TcpStream, ToSocketAddrs},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
 const PING_SAMPLES: usize = 3;
-const MAX_TRANSFER_BYTES: usize = 256 * 1024 * 1024;
+// The transfer is primarily time-bounded. Keep a large streaming ceiling as
+// a last-resort guard for a broken endpoint without cutting off fast links
+// before the configured 3–5 second measurement window elapses.
+const MAX_TRANSFER_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 struct TransferResult {
     mbps: f64,
-    bytes: usize,
+    bytes: u64,
     requests: usize,
     elapsed_seconds: f64,
+    warmed_up: bool,
 }
 
 pub struct NetworkProbe {
     config: ProbeConfig,
+    device_auth: Option<(String, String)>,
 }
 
 impl NetworkProbe {
     pub fn new(config: ProbeConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            device_auth: None,
+        }
+    }
+
+    pub fn with_device_auth(config: ProbeConfig, device_id: String, device_token: String) -> Self {
+        Self {
+            config,
+            device_auth: Some((device_id, device_token)),
+        }
     }
 }
 
@@ -103,9 +118,10 @@ impl Probe for NetworkProbe {
         };
         let mut raw = Map::new();
         raw.insert("probe".into(), Value::String("network".into()));
-        raw.insert("method_version".into(), Value::String("network-v2".into()));
+        raw.insert("method_version".into(), Value::String("network-v3".into()));
         raw.insert("reachability".into(), Value::Array(reachability));
         raw.insert("ping_samples_ms".into(), json!(ping_samples));
+        raw.insert("ping_sample_count".into(), json!(ping_samples.len()));
         raw.insert("ping_methods".into(), json!(ping_methods));
         let latency_method = latency_method(&ping_methods);
         raw.insert(
@@ -113,7 +129,11 @@ impl Probe for NetworkProbe {
             Value::String(latency_method.into()),
         );
         raw.insert("ping_method".into(), Value::String(latency_method.into()));
-        raw.insert("warmup".into(), Value::Bool(true));
+        raw.insert(
+            "sample_count".into(),
+            json!({"ping": ping_samples.len(), "download": 0, "upload": 0}),
+        );
+        raw.insert("warmup".into(), json!({"download": false, "upload": false}));
         let availability = if attempts == 0 {
             0.0
         } else {
@@ -134,24 +154,34 @@ impl Probe for NetworkProbe {
             let target_duration =
                 Duration::from_secs(self.config.throughput_duration_seconds.clamp(3, 5));
             output["raw"]["throughput_target_seconds"] = json!(target_duration.as_secs());
+            let auth = self
+                .device_auth
+                .as_ref()
+                .map(|(device_id, token)| (device_id.as_str(), token.as_str()));
             if let Some(url) = &self.config.throughput_url {
-                match download(url, timeout, target_duration) {
+                match download(url, timeout, target_duration, auth) {
                     Ok(value) => {
                         output["download"] = json!(value.mbps);
                         output["raw"]["download_bytes"] = json!(value.bytes);
                         output["raw"]["download_requests"] = json!(value.requests);
                         output["raw"]["download_elapsed_seconds"] = json!(value.elapsed_seconds);
+                        output["raw"]["download_sample_count"] = json!(value.requests);
+                        output["raw"]["warmup"]["download"] = json!(value.warmed_up);
+                        output["raw"]["sample_count"]["download"] = json!(value.requests);
                     }
                     Err(error) => output["raw"]["download_error"] = json!(error),
                 }
             }
             if let Some(url) = &self.config.upload_url {
-                match upload(url, timeout, target_duration) {
+                match upload(url, timeout, target_duration, auth) {
                     Ok(value) => {
                         output["upload"] = json!(value.mbps);
                         output["raw"]["upload_bytes"] = json!(value.bytes);
                         output["raw"]["upload_requests"] = json!(value.requests);
                         output["raw"]["upload_elapsed_seconds"] = json!(value.elapsed_seconds);
+                        output["raw"]["upload_sample_count"] = json!(value.requests);
+                        output["raw"]["warmup"]["upload"] = json!(value.warmed_up);
+                        output["raw"]["sample_count"]["upload"] = json!(value.requests);
                     }
                     Err(error) => output["raw"]["upload_error"] = json!(error),
                 }
@@ -255,22 +285,26 @@ fn download(
     url: &str,
     timeout: Duration,
     target_duration: Duration,
+    auth: Option<(&str, &str)>,
 ) -> Result<TransferResult, String> {
-    let started = Instant::now();
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
         .map_err(|error| error.to_string())?;
-    let mut bytes = 0usize;
+    warmup_download(&client, url, auth)?;
+    let started = Instant::now();
+    let mut bytes = 0u64;
     let mut requests = 0usize;
     let mut buffer = [0u8; 8192];
     while started.elapsed() < target_duration && bytes < MAX_TRANSFER_BYTES {
         requests += 1;
-        let response = client.get(url).send().map_err(|error| error.to_string())?;
+        let response = with_auth(client.get(url), auth)
+            .send()
+            .map_err(|error| error.to_string())?;
         if !response.status().is_success() {
             return Err(format!("download returned HTTP {}", response.status()));
         }
-        let remaining = (MAX_TRANSFER_BYTES - bytes) as u64;
+        let remaining = MAX_TRANSFER_BYTES - bytes;
         let mut reader = response.take(remaining);
         loop {
             if started.elapsed() >= target_duration {
@@ -282,7 +316,7 @@ fn download(
             if read == 0 {
                 break;
             }
-            bytes += read;
+            bytes = bytes.saturating_add(read as u64);
         }
     }
     if bytes == 0 {
@@ -294,6 +328,7 @@ fn download(
         bytes,
         requests,
         elapsed_seconds: seconds,
+        warmed_up: true,
     })
 }
 
@@ -301,19 +336,20 @@ fn upload(
     url: &str,
     timeout: Duration,
     target_duration: Duration,
+    auth: Option<(&str, &str)>,
 ) -> Result<TransferResult, String> {
-    let started = Instant::now();
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
         .map_err(|error| error.to_string())?;
     let body = vec![0u8; 1024 * 1024];
-    let mut bytes = 0usize;
+    warmup_upload(&client, url, auth)?;
+    let started = Instant::now();
+    let mut bytes = 0u64;
     let mut requests = 0usize;
     while started.elapsed() < target_duration && bytes < MAX_TRANSFER_BYTES {
         requests += 1;
-        let response = client
-            .post(url)
+        let response = with_auth(client.post(url), auth)
             .header("Content-Type", "application/octet-stream")
             .body(body.clone())
             .send()
@@ -321,7 +357,7 @@ fn upload(
         if !response.status().is_success() {
             return Err(format!("upload returned HTTP {}", response.status()));
         }
-        bytes = bytes.saturating_add(body.len());
+        bytes = bytes.saturating_add(body.len() as u64);
     }
     if bytes == 0 {
         return Err("upload did not send bytes".into());
@@ -332,5 +368,55 @@ fn upload(
         bytes,
         requests,
         elapsed_seconds: seconds,
+        warmed_up: true,
     })
+}
+
+fn warmup_download(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    auth: Option<(&str, &str)>,
+) -> Result<(), String> {
+    let response = with_auth(client.get(url), auth)
+        .header(reqwest::header::RANGE, "bytes=0-65535")
+        .send()
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "download warmup returned HTTP {}",
+            response.status()
+        ));
+    }
+    let mut reader = response.take(64 * 1024);
+    io::copy(&mut reader, &mut io::sink()).map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn warmup_upload(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    auth: Option<(&str, &str)>,
+) -> Result<(), String> {
+    let response = with_auth(client.post(url), auth)
+        .header("Content-Type", "application/octet-stream")
+        .body(vec![0u8; 64 * 1024])
+        .send()
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("upload warmup returned HTTP {}", response.status()));
+    }
+    Ok(())
+}
+
+fn with_auth(
+    request: reqwest::blocking::RequestBuilder,
+    auth: Option<(&str, &str)>,
+) -> reqwest::blocking::RequestBuilder {
+    if let Some((device_id, device_token)) = auth {
+        request
+            .header("X-Device-ID", device_id)
+            .header("X-Device-Token", device_token)
+    } else {
+        request
+    }
 }

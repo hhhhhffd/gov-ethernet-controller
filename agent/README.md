@@ -40,6 +40,9 @@ cargo run --release --manifest-path agent/Cargo.toml -- once
 jitter, packet loss, availability и адаптивные 3–5-секундные download/upload
 метрики. Метод и версия замера сохраняются в `raw`; по умолчанию используются
 Cloudflare download и upload endpoints, которые можно заменить оператором.
+Для контролируемого замера через сам LINKWATCH задайте
+`LINKWATCH_USE_SERVER_PROBE=1`: агент использует аутентифицированные
+`/api/v1/agent/probe/download` и `/api/v1/agent/probe/upload`.
 DemoProbe в production отключён без явного `LINKWATCH_ALLOW_DEMO_PROBE=1`.
 
 ## Сборка

@@ -65,7 +65,8 @@ retryable-флаг и backoff; notification доставляется через 
 
 Основные маршруты: `/health`, `/health/ready`, `/api/v1/auth/login`,
 `/api/v1/agent/measurements:batch`, `/api/v1/agent/heartbeat`,
-`/api/v1/agent/config`, `/api/v1/lines`, `/api/v1/incidents`,
+`/api/v1/agent/config`, `/api/v1/agent/probe/download`,
+`/api/v1/agent/probe/upload`, `/api/v1/lines`, `/api/v1/incidents`,
 `/api/v1/situations`, `/api/v1/reports/aggregate`,
 `/api/v1/reports/quality-passport`, `/api/v1/exports` и `/api/v1/admin/*`.
 

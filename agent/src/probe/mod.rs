@@ -28,7 +28,15 @@ pub fn build(config: &Config) -> Result<Box<dyn Probe>, String> {
             Ok(Box::new(demo::DemoProbe::default()))
         }
         "network" | "real" | "production" => {
-            Ok(Box::new(network::NetworkProbe::new(config.probe.clone())))
+            if config.probe.use_server_probe {
+                Ok(Box::new(network::NetworkProbe::with_device_auth(
+                    config.probe.clone(),
+                    config.device_id.clone(),
+                    config.device_token.clone(),
+                )))
+            } else {
+                Ok(Box::new(network::NetworkProbe::new(config.probe.clone())))
+            }
         }
         value => Err(format!(
             "unknown probe type {value}; expected demo or network"

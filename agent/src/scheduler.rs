@@ -37,13 +37,29 @@ impl State {
             file.write_all(&raw)?;
             file.sync_all()?;
         }
-        fs::rename(&temporary, path)?;
+        atomic_replace(&temporary, path)?;
         if let Some(parent) = path.parent() {
             if let Ok(directory) = fs::File::open(parent) {
                 let _ = directory.sync_all();
             }
         }
         Ok(())
+    }
+}
+
+fn atomic_replace(temporary: &Path, destination: &Path) -> io::Result<()> {
+    match fs::rename(temporary, destination) {
+        Ok(()) => Ok(()),
+        #[cfg(windows)]
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            // Windows does not replace an existing destination with rename.
+            // The deterministic scheduled event id makes a tiny crash window
+            // here recoverable: the queue item remains the source of truth and
+            // the next run can persist the cursor again.
+            fs::remove_file(destination)?;
+            fs::rename(temporary, destination)
+        }
+        Err(error) => Err(error),
     }
 }
 

@@ -1,11 +1,20 @@
 package api
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"time"
 
 	"linkwatch/server/internal/measurements"
 )
+
+const (
+	controlledProbePayloadSize = 1 << 20
+	controlledProbeMaxUpload   = 8 << 20
+)
+
+var controlledProbePayload = bytes.Repeat([]byte{0xA5}, controlledProbePayloadSize)
 
 func (s *Server) agentBatch(w http.ResponseWriter, r *http.Request) {
 	device, ok := s.device(w, r)
@@ -110,4 +119,36 @@ func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {
 		policy = map[string]interface{}{"id": policyID, "scope_type": scopeType, "scope_id": scopeID, "version": version, "valid_from": validFrom, "valid_to": validTo, "download_min": downloadMin, "upload_min": uploadMin, "ping_max": pingMax, "jitter_max": jitterMax, "packet_loss_max": lossMax, "availability_min": availabilityMin, "confirm_count": confirmCount, "confirm_minutes": confirmMinutes, "recovery_count": recoveryCount, "recovery_minutes": recoveryMinutes, "freshness_seconds": freshness}
 	}
 	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "monitoring_point_id": device.PointID, "schedule": map[string]interface{}{"tests_per_day": testsPerDay, "performance_tests_per_day": testsPerDay, "jitter_minutes": jitter, "light_checks_between": light > 0}, "policy": policy})
+}
+
+// agentProbeDownload and agentProbeUpload provide an optional controlled
+// endpoint for production throughput measurements. Authentication is the same
+// device authentication as telemetry ingest, while the payload is bounded so
+// a probe cannot turn the server into an unbounded memory or disk sink.
+func (s *Server) agentProbeDownload(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.device(w, r); !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/octet-stream")
+	http.ServeContent(w, r, "linkwatch-probe.bin", time.Time{}, bytes.NewReader(controlledProbePayload))
+}
+
+func (s *Server) agentProbeUpload(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.device(w, r); !ok {
+		return
+	}
+	defer r.Body.Close()
+	reader := http.MaxBytesReader(w, r.Body, controlledProbeMaxUpload)
+	bytesReceived, err := io.Copy(io.Discard, reader)
+	if err != nil {
+		writeError(w, http.StatusRequestEntityTooLarge, "probe upload exceeds the maximum size")
+		return
+	}
+	if bytesReceived == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "probe upload must contain bytes")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNoContent)
 }

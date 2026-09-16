@@ -91,6 +91,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.agentBatch(w, r)
 	case normalized == "/agent/config" && r.Method == http.MethodGet:
 		s.agentConfig(w, r)
+	case normalized == "/agent/probe/download" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
+		s.agentProbeDownload(w, r)
+	case normalized == "/agent/probe/upload" && r.Method == http.MethodPost:
+		s.agentProbeUpload(w, r)
 	case normalized == "/agent/register" && r.Method == http.MethodPost:
 		s.agentRegister(w, r)
 	case normalized == "/lines" && r.Method == http.MethodGet:
