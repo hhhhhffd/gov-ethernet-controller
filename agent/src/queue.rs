@@ -37,10 +37,17 @@ impl Queue {
         }
         Ok(final_path)
     }
+
+    pub fn state_path(&self) -> PathBuf {
+        self.dir.join(".schedule-state")
+    }
+
     pub fn pending(&self, limit: usize) -> io::Result<Vec<(PathBuf, Value)>> {
         let mut entries = fs::read_dir(&self.dir)?
             .filter_map(Result::ok)
-            .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("json"))
+            .filter(|entry| {
+                entry.path().extension().and_then(|value| value.to_str()) == Some("json")
+            })
             .map(|entry| {
                 let modified = entry
                     .metadata()
@@ -52,18 +59,33 @@ impl Queue {
         // Filesystem mtime tracks enqueue order across restarts, while the
         // path tie-breaker keeps simultaneous writes deterministic.
         entries.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
-        entries.truncate(limit);
-        entries
-            .into_iter()
-            .map(|(path, _)| {
-                let payload =
-                    serde_json::from_slice(&fs::read(&path)?).map_err(io::Error::other)?;
-                Ok((path, payload))
-            })
-            .collect()
+        let mut pending = Vec::with_capacity(limit.min(entries.len()));
+        for (path, _) in entries {
+            if pending.len() >= limit {
+                break;
+            }
+            let raw = fs::read(&path)?;
+            match serde_json::from_slice::<Value>(&raw) {
+                Ok(payload)
+                    if payload
+                        .get("client_event_id")
+                        .and_then(Value::as_str)
+                        .map(|value| !value.trim().is_empty() && value.len() <= 128)
+                        .unwrap_or(false) =>
+                {
+                    pending.push((path, payload))
+                }
+                Ok(_) => self.quarantine(&path, "missing or invalid client_event_id")?,
+                Err(error) => self.quarantine(&path, error)?,
+            }
+        }
+        Ok(pending)
     }
     pub fn remove(&self, path: &Path) -> io::Result<()> {
         fs::remove_file(path)?;
+        if let Ok(directory) = fs::File::open(&self.dir) {
+            let _ = directory.sync_all();
+        }
         Ok(())
     }
     pub fn count(&self) -> io::Result<usize> {
@@ -74,6 +96,34 @@ impl Queue {
             })
             .count())
     }
+
+    fn quarantine(&self, path: &Path, error: impl std::fmt::Display) -> io::Result<()> {
+        let quarantine = self.dir.join("quarantine");
+        fs::create_dir_all(&quarantine)?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("queue-item.json");
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let target = quarantine.join(format!("{name}.{stamp}.invalid"));
+        fs::rename(path, &target).map_err(|rename_error| {
+            io::Error::new(
+                rename_error.kind(),
+                format!("quarantine malformed queue item ({error}): {rename_error}"),
+            )
+        })?;
+        if let Ok(directory) = fs::File::open(&quarantine) {
+            let _ = directory.sync_all();
+        }
+        if let Ok(directory) = fs::File::open(&self.dir) {
+            let _ = directory.sync_all();
+        }
+        Ok(())
+    }
+
     pub fn event_id(payload: &Value) -> String {
         payload
             .get("client_event_id")
@@ -114,5 +164,39 @@ mod tests {
         assert_eq!(queue.count().unwrap(), 1);
         queue.remove(&path).unwrap();
         assert_eq!(queue.count().unwrap(), 0);
+    }
+
+    #[test]
+    fn malformed_items_are_quarantined_without_blocking_valid_items() {
+        let dir = tempdir().unwrap();
+        let queue = Queue::open(dir.path()).unwrap();
+        fs::write(dir.path().join("bad.json"), b"{not-json").unwrap();
+        queue
+            .enqueue("good", &serde_json::json!({"client_event_id":"good"}))
+            .unwrap();
+        let pending = queue.pending(10).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].1["client_event_id"], "good");
+        assert_eq!(queue.count().unwrap(), 1);
+        let quarantine = dir.path().join("quarantine");
+        assert!(quarantine.exists());
+        assert_eq!(fs::read_dir(quarantine).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn semantically_invalid_items_are_quarantined() {
+        let dir = tempdir().unwrap();
+        let queue = Queue::open(dir.path()).unwrap();
+        fs::write(
+            dir.path().join("missing-id.json"),
+            br#"{"mode":"PERFORMANCE"}"#,
+        )
+        .unwrap();
+        assert!(queue.pending(10).unwrap().is_empty());
+        assert_eq!(queue.count().unwrap(), 0);
+        assert_eq!(
+            fs::read_dir(dir.path().join("quarantine")).unwrap().count(),
+            1
+        );
     }
 }

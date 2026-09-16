@@ -64,7 +64,7 @@ fn run() -> Result<(), String> {
     if mode == "once" {
         run_once(&config, &mut *probe, &queue, &client)
     } else {
-        run_loop(&config, &mut *probe, &queue, &client)
+        run_loop(config, probe, queue, client)
     }
 }
 
@@ -88,53 +88,125 @@ fn run_once(
     Ok(())
 }
 
+const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const LIGHT_CHECK_DELAY: Duration = Duration::from_secs(5 * 60);
+
 fn run_loop(
-    config: &Config,
-    probe: &mut dyn Probe,
-    queue: &Queue,
-    client: &Client,
+    mut config: Config,
+    mut probe: Box<dyn Probe>,
+    queue: Queue,
+    mut client: Client,
 ) -> Result<(), String> {
+    let state_path = queue.state_path();
+    let mut state = scheduler::State::load(&state_path)
+        .map_err(|error| format!("load scheduler state: {error}"))?;
+    let mut last_maintenance: Option<SystemTime> = None;
+    let mut light_due: Option<SystemTime> = None;
+
     loop {
-        // Wait for the device-specific scheduled slot before collecting. A
-        // service restart must not make every school probe at the same
-        // instant; the stable device seed and bounded jitter spread slots
-        // across the day.
-        loop {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default();
-            let schedule = scheduler::schedule_for_day(
-                &config.device_id,
-                config.performance_tests_per_day,
-                config.jitter_minutes,
-            );
-            let elapsed = Duration::from_secs(now.as_secs() % 86400);
-            let sleep = scheduler::next_sleep(elapsed, &schedule);
-            if sleep.is_zero() {
-                break;
+        let now = SystemTime::now();
+
+        // Maintenance is independent of scheduled probes. It keeps the
+        // durable spool moving after an outage and applies operator changes
+        // without requiring an agent restart.
+        let maintenance_due = last_maintenance
+            .map(|last| now.duration_since(last).unwrap_or_default() >= MAINTENANCE_INTERVAL)
+            .unwrap_or(true);
+        if maintenance_due {
+            let _ = client.heartbeat();
+            let _ = client.upload_pending(&queue);
+            if use_server_config() {
+                if let Ok(remote) = client.server_config() {
+                    let before = (
+                        config.performance_tests_per_day,
+                        config.jitter_minutes,
+                        config.light_checks_between,
+                    );
+                    config.apply_server_config(&remote);
+                    let after = (
+                        config.performance_tests_per_day,
+                        config.jitter_minutes,
+                        config.light_checks_between,
+                    );
+                    if before != after {
+                        client.update_config(config.clone());
+                    }
+                }
             }
-            // Wake periodically for a heartbeat/reconfiguration opportunity,
-            // while still sleeping instead of spinning until the slot.
-            thread::sleep(sleep.min(Duration::from_secs(3600)));
+            last_maintenance = Some(now);
         }
-        let _ = client.heartbeat();
-        let payload = event(config, probe.measure("performance")?);
-        let event_id = queue::Queue::event_id(&payload);
-        queue
-            .enqueue(&event_id, &payload)
-            .map_err(|error| format!("enqueue measurement: {error}"))?;
-        let _ = client.upload_pending(queue);
-        if config.light_checks_between {
-            // One optional light check is placed shortly after each
-            // performance slot. It remains an observation only; all verdicts
-            // and workflow decisions stay on the server.
-            thread::sleep(Duration::from_secs(300));
-            let light = event(config, probe.measure("light")?);
-            let id = queue::Queue::event_id(&light);
-            queue
-                .enqueue(&id, &light)
-                .map_err(|error| error.to_string())?;
-            let _ = client.upload_pending(queue);
+
+        if let Some(deadline) = light_due {
+            if now >= deadline {
+                light_due = None;
+                if config.light_checks_between {
+                    match probe.measure("light") {
+                        Ok(value) => {
+                            let light = event(&config, value);
+                            let id = queue::Queue::event_id(&light);
+                            queue
+                                .enqueue(&id, &light)
+                                .map_err(|error| format!("enqueue light measurement: {error}"))?;
+                            let _ = client.upload_pending(&queue);
+                        }
+                        Err(error) => eprintln!("linkwatch-agent: light probe failed: {error}"),
+                    }
+                }
+                continue;
+            }
+        }
+
+        let schedule = scheduler::schedule_for_day(
+            &config.device_id,
+            config.performance_tests_per_day,
+            config.jitter_minutes,
+        );
+        let epoch_seconds = scheduler::unix_seconds(now);
+        if let Some((deadline, slot)) = scheduler::next_deadline(epoch_seconds, &schedule, &state) {
+            if deadline <= epoch_seconds {
+                let day = deadline / scheduler::DAY_SECONDS;
+                match probe.measure("performance") {
+                    Ok(value) => {
+                        // A deterministic slot id makes the enqueue + cursor
+                        // update recoverable if the process crashes between
+                        // those two filesystem operations.
+                        let mut payload = event(&config, value);
+                        payload["client_event_id"] = json!(format!("scheduled-{day}-{slot}"));
+                        let event_id = queue::Queue::event_id(&payload);
+                        queue
+                            .enqueue(&event_id, &payload)
+                            .map_err(|error| format!("enqueue measurement: {error}"))?;
+                        scheduler::mark_fired(&mut state, day, slot);
+                        state
+                            .save(&state_path)
+                            .map_err(|error| format!("save scheduler state: {error}"))?;
+                        let _ = client.upload_pending(&queue);
+                        println!("measurement collected: {event_id}");
+                    }
+                    Err(error) => {
+                        eprintln!("linkwatch-agent: performance probe failed: {error}");
+                        thread::sleep(Duration::from_secs(30));
+                    }
+                }
+                if config.light_checks_between {
+                    light_due = Some(SystemTime::now() + LIGHT_CHECK_DELAY);
+                }
+                continue;
+            }
+
+            let until_deadline = Duration::from_secs(deadline.saturating_sub(epoch_seconds));
+            let until_light = light_due
+                .and_then(|due| due.duration_since(now).ok())
+                .unwrap_or(MAINTENANCE_INTERVAL);
+            // A short upper bound keeps shutdowns and reconfiguration
+            // responsive even when the next scheduled slot is hours away.
+            let sleep_for = until_deadline
+                .min(until_light)
+                .min(MAINTENANCE_INTERVAL)
+                .min(Duration::from_secs(30));
+            thread::sleep(sleep_for.max(Duration::from_secs(1)));
+        } else {
+            thread::sleep(Duration::from_secs(30));
         }
     }
 }

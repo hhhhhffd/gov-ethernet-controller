@@ -4,10 +4,19 @@ use serde_json::{json, Map, Value};
 use std::{
     io::Read,
     net::{TcpStream, ToSocketAddrs},
+    process::{Command, Stdio},
     time::{Duration, Instant},
 };
 
 const PING_SAMPLES: usize = 3;
+const MAX_TRANSFER_BYTES: usize = 256 * 1024 * 1024;
+
+struct TransferResult {
+    mbps: f64,
+    bytes: usize,
+    requests: usize,
+    elapsed_seconds: f64,
+}
 
 pub struct NetworkProbe {
     config: ProbeConfig,
@@ -31,6 +40,7 @@ impl Probe for NetworkProbe {
         let mut ping_attempts = 0usize;
         let mut ping_successes = 0usize;
         let mut ping_samples = Vec::new();
+        let mut ping_methods = Vec::new();
 
         for target in &self.config.targets {
             let started = Instant::now();
@@ -54,10 +64,18 @@ impl Probe for NetworkProbe {
                 attempts += 1;
                 ping_attempts += 1;
                 let started = Instant::now();
-                if tcp_check(&address, timeout).is_ok() {
+                let method = if icmp_check(host, timeout).is_ok() {
+                    Some("icmp")
+                } else if tcp_check(&address, timeout).is_ok() {
+                    Some("tcp_connect")
+                } else {
+                    None
+                };
+                if let Some(method) = method {
                     successes += 1;
                     ping_successes += 1;
                     ping_samples.push(started.elapsed().as_secs_f64() * 1000.0);
+                    ping_methods.push(method);
                 }
             }
         }
@@ -85,8 +103,17 @@ impl Probe for NetworkProbe {
         };
         let mut raw = Map::new();
         raw.insert("probe".into(), Value::String("network".into()));
+        raw.insert("method_version".into(), Value::String("network-v2".into()));
         raw.insert("reachability".into(), Value::Array(reachability));
         raw.insert("ping_samples_ms".into(), json!(ping_samples));
+        raw.insert("ping_methods".into(), json!(ping_methods));
+        let latency_method = latency_method(&ping_methods);
+        raw.insert(
+            "latency_method".into(),
+            Value::String(latency_method.into()),
+        );
+        raw.insert("ping_method".into(), Value::String(latency_method.into()));
+        raw.insert("warmup".into(), Value::Bool(true));
         let availability = if attempts == 0 {
             0.0
         } else {
@@ -104,14 +131,29 @@ impl Probe for NetworkProbe {
             "raw": raw,
         });
         if mode.eq_ignore_ascii_case("performance") && connection_ok {
+            let target_duration =
+                Duration::from_secs(self.config.throughput_duration_seconds.clamp(3, 5));
+            output["raw"]["throughput_target_seconds"] = json!(target_duration.as_secs());
             if let Some(url) = &self.config.throughput_url {
-                if let Ok(value) = download(url, timeout) {
-                    output["download"] = json!(value);
+                match download(url, timeout, target_duration) {
+                    Ok(value) => {
+                        output["download"] = json!(value.mbps);
+                        output["raw"]["download_bytes"] = json!(value.bytes);
+                        output["raw"]["download_requests"] = json!(value.requests);
+                        output["raw"]["download_elapsed_seconds"] = json!(value.elapsed_seconds);
+                    }
+                    Err(error) => output["raw"]["download_error"] = json!(error),
                 }
             }
             if let Some(url) = &self.config.upload_url {
-                if let Ok(value) = upload(url, timeout) {
-                    output["upload"] = json!(value);
+                match upload(url, timeout, target_duration) {
+                    Ok(value) => {
+                        output["upload"] = json!(value.mbps);
+                        output["raw"]["upload_bytes"] = json!(value.bytes);
+                        output["raw"]["upload_requests"] = json!(value.requests);
+                        output["raw"]["upload_elapsed_seconds"] = json!(value.elapsed_seconds);
+                    }
+                    Err(error) => output["raw"]["upload_error"] = json!(error),
                 }
             }
         }
@@ -168,51 +210,127 @@ fn tcp_check(address: &str, timeout: Duration) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-fn download(url: &str, timeout: Duration) -> Result<f64, String> {
+fn icmp_check(host: &str, timeout: Duration) -> Result<(), String> {
+    #[cfg(windows)]
+    let status = Command::new("ping.exe")
+        .args([
+            "-n",
+            "1",
+            "-w",
+            &timeout.as_millis().clamp(1, u32::MAX as u128).to_string(),
+            host,
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| error.to_string())?;
+    #[cfg(not(windows))]
+    let status = Command::new("ping")
+        .args(["-c", "1", "-W", &timeout.as_secs().max(1).to_string(), host])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("ICMP ping exited with {status}"))
+    }
+}
+
+fn latency_method(methods: &[&str]) -> &'static str {
+    if methods.is_empty() {
+        return "unavailable";
+    }
+    if methods.iter().all(|method| *method == "icmp") {
+        "icmp"
+    } else if methods.iter().all(|method| *method == "tcp_connect") {
+        "tcp_connect"
+    } else {
+        "mixed"
+    }
+}
+
+fn download(
+    url: &str,
+    timeout: Duration,
+    target_duration: Duration,
+) -> Result<TransferResult, String> {
     let started = Instant::now();
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
         .map_err(|error| error.to_string())?;
-    let response = client.get(url).send().map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("download returned HTTP {}", response.status()));
-    }
-    let mut reader = response.take(2 * 1024 * 1024);
     let mut bytes = 0usize;
+    let mut requests = 0usize;
     let mut buffer = [0u8; 8192];
-    loop {
-        let read = reader
-            .read(&mut buffer)
-            .map_err(|error| error.to_string())?;
-        if read == 0 {
-            break;
+    while started.elapsed() < target_duration && bytes < MAX_TRANSFER_BYTES {
+        requests += 1;
+        let response = client.get(url).send().map_err(|error| error.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("download returned HTTP {}", response.status()));
         }
-        bytes += read;
+        let remaining = (MAX_TRANSFER_BYTES - bytes) as u64;
+        let mut reader = response.take(remaining);
+        loop {
+            if started.elapsed() >= target_duration {
+                break;
+            }
+            let read = reader
+                .read(&mut buffer)
+                .map_err(|error| error.to_string())?;
+            if read == 0 {
+                break;
+            }
+            bytes += read;
+        }
     }
     if bytes == 0 {
         return Err("download returned no bytes".into());
     }
     let seconds = started.elapsed().as_secs_f64().max(0.001);
-    Ok(bytes as f64 * 8.0 / seconds / 1_000_000.0)
+    Ok(TransferResult {
+        mbps: bytes as f64 * 8.0 / seconds / 1_000_000.0,
+        bytes,
+        requests,
+        elapsed_seconds: seconds,
+    })
 }
 
-fn upload(url: &str, timeout: Duration) -> Result<f64, String> {
+fn upload(
+    url: &str,
+    timeout: Duration,
+    target_duration: Duration,
+) -> Result<TransferResult, String> {
     let started = Instant::now();
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .build()
         .map_err(|error| error.to_string())?;
-    let body = vec![0u8; 256 * 1024];
-    let response = client
-        .post(url)
-        .header("Content-Type", "application/octet-stream")
-        .body(body.clone())
-        .send()
-        .map_err(|error| error.to_string())?;
-    if !response.status().is_success() {
-        return Err(format!("upload returned HTTP {}", response.status()));
+    let body = vec![0u8; 1024 * 1024];
+    let mut bytes = 0usize;
+    let mut requests = 0usize;
+    while started.elapsed() < target_duration && bytes < MAX_TRANSFER_BYTES {
+        requests += 1;
+        let response = client
+            .post(url)
+            .header("Content-Type", "application/octet-stream")
+            .body(body.clone())
+            .send()
+            .map_err(|error| error.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("upload returned HTTP {}", response.status()));
+        }
+        bytes = bytes.saturating_add(body.len());
+    }
+    if bytes == 0 {
+        return Err("upload did not send bytes".into());
     }
     let seconds = started.elapsed().as_secs_f64().max(0.001);
-    Ok(body.len() as f64 * 8.0 / seconds / 1_000_000.0)
+    Ok(TransferResult {
+        mbps: bytes as f64 * 8.0 / seconds / 1_000_000.0,
+        bytes,
+        requests,
+        elapsed_seconds: seconds,
+    })
 }

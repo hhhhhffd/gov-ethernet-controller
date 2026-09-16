@@ -10,6 +10,10 @@ impl Client {
     pub fn new(config: Config) -> Self {
         Self { config }
     }
+
+    pub fn update_config(&mut self, config: Config) {
+        self.config = config;
+    }
     pub fn upload_pending(&self, queue: &Queue) -> Result<(usize, usize), String> {
         let pending = queue
             .pending(100)
@@ -17,18 +21,7 @@ impl Client {
         let mut uploaded = 0usize;
         for (path, payload) in pending {
             match self.post_batch(&payload) {
-                Ok(response)
-                    if response
-                        .get("accepted")
-                        .and_then(Value::as_i64)
-                        .unwrap_or(0)
-                        >= 1
-                        || response
-                            .get("results")
-                            .and_then(Value::as_array)
-                            .map(|items| !items.is_empty())
-                            .unwrap_or(false) =>
-                {
+                Ok(response) if acknowledged(&response, &payload) => {
                     queue
                         .remove(&path)
                         .map_err(|error| format!("remove acknowledged queue item: {error}"))?;
@@ -116,5 +109,47 @@ impl Client {
         response
             .json()
             .map_err(|error| format!("decode config response: {error}"))
+    }
+}
+
+fn acknowledged(response: &Value, payload: &Value) -> bool {
+    let Some(event_id) = payload.get("client_event_id").and_then(Value::as_str) else {
+        return false;
+    };
+    response
+        .get("results")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items.iter().any(|item| {
+                item.get("client_event_id").and_then(Value::as_str) == Some(event_id)
+                    && item.get("accepted").and_then(Value::as_bool) == Some(true)
+            })
+        })
+        .unwrap_or_else(|| {
+            response.get("client_event_id").and_then(Value::as_str) == Some(event_id)
+                && response.get("accepted").and_then(Value::as_bool) == Some(true)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::acknowledged;
+    use serde_json::json;
+
+    #[test]
+    fn queue_ack_requires_matching_accepted_result() {
+        let payload = json!({"client_event_id":"event-a"});
+        assert!(acknowledged(
+            &json!({"results":[{"client_event_id":"event-a","accepted":true}]}),
+            &payload
+        ));
+        assert!(!acknowledged(
+            &json!({"results":[{"client_event_id":"event-b","accepted":true}]}),
+            &payload
+        ));
+        assert!(!acknowledged(
+            &json!({"results":[{"client_event_id":"event-a","accepted":false}]}),
+            &payload
+        ));
     }
 }

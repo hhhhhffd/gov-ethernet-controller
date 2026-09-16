@@ -14,6 +14,16 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
+const latestMigrationVersion = 2
+
+var migrations = []struct {
+	version int64
+	file    string
+}{
+	{version: 1, file: "migrations/001_initial.sql"},
+	{version: 2, file: "migrations/002_runtime_hardening.sql"},
+}
+
 // DB is the only persistence dependency used by the server.  Keeping the pool
 // behind this small type makes readiness and migration behaviour explicit and
 // prevents handlers from growing ad-hoc connection management.
@@ -75,20 +85,16 @@ func (db *DB) Ready(ctx context.Context) error {
 		return err
 	}
 	var migrated bool
-	if err := db.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = 1)").Scan(&migrated); err != nil {
+	if err := db.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version >= $1)", latestMigrationVersion).Scan(&migrated); err != nil {
 		return err
 	}
 	if !migrated {
-		return fmt.Errorf("required database migration 1 is not applied")
+		return fmt.Errorf("required database migration %d is not applied", latestMigrationVersion)
 	}
 	return nil
 }
 
 func (db *DB) Migrate(ctx context.Context) error {
-	sqlBytes, err := migrationFS.ReadFile("migrations/001_initial.sql")
-	if err != nil {
-		return fmt.Errorf("read migration: %w", err)
-	}
 	tx, err := db.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return fmt.Errorf("begin migration transaction: %w", err)
@@ -98,11 +104,29 @@ func (db *DB) Migrate(ctx context.Context) error {
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(742031)"); err != nil {
 		return fmt.Errorf("migration lock: %w", err)
 	}
-	if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
-		return fmt.Errorf("apply migration: %w", err)
-	}
-	if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations(version) VALUES (1) ON CONFLICT (version) DO NOTHING"); err != nil {
-		return fmt.Errorf("record migration: %w", err)
+	for _, migration := range migrations {
+		// Migration 001 creates schema_migrations itself, so it is the only
+		// script that must be executed before the applied-version lookup is
+		// available. All later scripts are skipped once recorded.
+		if migration.version != 1 {
+			var applied bool
+			if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version=$1)", migration.version).Scan(&applied); err != nil {
+				return fmt.Errorf("check migration %d: %w", migration.version, err)
+			}
+			if applied {
+				continue
+			}
+		}
+		sqlBytes, err := migrationFS.ReadFile(migration.file)
+		if err != nil {
+			return fmt.Errorf("read migration %d: %w", migration.version, err)
+		}
+		if _, err := tx.Exec(ctx, string(sqlBytes)); err != nil {
+			return fmt.Errorf("apply migration %d: %w", migration.version, err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations(version) VALUES ($1) ON CONFLICT (version) DO NOTHING", migration.version); err != nil {
+			return fmt.Errorf("record migration %d: %w", migration.version, err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit migration: %w", err)

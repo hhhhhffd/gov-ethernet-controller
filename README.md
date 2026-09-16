@@ -46,9 +46,10 @@ curl http://127.0.0.1:8080/health/ready
   source of truth. Все effective policy/contract snapshots сохраняются рядом с
   observation, а `client_event_id` обеспечивает идемпотентный ingest.
 - `agent/` — Rust CLI `run`, `once`, `probe`, `version`. Очередь — crash-safe
-  filesystem spool: файл удаляется только после подтверждения сервера.
-- `migrations/001_initial.sql` и embedded
-  `server/internal/database/migrations/001_initial.sql` — versioned schema.
+  filesystem spool: файл удаляется только после подтверждения сервера; run
+  хранит cursor расписания и регулярно flush-ит backlog/heartbeat/config.
+- `migrations/001_initial.sql`, `migrations/002_runtime_hardening.sql` и embedded
+  `server/internal/database/migrations/*.sql` — versioned schema.
 - `web/` — существующий frontend; API выдаёт совместимые поля `status`,
   `state`, `latest`, `policy`, `contract`, `incidents`, отчёты CSV/XLSX.
 
@@ -56,8 +57,9 @@ curl http://127.0.0.1:8080/health/ready
 подтверждённым только после последовательных observations по effective policy;
 backfill сохраняет evidence и не переписывает текущий state. Закрытие инцидента
 требует подтверждённого восстановления. Outbound provider/notification
-transport сохраняет `FAILED`, число попыток и ошибку; повтор выполняется через
-admin API.
+transport сохраняет попытку до сетевого вызова, `PENDING/DELIVERING/SENT/FAILED`,
+retryable-флаг и backoff; notification доставляется через PostgreSQL outbox
+после commit и повторяется worker или admin API.
 
 ## Configuration and API
 
@@ -75,8 +77,10 @@ admin API.
 Агент принимает `LINKWATCH_*`; старые `VKO_*` имена поддерживаются для плавной
 миграции. Приоритет локальной конфигурации: defaults → JSON-файл → environment.
 Если задать `LINKWATCH_USE_SERVER_CONFIG=1`, расписание из
-`/api/v1/agent/config` применяется после локальных значений; при недоступности
-сервера агент продолжает работу с локальной конфигурацией и очередью. Пример:
+`/api/v1/agent/config` применяется после локальных значений и обновляется во
+время run; при недоступности сервера агент продолжает работу с локальной
+конфигурацией и очередью. Batch endpoint возвращает per-item results, поэтому
+частично принятый пакет безопасно повторять. Пример:
 
 ```bash
 LINKWATCH_SERVER_URL=http://127.0.0.1:8080 \

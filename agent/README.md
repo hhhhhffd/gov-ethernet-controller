@@ -19,8 +19,10 @@ linkwatch-agent --once                # alias once
 остаются совместимыми. Для файла конфигурации задайте
 `LINKWATCH_CONFIG_FILE` (JSON). Расписание и effective policy можно получить
 из `/api/v1/agent/config`; чтобы агент применял server-side schedule, задайте
-`LINKWATCH_USE_SERVER_CONFIG=1`. При сбое запроса локальная конфигурация и
-очередь сохраняются.
+`LINKWATCH_USE_SERVER_CONFIG=1`. В режиме `run` каждые пять минут выполняются
+heartbeat, flush очереди и обновление расписания; курсор слотов хранится рядом
+со spool, поэтому перезапуск не повторяет уже сработавший слот. Повреждённые
+JSON-файлы перемещаются в `queue/quarantine/`, не блокируя остальные события.
 
 Минимальная привязка устройства:
 
@@ -34,9 +36,11 @@ cargo run --release --manifest-path agent/Cargo.toml -- once
 
 Для production используйте `LINKWATCH_PROBE=network` и контролируемые
 оператором endpoints в `LINKWATCH_CONFIG_FILE`/`VKO_PROBE_*`. NetworkProbe
-формирует reachability, TCP ping samples, jitter, packet loss, availability и
-ограниченные download/upload метрики. DemoProbe в production отключён без
-явного `LINKWATCH_ALLOW_DEMO_PROBE=1`.
+формирует reachability, ICMP ping samples (с безопасным TCP-connect fallback),
+jitter, packet loss, availability и адаптивные 3–5-секундные download/upload
+метрики. Метод и версия замера сохраняются в `raw`; по умолчанию используются
+Cloudflare download и upload endpoints, которые можно заменить оператором.
+DemoProbe в production отключён без явного `LINKWATCH_ALLOW_DEMO_PROBE=1`.
 
 ## Сборка
 

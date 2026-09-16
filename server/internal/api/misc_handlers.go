@@ -12,7 +12,6 @@ import (
 
 	"linkwatch/server/internal/auth"
 	"linkwatch/server/internal/measurements"
-	"linkwatch/server/internal/providers"
 )
 
 func (s *Server) listSituations(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +319,7 @@ func (s *Server) notifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	where, params := scopeSQL(p, 1)
-	rows, err := s.DB.Pool.Query(r.Context(), `SELECT n.id,n.source_type,n.source_id,n.channel,n.recipient_scope,n.message,n.status,n.delivery_attempts,n.delivery_error,n.generated_at,n.sent_at,n.read_at FROM notifications n JOIN lines l ON l.id=n.recipient_scope JOIN organizations o ON o.id=l.organization_id WHERE `+where+` ORDER BY n.id DESC`, params...)
+	rows, err := s.DB.Pool.Query(r.Context(), `SELECT n.id,n.source_type,n.source_id,n.channel,n.recipient_scope,n.message,n.status,n.delivery_attempts,n.delivery_error,n.delivery_retryable,n.next_attempt_at,n.delivery_started_at,n.generated_at,n.sent_at,n.read_at FROM notifications n JOIN lines l ON l.id=n.recipient_scope JOIN organizations o ON o.id=l.organization_id WHERE `+where+` ORDER BY n.id DESC`, params...)
 	if err != nil {
 		writeError(w, 500, "could not query notifications")
 		return
@@ -332,9 +331,10 @@ func (s *Server) notifications(w http.ResponseWriter, r *http.Request) {
 		var sourceType, sourceID, channel, scope, message, status string
 		var attempts int
 		var delivery *string
-		var generated, sent, read *time.Time
-		if rows.Scan(&id, &sourceType, &sourceID, &channel, &scope, &message, &status, &attempts, &delivery, &generated, &sent, &read) == nil {
-			result = append(result, map[string]interface{}{"id": id, "source_type": sourceType, "source_id": sourceID, "channel": channel, "recipient_scope": scope, "message": message, "status": status, "delivery_attempts": attempts, "delivery_error": delivery, "generated_at": generated, "sent_at": sent, "read_at": read})
+		var retryable bool
+		var nextAttempt, deliveryStarted, generated, sent, read *time.Time
+		if rows.Scan(&id, &sourceType, &sourceID, &channel, &scope, &message, &status, &attempts, &delivery, &retryable, &nextAttempt, &deliveryStarted, &generated, &sent, &read) == nil {
+			result = append(result, map[string]interface{}{"id": id, "source_type": sourceType, "source_id": sourceID, "channel": channel, "recipient_scope": scope, "message": message, "status": status, "delivery_attempts": attempts, "delivery_error": delivery, "delivery_retryable": retryable, "next_attempt_at": nextAttempt, "delivery_started_at": deliveryStarted, "generated_at": generated, "sent_at": sent, "read_at": read})
 		}
 	}
 	writeJSON(w, 200, result)
@@ -349,26 +349,13 @@ func (s *Server) notificationDispatch(w http.ResponseWriter, r *http.Request, p 
 		writeError(w, 404, "notification not found")
 		return
 	}
-	var sourceType, sourceID, scope, message string
-	var generatedAt time.Time
-	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT source_type,source_id,recipient_scope,message,generated_at FROM notifications WHERE id=$1`, notificationID).Scan(&sourceType, &sourceID, &scope, &message, &generatedAt); err != nil {
-		writeError(w, 404, "notification not found")
-		return
-	}
-	_, _ = s.DB.Pool.Exec(r.Context(), `UPDATE notifications SET delivery_attempts=delivery_attempts+1,delivery_error=NULL WHERE id=$1`, notificationID)
-	delivery, deliveryErr := providers.SendNotification(r.Context(), providers.Notification{ID: notificationID, SourceType: sourceType, SourceID: sourceID, Scope: scope, Message: message, GeneratedAt: generatedAt})
+	delivery, deliveryErr := s.Measure.DispatchNotification(r.Context(), notificationID)
 	if deliveryErr != nil {
-		_, _ = s.DB.Pool.Exec(r.Context(), `UPDATE notifications SET status='FAILED',delivery_error=$1 WHERE id=$2`, deliveryErr.Error(), notificationID)
-		writeError(w, http.StatusBadGateway, "notification delivery failed; retry is available")
-		return
-	}
-	if delivery.Channel == "WEB" {
-		if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE notifications SET channel=$1,delivery_error=NULL WHERE id=$2`, delivery.Channel, notificationID); err != nil {
-			writeError(w, 500, "could not dispatch notification")
+		if strings.Contains(deliveryErr.Error(), "not pending") {
+			writeError(w, http.StatusNotFound, "notification not found or already delivered")
 			return
 		}
-	} else if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE notifications SET status='SENT',channel=$1,sent_at=now(),delivery_error=NULL WHERE id=$2`, delivery.Channel, notificationID); err != nil {
-		writeError(w, 500, "could not dispatch notification")
+		writeError(w, http.StatusBadGateway, "notification delivery failed; retry is available")
 		return
 	}
 	writeJSON(w, 200, map[string]interface{}{"id": notificationID, "status": "SENT", "delivery_channel": delivery.Channel})

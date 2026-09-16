@@ -25,20 +25,24 @@ func (s *Server) agentBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	results := make([]measurements.Result, 0, len(payload.Measurements))
 	for _, item := range payload.Measurements {
+		result := measurements.Result{ClientEventID: item.ClientEventID}
 		if item.ObservedAt.IsZero() {
-			writeError(w, http.StatusUnprocessableEntity, "observed_at is required")
-			return
+			result.Error = "observed_at is required"
+			results = append(results, result)
+			continue
 		}
 		if err := validateDeviceTime(item.ObservedAt); err != nil {
-			writeError(w, http.StatusUnprocessableEntity, err.Error())
-			return
+			result.Error = err.Error()
+			results = append(results, result)
+			continue
 		}
-		result, err := s.Measure.Process(r.Context(), device.ID, device.LineID, device.PointID, device.AgentVersion, item)
+		processed, err := s.Measure.Process(r.Context(), device.ID, device.LineID, device.PointID, device.AgentVersion, item)
 		if err != nil {
-			writeError(w, http.StatusUnprocessableEntity, err.Error())
-			return
+			result.Error = err.Error()
+			results = append(results, result)
+			continue
 		}
-		results = append(results, result)
+		results = append(results, processed)
 	}
 	accepted, duplicates := 0, 0
 	for _, result := range results {
@@ -49,7 +53,7 @@ func (s *Server) agentBatch(w http.ResponseWriter, r *http.Request) {
 			duplicates++
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "results": results, "accepted": accepted, "duplicates": duplicates})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "results": results, "accepted": accepted, "duplicates": duplicates, "rejected": len(results) - accepted})
 }
 
 func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {

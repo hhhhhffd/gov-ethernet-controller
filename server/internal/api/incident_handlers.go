@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"linkwatch/server/internal/auth"
+	"linkwatch/server/internal/measurements"
 	"linkwatch/server/internal/providers"
 )
 
@@ -210,7 +211,7 @@ func (s *Server) createManualIncident(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Truncate(time.Second)
 	snapshot, _ := json.Marshal(map[string]interface{}{"manual_description": payload.Description, "line_id": line.ID, "reason": payload.Description, "evidence_measurement_ids": []int64{}, "manual": true})
 	var id int64
-	err := s.DB.Pool.QueryRow(r.Context(), `INSERT INTO incidents(incident_no,line_id,source,violation_type,status,recovery_state,started_at,opening_snapshot_json,created_at,assignee) VALUES ('PENDING',$1,'MANUAL',$2,'NEW','NONE',$3,$4::jsonb,$3,$5) RETURNING id`, line.ID, payload.ViolationType, now, string(snapshot), payload.Assignee).Scan(&id)
+	err := s.DB.Pool.QueryRow(r.Context(), `INSERT INTO incidents(incident_no,line_id,source,violation_type,status,recovery_state,started_at,opening_snapshot_json,created_at,assignee) VALUES ($1,$2,'MANUAL',$3,'NEW','NONE',$4,$5::jsonb,$4,$6) RETURNING id`, "PENDING-"+measurements.RandomEventID(), line.ID, payload.ViolationType, now, string(snapshot), payload.Assignee).Scan(&id)
 	if err != nil {
 		writeError(w, 500, "could not create incident")
 		return

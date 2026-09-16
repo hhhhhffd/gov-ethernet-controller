@@ -10,6 +10,7 @@ pub struct ProbeConfig {
     pub ping_port: u16,
     pub throughput_url: Option<String>,
     pub upload_url: Option<String>,
+    pub throughput_duration_seconds: u64,
     pub timeout_seconds: u64,
 }
 
@@ -20,7 +21,8 @@ impl Default for ProbeConfig {
             ping_host: Some("1.1.1.1".into()),
             ping_port: 443,
             throughput_url: Some("https://speed.cloudflare.com/__down?bytes=1000000".into()),
-            upload_url: None,
+            upload_url: Some("https://speed.cloudflare.com/__up".into()),
+            throughput_duration_seconds: 3,
             timeout_seconds: 5,
         }
     }
@@ -81,6 +83,8 @@ impl Config {
         config.apply_env();
         config.performance_tests_per_day = config.performance_tests_per_day.clamp(3, 5);
         config.jitter_minutes = config.jitter_minutes.min(240);
+        config.probe.throughput_duration_seconds =
+            config.probe.throughput_duration_seconds.clamp(3, 5);
         config.server_url = config.server_url.trim_end_matches('/').to_string();
         if config.server_url.is_empty() {
             return Err("server_url must not be empty".into());
@@ -227,6 +231,13 @@ impl Config {
         {
             self.probe.upload_url = Some(value);
         }
+        if let Ok(value) = env::var("LINKWATCH_THROUGHPUT_DURATION_SECONDS")
+            .or_else(|_| env::var("VKO_THROUGHPUT_DURATION_SECONDS"))
+        {
+            if let Ok(parsed) = value.parse() {
+                self.probe.throughput_duration_seconds = parsed;
+            }
+        }
         if let Ok(value) = env::var("LINKWATCH_PROBE_TIMEOUT_SECONDS")
             .or_else(|_| env::var("VKO_PROBE_TIMEOUT_SECONDS"))
         {
@@ -256,6 +267,7 @@ mod tests {
         assert_eq!(config.server_url, "https://monitoring.example");
         assert_eq!(config.performance_tests_per_day, 4);
         assert_eq!(config.probe.timeout_seconds, 5);
+        assert_eq!(config.probe.throughput_duration_seconds, 3);
     }
 
     #[test]

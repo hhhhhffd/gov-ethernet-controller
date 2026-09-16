@@ -16,6 +16,7 @@ import (
 	"linkwatch/server/internal/api"
 	"linkwatch/server/internal/auth"
 	"linkwatch/server/internal/database"
+	"linkwatch/server/internal/measurements"
 )
 
 func main() {
@@ -43,6 +44,7 @@ func main() {
 		address = ":8080"
 	}
 	httpServer := &http.Server{Addr: address, Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	go runNotificationOutbox(ctx, server.Measure, logger)
 	go func() {
 		logger.Info("linkwatch server listening", "addr", address)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -54,6 +56,21 @@ func main() {
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdown)
+}
+
+func runNotificationOutbox(ctx context.Context, service *measurements.Service, logger *slog.Logger) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		if _, err := service.DispatchPendingNotifications(ctx, 100); err != nil && ctx.Err() == nil {
+			logger.Warn("notification outbox dispatch failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func bootstrap(ctx context.Context, db *database.DB) error {
