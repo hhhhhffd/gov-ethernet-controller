@@ -442,10 +442,11 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		return
 	}
 	var payload struct {
-		FinalText *string `json:"final_text"`
-		Text      *string `json:"text"`
-		TicketNo  *string `json:"ticket_no"`
-		Reviewed  bool    `json:"reviewed"`
+		FinalText  *string `json:"final_text"`
+		Text       *string `json:"text"`
+		TicketNo   *string `json:"ticket_no"`
+		IncidentID *int64  `json:"incident_id"`
+		Reviewed   bool    `json:"reviewed"`
 	}
 	if err := decodeJSON(r, &payload); err != nil && r.Body != nil {
 		writeError(w, 422, "invalid provider payload")

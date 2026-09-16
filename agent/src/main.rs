@@ -95,6 +95,28 @@ fn run_loop(
     client: &Client,
 ) -> Result<(), String> {
     loop {
+        // Wait for the device-specific scheduled slot before collecting. A
+        // service restart must not make every school probe at the same
+        // instant; the stable device seed and bounded jitter spread slots
+        // across the day.
+        loop {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default();
+            let schedule = scheduler::schedule_for_day(
+                &config.device_id,
+                config.performance_tests_per_day,
+                config.jitter_minutes,
+            );
+            let elapsed = Duration::from_secs(now.as_secs() % 86400);
+            let sleep = scheduler::next_sleep(elapsed, &schedule);
+            if sleep.is_zero() {
+                break;
+            }
+            // Wake periodically for a heartbeat/reconfiguration opportunity,
+            // while still sleeping instead of spinning until the slot.
+            thread::sleep(sleep.min(Duration::from_secs(3600)));
+        }
         let _ = client.heartbeat();
         let payload = event(config, probe.measure("performance")?);
         let event_id = queue::Queue::event_id(&payload);
@@ -102,26 +124,17 @@ fn run_loop(
             .enqueue(&event_id, &payload)
             .map_err(|error| format!("enqueue measurement: {error}"))?;
         let _ = client.upload_pending(queue);
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        let schedule = scheduler::schedule_for_day(
-            &config.device_id,
-            config.performance_tests_per_day,
-            config.jitter_minutes,
-        );
-        let elapsed = Duration::from_secs(now.as_secs() % 86400);
-        let sleep = scheduler::next_sleep(elapsed, &schedule).min(Duration::from_secs(3600));
         if config.light_checks_between {
-            thread::sleep(sleep.min(Duration::from_secs(300)));
+            // One optional light check is placed shortly after each
+            // performance slot. It remains an observation only; all verdicts
+            // and workflow decisions stay on the server.
+            thread::sleep(Duration::from_secs(300));
             let light = event(config, probe.measure("light")?);
             let id = queue::Queue::event_id(&light);
             queue
                 .enqueue(&id, &light)
                 .map_err(|error| error.to_string())?;
             let _ = client.upload_pending(queue);
-        } else {
-            thread::sleep(sleep);
         }
     }
 }

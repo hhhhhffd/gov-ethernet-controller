@@ -38,16 +38,24 @@ impl Queue {
         Ok(final_path)
     }
     pub fn pending(&self, limit: usize) -> io::Result<Vec<(PathBuf, Value)>> {
-        let mut paths = fs::read_dir(&self.dir)?
+        let mut entries = fs::read_dir(&self.dir)?
             .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("json"))
+            .filter(|entry| entry.path().extension().and_then(|value| value.to_str()) == Some("json"))
+            .map(|entry| {
+                let modified = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .unwrap_or(UNIX_EPOCH);
+                (entry.path(), modified)
+            })
             .collect::<Vec<_>>();
-        paths.sort();
-        paths.truncate(limit);
-        paths
+        // Filesystem mtime tracks enqueue order across restarts, while the
+        // path tie-breaker keeps simultaneous writes deterministic.
+        entries.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
+        entries.truncate(limit);
+        entries
             .into_iter()
-            .map(|path| {
+            .map(|(path, _)| {
                 let payload =
                     serde_json::from_slice(&fs::read(&path)?).map_err(io::Error::other)?;
                 Ok((path, payload))
@@ -95,6 +103,9 @@ mod tests {
         let path = queue.enqueue("a", &event).unwrap();
         assert!(path.exists());
         assert_eq!(queue.pending(10).unwrap().len(), 1);
+        drop(queue);
+        let queue = Queue::open(dir.path()).unwrap();
+        assert_eq!(queue.pending(10).unwrap()[0].1, event);
         let replacement = serde_json::json!({"client_event_id":"a","value":2});
         let same_path = queue.enqueue("a", &replacement).unwrap();
         assert_eq!(same_path, path);

@@ -163,8 +163,10 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, agentV
 		// A concurrent retry can win the unique constraint. Return the canonical
 		// row as a duplicate instead of turning an idempotent upload into 500.
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(strings.ToLower(err.Error()), "unique") {
-			if scanErr := tx.QueryRow(ctx, `SELECT id FROM measurements WHERE device_id=$1 AND client_event_id=$2`, deviceID, input.ClientEventID).Scan(&duplicateID); scanErr == nil {
-				_ = tx.Commit(ctx)
+			// PostgreSQL marks the transaction failed after a unique violation;
+			// roll it back before looking up the winner on the pool.
+			_ = tx.Rollback(ctx)
+			if scanErr := s.DB.Pool.QueryRow(ctx, `SELECT id FROM measurements WHERE device_id=$1 AND client_event_id=$2`, deviceID, input.ClientEventID).Scan(&duplicateID); scanErr == nil {
 				return Result{ClientEventID: input.ClientEventID, MeasurementID: duplicateID, Duplicate: true, Accepted: true}, nil
 			}
 		}

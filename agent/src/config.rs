@@ -67,11 +67,15 @@ impl Default for Config {
 impl Config {
     pub fn load() -> Result<Self, String> {
         let mut config = Config::default();
+        let mut file_probe_explicit = false;
         if let Ok(path) = env::var("LINKWATCH_CONFIG_FILE").or_else(|_| env::var("VKO_CONFIG_FILE"))
         {
             let raw = fs::read_to_string(&path)
                 .map_err(|error| format!("read config file {path}: {error}"))?;
-            config = serde_json::from_str(&raw)
+            let value: Value = serde_json::from_str(&raw)
+                .map_err(|error| format!("parse config file: {error}"))?;
+            file_probe_explicit = value.get("probe_type").is_some();
+            config = serde_json::from_value(value)
                 .map_err(|error| format!("parse config file: {error}"))?;
         }
         config.apply_env();
@@ -84,6 +88,18 @@ impl Config {
         let production = env::var("LINKWATCH_ENV")
             .or_else(|_| env::var("VKO_ENV"))
             .unwrap_or_default();
+        // The legacy agent selected a real network probe automatically in
+        // production. Keep that safe default for config files that omit the
+        // probe selector, while still rejecting an explicitly requested demo
+        // probe unless the operator opts in through the existing guard.
+        let probe_env_explicit = first_env(&["LINKWATCH_PROBE", "VKO_PROBE"]).is_some();
+        if production.eq_ignore_ascii_case("production")
+            && !probe_env_explicit
+            && !file_probe_explicit
+            && config.probe_type.eq_ignore_ascii_case("demo")
+        {
+            config.probe_type = "network".into();
+        }
         if production.eq_ignore_ascii_case("production")
             && !config.server_url.starts_with("https://")
         {

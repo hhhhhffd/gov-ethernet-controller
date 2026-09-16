@@ -5,9 +5,19 @@ LINKWATCH — контур доказательного мониторинга �
 агента; браузерный интерфейс остаётся статическим `web/` и использует прежние
 `/api` и `/api/v1` контракты.
 
-## Быстрый запуск
+> Rust at the edge. Go in the control plane. PostgreSQL as the source of truth.
 
-Нужны Docker Compose, Go 1.23+ и Rust stable (для локального запуска агента).
+```text
+Windows/Linux device → linkwatch-agent (Rust) → HTTPS REST/JSON →
+linkwatch-server (Go) → PostgreSQL
+```
+
+## Requirements
+
+Нужны Docker Compose, Go 1.23+ и Rust stable (для локальной сборки агента).
+Для production используйте PostgreSQL 16+ через `docker-compose.prod.yml`.
+
+## Quick Start / Docker startup
 
 ```bash
 docker compose up -d --build
@@ -30,7 +40,7 @@ curl http://127.0.0.1:8080/health/ready
 ./scripts/smoke.sh
 ```
 
-## Компоненты и инварианты
+## Architecture
 
 - `server/` — Go HTTP API и state engine; PostgreSQL является единственным
   source of truth. Все effective policy/contract snapshots сохраняются рядом с
@@ -49,7 +59,7 @@ backfill сохраняет evidence и не переписывает текущ
 transport сохраняет `FAILED`, число попыток и ошибку; повтор выполняется через
 admin API.
 
-## API и конфигурация
+## Configuration and API
 
 Основные маршруты: `/health`, `/health/ready`, `/api/v1/auth/login`,
 `/api/v1/agent/measurements:batch`, `/api/v1/agent/heartbeat`,
@@ -76,7 +86,7 @@ LINKWATCH_PROBE=demo \
 cargo run --release --manifest-path agent/Cargo.toml -- once
 ```
 
-## Проверки и production-like запуск
+## Development and Tests
 
 ```bash
 make server-test
@@ -88,3 +98,20 @@ make smoke
 `scripts/windows/stop-vko-prod.ps1`; они запускают Go image из
 `docker-compose.prod.yml`. Windows binary агента собирается
 `scripts/build-agent.ps1` в `dist/linkwatch-agent-windows-amd64.exe`.
+После сборки доступны обычные native-команды:
+
+```powershell
+.\dist\linkwatch-agent-windows-amd64.exe version
+.\dist\linkwatch-agent-windows-amd64.exe probe
+.\dist\linkwatch-agent-windows-amd64.exe once
+```
+
+На нативной Windows можно также выполнить `cargo build --release
+--manifest-path agent/Cargo.toml`; результатом будет
+`agent\target\release\linkwatch-agent.exe`. В WSL/Linux для кросс-сборки
+передайте скрипту `-Target x86_64-pc-windows-gnu` и установите соответствующий
+linker.
+
+Для разработки без Compose можно собрать сервер и агент командами `make
+build-server` и `make build-agent`; полный набор проверок — `make test-server`,
+`make test-agent` и `make smoke`.

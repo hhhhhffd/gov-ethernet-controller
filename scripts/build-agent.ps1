@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet("x86_64-pc-windows-gnu", "x86_64-pc-windows-msvc")]
-    [string]$Target = "x86_64-pc-windows-gnu"
+    [string]$Target = "x86_64-pc-windows-msvc"
 )
 
 $ErrorActionPreference = "Stop"

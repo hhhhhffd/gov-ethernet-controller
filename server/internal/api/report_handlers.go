@@ -52,6 +52,14 @@ func periodBounds(q map[string]string, defaultDays int) (time.Time, time.Time, e
 }
 
 func (s *Server) reportRows(r *http.Request, p *auth.Principal, start, end time.Time) ([]reportRow, error) {
+	if status := r.URL.Query().Get("status"); status != "" {
+		// Status is a freshness-aware materialized line verdict. Refresh only
+		// candidate lines before applying the status predicate so stale data
+		// cannot leak into a current-status report or export.
+		if err := s.refreshReportFreshness(r.Context(), r, p); err != nil {
+			return nil, err
+		}
+	}
 	where, params := scopeSQL(p, 3)
 	filters := []string{"m.observed_at >= $1", "m.observed_at < $2", where}
 	add := func(key, column string) {
@@ -72,15 +80,14 @@ func (s *Server) reportRows(r *http.Request, p *auth.Principal, start, end time.
 	add("technology", "l.technology")
 	add("organization_id", "l.organization_id")
 	if value := r.URL.Query().Get("status"); value != "" {
-		normalized := strings.ToUpper(value)
-		if normalized == "UNSTABLE" {
-			normalized = "DEGRADED"
-		}
-		if normalized == "CRITICAL" {
-			normalized = "NO_INTERNET"
-		}
+		normalized := normalizeReportStatus(value)
 		params = append(params, normalized)
-		filters = append(filters, "(CASE WHEN COALESCE(ls.data_state,'NO_DATA')='NO_DATA' THEN 'NO_DATA' ELSE COALESCE(ls.connection_state,'UNKNOWN') END)=$"+itoa(len(params)+2))
+		placeholder := itoa(len(params) + 2)
+		if normalized == "ACTIVE" || normalized == "INACTIVE" || normalized == "DELETED" {
+			filters = append(filters, "l.status=$"+placeholder)
+		} else {
+			filters = append(filters, "(CASE WHEN COALESCE(ls.data_state,'NO_DATA')='NO_DATA' THEN 'NO_DATA' ELSE COALESCE(ls.connection_state,'UNKNOWN') END)=$"+placeholder)
+		}
 	}
 	query := `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json,o.school_id,o.name,o.district,l.provider_id,p.name FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id JOIN lines l ON l.id=m.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id LEFT JOIN line_states ls ON ls.line_id=l.id WHERE ` + strings.Join(filters, " AND ") + ` ORDER BY m.observed_at`
 	args := append([]interface{}{start, end}, params...)
@@ -245,6 +252,33 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reportLineCount(ctx context.Context, r *http.Request, p *auth.Principal) int {
+	if status := r.URL.Query().Get("status"); status != "" {
+		if err := s.refreshReportFreshness(ctx, r, p); err != nil {
+			return 0
+		}
+	}
+	ids, err := s.reportLineIDs(ctx, r, p, true)
+	if err != nil {
+		return 0
+	}
+	return len(ids)
+}
+
+func normalizeReportStatus(value string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(value))
+	if normalized == "UNSTABLE" {
+		return "DEGRADED"
+	}
+	if normalized == "CRITICAL" {
+		return "NO_INTERNET"
+	}
+	return normalized
+}
+
+// reportLineIDs resolves the lines represented by report filters. It keeps
+// status filtering on the same materialized state axis as reportRows while
+// allowing callers to refresh freshness before applying that predicate.
+func (s *Server) reportLineIDs(ctx context.Context, r *http.Request, p *auth.Principal, withStatus bool) ([]string, error) {
 	where, params := scopeSQL(p, 1)
 	filters := []string{"l.status <> 'DELETED'", where}
 	add := func(key, column string) {
@@ -255,23 +289,54 @@ func (s *Server) reportLineCount(ctx context.Context, r *http.Request, p *auth.P
 	}
 	add("line_id", "l.id")
 	add("district", "o.district")
-	add("role", "l.role")
-	add("technology", "l.technology")
-	add("organization_id", "l.organization_id")
 	if value := r.URL.Query().Get("provider"); value != "" {
 		params = append(params, value, value)
 		filters = append(filters, "(l.provider_id=$"+itoa(len(params)-1)+" OR p.name=$"+itoa(len(params))+")")
 	}
-	if value := r.URL.Query().Get("device_id"); value != "" {
-		params = append(params, value)
-		filters = append(filters, "EXISTS (SELECT 1 FROM monitoring_points mp JOIN devices d ON d.monitoring_point_id=mp.id WHERE mp.line_id=l.id AND d.id=$"+itoa(len(params))+")")
+	add("device_id", "d.id")
+	add("organization_id", "l.organization_id")
+	add("role", "l.role")
+	add("technology", "l.technology")
+	if withStatus {
+		if value := r.URL.Query().Get("status"); value != "" {
+			normalized := normalizeReportStatus(value)
+			params = append(params, normalized)
+			placeholder := itoa(len(params))
+			if normalized == "ACTIVE" || normalized == "INACTIVE" || normalized == "DELETED" {
+				filters = append(filters, "l.status=$"+placeholder)
+			} else {
+				filters = append(filters, "(CASE WHEN COALESCE(ls.data_state,'NO_DATA')='NO_DATA' THEN 'NO_DATA' ELSE COALESCE(ls.connection_state,'UNKNOWN') END)=$"+placeholder)
+			}
+		}
 	}
-	var count int
-	query := `SELECT COUNT(DISTINCT l.id) FROM lines l JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE ` + strings.Join(filters, " AND ")
-	if err := s.DB.Pool.QueryRow(ctx, query, params...).Scan(&count); err != nil {
-		return 0
+	query := `SELECT DISTINCT l.id FROM lines l JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id LEFT JOIN line_states ls ON ls.line_id=l.id LEFT JOIN monitoring_points mp ON mp.line_id=l.id LEFT JOIN devices d ON d.monitoring_point_id=mp.id WHERE ` + strings.Join(filters, " AND ") + ` ORDER BY l.id`
+	rows, err := s.DB.Pool.Query(ctx, query, params...)
+	if err != nil {
+		return nil, err
 	}
-	return count
+	defer rows.Close()
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *Server) refreshReportFreshness(ctx context.Context, r *http.Request, p *auth.Principal) error {
+	ids, err := s.reportLineIDs(ctx, r, p, false)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if err := s.Measure.MarkFreshness(ctx, id, time.Now().UTC()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func ratio(ok, known int) *float64 {

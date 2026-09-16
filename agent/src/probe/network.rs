@@ -28,6 +28,8 @@ impl Probe for NetworkProbe {
         let mut reachability = Vec::new();
         let mut successes = 0usize;
         let mut attempts = 0usize;
+        let mut ping_attempts = 0usize;
+        let mut ping_successes = 0usize;
         let mut ping_samples = Vec::new();
 
         for target in &self.config.targets {
@@ -50,19 +52,24 @@ impl Probe for NetworkProbe {
             let address = format!("{host}:{}", self.config.ping_port);
             for _ in 0..PING_SAMPLES {
                 attempts += 1;
+                ping_attempts += 1;
                 let started = Instant::now();
                 if tcp_check(&address, timeout).is_ok() {
                     successes += 1;
+                    ping_successes += 1;
                     ping_samples.push(started.elapsed().as_secs_f64() * 1000.0);
                 }
             }
         }
 
         let connection_ok = successes > 0;
-        let packet_loss = if attempts == 0 {
+        // Packet loss describes the ping sample set, not the independent
+        // reachability targets used for availability. Mixing those counts
+        // would report loss whenever a target list contains an HTTP failure.
+        let packet_loss = if ping_attempts == 0 {
             100.0
         } else {
-            (attempts - successes) as f64 / attempts as f64 * 100.0
+            (ping_attempts - ping_successes) as f64 / ping_attempts as f64 * 100.0
         };
         let ping = average(&ping_samples);
         let jitter = if ping_samples.len() < 2 {
@@ -125,10 +132,29 @@ fn http_head(url: &str, timeout: Duration) -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?;
     let response = client.head(url).send().map_err(|error| error.to_string())?;
-    if response.status().is_success() || response.status().is_redirection() {
+    let status = response.status();
+    if status.is_success() || status.is_redirection() {
         Ok(())
+    } else if status == reqwest::StatusCode::METHOD_NOT_ALLOWED
+        || status == reqwest::StatusCode::NOT_IMPLEMENTED
+    {
+        // Some captive portals and simple health endpoints do not implement
+        // HEAD. A one-byte ranged GET still proves reachability without
+        // turning the reachability check into a throughput test.
+        let mut retry = client
+            .get(url)
+            .header(reqwest::header::RANGE, "bytes=0-0")
+            .send()
+            .map_err(|error| error.to_string())?;
+        if retry.status().is_success() || retry.status().is_redirection() {
+            let mut byte = [0u8; 1];
+            let _ = retry.read(&mut byte);
+            Ok(())
+        } else {
+            Err(format!("target returned HTTP {}", retry.status()))
+        }
     } else {
-        Err(format!("target returned HTTP {}", response.status()))
+        Err(format!("target returned HTTP {status}"))
     }
 }
 

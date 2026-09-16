@@ -71,7 +71,17 @@ func (db *DB) Ready(ctx context.Context) error {
 		return err
 	}
 	var one int
-	return db.Pool.QueryRow(ctx, "SELECT 1").Scan(&one)
+	if err := db.Pool.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil {
+		return err
+	}
+	var migrated bool
+	if err := db.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = 1)").Scan(&migrated); err != nil {
+		return err
+	}
+	if !migrated {
+		return fmt.Errorf("required database migration 1 is not applied")
+	}
+	return nil
 }
 
 func (db *DB) Migrate(ctx context.Context) error {

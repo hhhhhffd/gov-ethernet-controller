@@ -11,8 +11,11 @@ server image и Rust 2021 agent.
 - `/health`, `/health/live`, `/health/ready`, login, scope-фильтры, agent batch,
   incidents, provider case, reports и static `web/` проверены HTTP-запросами;
 - `cargo test --manifest-path agent/Cargo.toml` прошёл (7 unit-тестов);
-- cross-build создал проверенный `dist/linkwatch-agent-windows-amd64.exe`
-  (`PE32+ x86-64`, 1,996,288 bytes; `file` подтвердил Windows PE);
+- в репозитории присутствует проверенный `dist/linkwatch-agent-windows-amd64.exe`
+  (`PE32+ x86-64`, 1,996,288 bytes; `file` подтвердил Windows PE); native
+  Windows build path задокументирован в `scripts/build-agent.ps1`;
+- Linux release binary: 2,162,064 bytes; локальное измерение показало около
+  3.7 MiB RSS / 0.0% CPU в idle и около 3.6 MiB RSS во время `once`;
 - `go test ./...` в `server/` прошёл;
 - `./scripts/smoke.sh` — канонический повторяемый E2E прогон (Compose + Rust
   `once` + PostgreSQL persistence).
