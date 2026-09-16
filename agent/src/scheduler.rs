@@ -111,7 +111,24 @@ pub fn next_deadline(
     let current_day = epoch_seconds / DAY_SECONDS;
     let elapsed = epoch_seconds % DAY_SECONDS;
     let (mut day, mut index) = match state.day {
-        Some(day) if day == current_day => (day, state.slot_index),
+        Some(day) if day == current_day => {
+            // Do not burst-replay a backlog after a long outage. A pending
+            // slot is still eligible during the short wake-up grace window;
+            // older missed slots are skipped in favour of the next future
+            // deadline and the cursor advances when that slot fires.
+            let first = schedule
+                .iter()
+                .enumerate()
+                .skip(state.slot_index)
+                .find(|(_, event)| {
+                    let scheduled = event.as_secs();
+                    scheduled >= elapsed
+                        || elapsed.saturating_sub(scheduled) <= MISSED_SLOT_GRACE_SECONDS
+                })
+                .map(|(index, _)| index)
+                .unwrap_or(schedule.len());
+            (day, first)
+        }
         Some(day) if day > current_day => (current_day, 0),
         _ => {
             let first = schedule
@@ -246,5 +263,21 @@ mod tests {
         let (deadline, slot) = next_deadline(3 * 60 * 60 + 1, &schedule, &state).unwrap();
         assert_eq!(deadline, 3 * 60 * 60);
         assert_eq!(slot, 0);
+    }
+
+    #[test]
+    fn long_restart_does_not_burst_replay_missed_slots() {
+        let schedule = vec![
+            Duration::from_secs(3 * 60 * 60),
+            Duration::from_secs(9 * 60 * 60),
+            Duration::from_secs(15 * 60 * 60),
+        ];
+        let state = State {
+            day: Some(0),
+            slot_index: 1,
+        };
+        let (deadline, slot) = next_deadline(12 * 60 * 60, &schedule, &state).unwrap();
+        assert_eq!(slot, 2);
+        assert_eq!(deadline, 15 * 60 * 60);
     }
 }
