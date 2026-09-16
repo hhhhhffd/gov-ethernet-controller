@@ -46,6 +46,7 @@ type Result struct {
 	MeasurementID int64                  `json:"measurement_id"`
 	Duplicate     bool                   `json:"duplicate"`
 	Accepted      bool                   `json:"accepted"`
+	Error         string                 `json:"error,omitempty"`
 	StateApplied  bool                   `json:"state_applied"`
 	Evaluation    map[string]interface{} `json:"evaluation,omitempty"`
 }
@@ -125,6 +126,21 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, agentV
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var duplicateID int64
+	if err := tx.QueryRow(ctx, `SELECT id FROM measurements WHERE device_id=$1 AND client_event_id=$2`, deviceID, input.ClientEventID).Scan(&duplicateID); err == nil {
+		if err := tx.Commit(ctx); err != nil {
+			return Result{}, err
+		}
+		return Result{ClientEventID: input.ClientEventID, MeasurementID: duplicateID, Duplicate: true, Accepted: true}, nil
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Result{}, err
+	}
+	// Serialize the state machine per line. The duplicate check above is kept
+	// fast for the common retry path; after acquiring the row lock we check it
+	// again because another transaction may have committed while we waited.
+	var lockedLineID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM lines WHERE id=$1 FOR UPDATE`, lineID).Scan(&lockedLineID); err != nil {
+		return Result{}, err
+	}
 	if err := tx.QueryRow(ctx, `SELECT id FROM measurements WHERE device_id=$1 AND client_event_id=$2`, deviceID, input.ClientEventID).Scan(&duplicateID); err == nil {
 		if err := tx.Commit(ctx); err != nil {
 			return Result{}, err
@@ -494,25 +510,14 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, mea
 		generatedAt := time.Now().UTC().Truncate(time.Second)
 		message := "Подтверждено нарушение линии " + lineID + ": " + result.Reason
 		var notificationID int64
-		if err := tx.QueryRow(ctx, `INSERT INTO notifications(source_type,source_id,channel,recipient_scope,message,status,generated_at) VALUES ('INCIDENT',$1,'WEB',$2,$3,'GENERATED',$4) RETURNING id`, strconv.FormatInt(incidentID, 10), lineID, message, generatedAt).Scan(&notificationID); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO notifications(source_type,source_id,channel,recipient_scope,message,status,generated_at) VALUES ('INCIDENT',$1,'WEB',$2,$3,'PENDING',$4) RETURNING id`, strconv.FormatInt(incidentID, 10), lineID, message, generatedAt).Scan(&notificationID); err != nil {
 			return err
 		}
-		// Delivery is best-effort but durable: a failed adapter attempt is
-		// persisted as FAILED and can be retried by an administrator.
-		delivery, deliveryErr := providers.SendNotification(ctx, providers.Notification{ID: notificationID, SourceType: "INCIDENT", SourceID: strconv.FormatInt(incidentID, 10), Scope: lineID, Message: message, GeneratedAt: generatedAt})
-		if deliveryErr != nil {
-			retryable := false
-			if typed, ok := deliveryErr.(*providers.DeliveryError); ok {
-				retryable = typed.Retryable
-			}
-			_, _ = tx.Exec(ctx, `UPDATE notifications SET status='FAILED',delivery_attempts=delivery_attempts+1,delivery_error=$1 WHERE id=$2`, deliveryErr.Error(), notificationID)
-			_, _ = tx.Exec(ctx, `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'NOTIFICATION_DELIVERY_FAILED','system',$2::jsonb,$3)`, incidentID, fmt.Sprintf(`{"notification_id":%d,"error":%q,"retryable":%t}`, notificationID, deliveryErr.Error(), retryable), generatedAt)
-		} else {
-			if delivery.Channel == "WEB" {
-				_, _ = tx.Exec(ctx, `UPDATE notifications SET channel=$1,delivery_attempts=delivery_attempts+1,delivery_error=NULL WHERE id=$2`, delivery.Channel, notificationID)
-			} else {
-				_, _ = tx.Exec(ctx, `UPDATE notifications SET status='SENT',channel=$1,delivery_attempts=delivery_attempts+1,sent_at=$2 WHERE id=$3`, delivery.Channel, generatedAt, notificationID)
-			}
+		// Notification delivery is an outbox concern. Commit the observation,
+		// incident and PENDING row first; a dispatcher performs network I/O only
+		// after this transaction has completed.
+		if _, err := tx.Exec(ctx, `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'NOTIFICATION_QUEUED','system',$2::jsonb,$3)`, incidentID, fmt.Sprintf(`{"notification_id":%d}`, notificationID), generatedAt); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -564,8 +569,153 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, mea
 	return updateRecovery(ctx, tx, lineID, at, recent, result, policy, recoveryRequired, recoveryMinutes)
 }
 
+type pendingNotification struct {
+	ID          int64
+	SourceType  string
+	SourceID    string
+	Scope       string
+	Message     string
+	GeneratedAt time.Time
+	Attempts    int
+}
+
+// DispatchPendingNotifications drains the PostgreSQL notification outbox.
+// Rows are claimed and marked DELIVERING in a short transaction, then the
+// provider is called after that transaction has committed. A second short
+// transaction records SENT/FAILED and retry metadata, so no database lock is
+// held during network I/O.
+func (s *Service) DispatchPendingNotifications(ctx context.Context, limit int) (int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	dispatched := 0
+	var firstErr error
+	for dispatched < limit {
+		item, ok, err := s.claimNotification(ctx, 0)
+		if err != nil {
+			return dispatched, err
+		}
+		if !ok {
+			break
+		}
+		result, deliveryErr := providers.SendNotification(ctx, providers.Notification{
+			ID:          item.ID,
+			SourceType:  item.SourceType,
+			SourceID:    item.SourceID,
+			Scope:       item.Scope,
+			Message:     item.Message,
+			GeneratedAt: item.GeneratedAt,
+		})
+		if err := s.finishNotification(ctx, *item, result, deliveryErr); err != nil {
+			return dispatched, err
+		}
+		if deliveryErr != nil {
+			if firstErr == nil {
+				firstErr = deliveryErr
+			}
+			continue
+		}
+		dispatched++
+	}
+	return dispatched, firstErr
+}
+
+// DispatchNotification claims and delivers one specific outbox row. It is
+// used by the administrator retry endpoint and follows the same outbox path
+// as the background worker.
+func (s *Service) DispatchNotification(ctx context.Context, notificationID int64) (providers.Result, error) {
+	item, ok, err := s.claimNotification(ctx, notificationID)
+	if err != nil {
+		return providers.Result{}, err
+	}
+	if !ok {
+		return providers.Result{}, fmt.Errorf("notification %d is not pending", notificationID)
+	}
+	result, deliveryErr := providers.SendNotification(ctx, providers.Notification{
+		ID:          item.ID,
+		SourceType:  item.SourceType,
+		SourceID:    item.SourceID,
+		Scope:       item.Scope,
+		Message:     item.Message,
+		GeneratedAt: item.GeneratedAt,
+	})
+	if err := s.finishNotification(ctx, *item, result, deliveryErr); err != nil {
+		return providers.Result{}, err
+	}
+	return result, deliveryErr
+}
+
+func (s *Service) claimNotification(ctx context.Context, notificationID int64) (*pendingNotification, bool, error) {
+	tx, err := s.DB.Pool.Begin(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	query := `SELECT id,source_type,source_id,recipient_scope,message,generated_at,delivery_attempts
+		FROM notifications WHERE `
+	args := []interface{}{}
+	if notificationID > 0 {
+		// An explicit administrator retry may bypass exponential backoff, but
+		// never steals a live DELIVERING row from the worker.
+		query += `id=$1 AND (status IN ('PENDING','GENERATED','FAILED') OR (status='DELIVERING' AND delivery_started_at < now() - interval '5 minutes'))`
+		args = append(args, notificationID)
+	} else {
+		query += `(status IN ('PENDING','GENERATED') OR (status='FAILED' AND delivery_retryable)
+			OR (status='DELIVERING' AND delivery_started_at < now() - interval '5 minutes'))
+		  AND (next_attempt_at IS NULL OR next_attempt_at <= now())`
+	}
+	query += ` ORDER BY generated_at,id FOR UPDATE SKIP LOCKED LIMIT 1`
+	item := &pendingNotification{}
+	if err := tx.QueryRow(ctx, query, args...).Scan(&item.ID, &item.SourceType, &item.SourceID, &item.Scope, &item.Message, &item.GeneratedAt, &item.Attempts); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	started := time.Now().UTC().Truncate(time.Second)
+	if _, err := tx.Exec(ctx, `UPDATE notifications SET status='DELIVERING',delivery_attempts=delivery_attempts+1,delivery_error=NULL,next_attempt_at=NULL,delivery_started_at=$1 WHERE id=$2`, started, item.ID); err != nil {
+		return nil, false, err
+	}
+	item.Attempts++
+	if err := tx.Commit(ctx); err != nil {
+		return nil, false, err
+	}
+	return item, true, nil
+}
+
+func (s *Service) finishNotification(ctx context.Context, item pendingNotification, result providers.Result, deliveryErr error) error {
+	now := time.Now().UTC().Truncate(time.Second)
+	if deliveryErr != nil {
+		retryable := false
+		if typed, ok := deliveryErr.(*providers.DeliveryError); ok {
+			retryable = typed.Retryable
+		}
+		var nextAttempt interface{}
+		if retryable {
+			exponent := minInt(maxInt(item.Attempts-1, 0), 5)
+			backoff := time.Duration(1<<exponent) * time.Minute
+			nextAttempt = now.Add(backoff)
+		}
+		_, err := s.DB.Pool.Exec(ctx, `UPDATE notifications SET status='FAILED',delivery_error=$1,delivery_retryable=$2,next_attempt_at=$3,delivery_started_at=NULL WHERE id=$4`, deliveryErr.Error(), retryable, nextAttempt, item.ID)
+		return err
+	}
+	channel := result.Channel
+	if channel == "" {
+		channel = "WEB"
+	}
+	_, err := s.DB.Pool.Exec(ctx, `UPDATE notifications SET status='SENT',channel=$1,sent_at=$2,delivery_error=NULL,delivery_retryable=FALSE,next_attempt_at=NULL,delivery_started_at=NULL WHERE id=$3`, channel, now, item.ID)
+	return err
+}
+
 func maxInt(a, b int) int {
 	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b
@@ -614,8 +764,9 @@ func createIncident(ctx context.Context, tx pgx.Tx, lineID string, at time.Time,
 		}
 	}
 	var id int64
+	placeholder := "PENDING-" + RandomEventID()
 	err := tx.QueryRow(ctx, `INSERT INTO incidents(incident_no,line_id,source,violation_type,status,recovery_state,started_at,confirmed_at,recurrence_of,opening_snapshot_json,created_at)
-        VALUES ('PENDING',$1,'AUTO',$2,'NEW','NONE',$3,$4,$5,$6::jsonb,$4) RETURNING id`, lineID, violationType, started, at, previousID, string(snapshot)).Scan(&id)
+	        VALUES ($1,$2,'AUTO',$3,'NEW','NONE',$4,$5,$6,$7::jsonb,$5) RETURNING id`, placeholder, lineID, violationType, started, at, previousID, string(snapshot)).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -710,22 +861,31 @@ func mustJSON(value interface{}) string { data, _ := json.Marshal(value); return
 // can be accepted as evidence while it still leaves the current data axis
 // NO_DATA until a recent observation arrives.
 func (s *Service) MarkFreshness(ctx context.Context, lineID string, now time.Time) error {
+	tx, err := s.DB.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var lockedLineID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM lines WHERE id=$1 FOR UPDATE`, lineID).Scan(&lockedLineID); err != nil {
+		return err
+	}
 	var current lineState
 	var effective, updated *time.Time
 	var evidence []byte
 	var policyID *int64
-	err := s.DB.Pool.QueryRow(ctx, `SELECT line_id,data_state,connection_state,contract_state,recovery_state,effective_since,updated_at,reason,evidence_ids_json,policy_id FROM line_states WHERE line_id=$1`, lineID).Scan(&current.LineID, &current.DataState, &current.ConnectionState, &current.ContractState, &current.RecoveryState, &effective, &updated, &current.Reason, &evidence, &policyID)
+	err = tx.QueryRow(ctx, `SELECT line_id,data_state,connection_state,contract_state,recovery_state,effective_since,updated_at,reason,evidence_ids_json,policy_id FROM line_states WHERE line_id=$1`, lineID).Scan(&current.LineID, &current.DataState, &current.ConnectionState, &current.ContractState, &current.RecoveryState, &effective, &updated, &current.Reason, &evidence, &policyID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	policy, err := loadPolicy(ctx, s.DB.Pool, lineID, now.UTC())
+	policy, err := loadPolicy(ctx, tx, lineID, now.UTC())
 	if err != nil {
 		return err
 	}
-	contract, err := loadContract(ctx, s.DB.Pool, lineID, now.UTC())
+	contract, err := loadContract(ctx, tx, lineID, now.UTC())
 	if err != nil {
 		return err
 	}
@@ -735,7 +895,7 @@ func (s *Service) MarkFreshness(ctx context.Context, lineID string, now time.Tim
 		policy.Value = &evaluation.Policy{ID: *policyID}
 	}
 	var last *time.Time
-	if err := s.DB.Pool.QueryRow(ctx, `SELECT MAX(observed_at) FROM measurements WHERE line_id=$1`, lineID).Scan(&last); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT MAX(observed_at) FROM measurements WHERE line_id=$1`, lineID).Scan(&last); err != nil {
 		return err
 	}
 	freshSeconds := 86400
@@ -757,7 +917,10 @@ func (s *Service) MarkFreshness(ctx context.Context, lineID string, now time.Tim
 	if dataState == "NO_DATA" {
 		reason = "No fresh observations from monitoring point"
 	}
-	return writeState(ctx, s.DB.Pool, lineID, now.UTC(), dataState, connectionState, contractState, current.RecoveryState, reason, current.EvidenceIDs, policy.Value, contract.Value)
+	if err := writeState(ctx, tx, lineID, now.UTC(), dataState, connectionState, contractState, current.RecoveryState, reason, current.EvidenceIDs, policy.Value, contract.Value); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func RandomEventID() string {
