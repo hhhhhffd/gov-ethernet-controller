@@ -589,8 +589,9 @@ func (s *Service) DispatchPendingNotifications(ctx context.Context, limit int) (
 		limit = 100
 	}
 	dispatched := 0
+	processed := 0
 	var firstErr error
-	for dispatched < limit {
+	for processed < limit {
 		item, ok, err := s.claimNotification(ctx, 0)
 		if err != nil {
 			return dispatched, err
@@ -598,6 +599,7 @@ func (s *Service) DispatchPendingNotifications(ctx context.Context, limit int) (
 		if !ok {
 			break
 		}
+		processed++
 		result, deliveryErr := providers.SendNotification(ctx, providers.Notification{
 			ID:          item.ID,
 			SourceType:  item.SourceType,
