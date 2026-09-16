@@ -1,0 +1,15 @@
+[Unit]
+Description=VKO LINKWATCH monitoring agent
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/vko-agent
+EnvironmentFile=/etc/vko-agent.env
+Environment=PYTHONPATH=/opt/vko-agent/agent
+ExecStart=/usr/bin/python3 -m vko_agent
+Restart=always
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

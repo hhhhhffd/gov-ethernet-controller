@@ -1,0 +1,88 @@
+# Python environments and packaging
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+*.whl
+.eggs/
+.tox/
+.nox/
+.mypy_cache/
+.pyright/
+.ruff_cache/
+.pytest_cache/
+.hypothesis/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+!.env.prod.example
+*.local
+*.local.*
+*.secret
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local databases, agent queues and Docker credentials/state
+*.db
+*.sqlite
+*.sqlite3
+vko_mvp.db
+.vko-agent/
+.docker-config/
+docker-compose.override.yml
+docker-compose.local.yml
+
+# Internal agent/editor context (never product source)
+.agent/
+.agents/
+.codex/
+.serena/
+project-context.md
+.project-context.md
+
+# Logs, reports and runtime output
+*.log
+logs/
+tmp/
+temp/
+test-results/
+playwright-report/
+blob-report/
+
+# IDE and local tooling
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+.cache/
+
+# Node/tooling caches (the UI is static today, but local tooling may be used)
+node_modules/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini

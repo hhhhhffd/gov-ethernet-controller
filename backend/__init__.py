@@ -1,0 +1,1 @@
+"""VKO MVP backend package."""

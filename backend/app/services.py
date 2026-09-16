@@ -1,0 +1,1018 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Iterable
+
+UTC = timezone.utc
+OPEN_INCIDENT_STATUSES = {"NEW", "SENT_TO_PROVIDER", "IN_PROGRESS", "WAITING_INFO", "RESOLVED"}
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+def as_utc(value: datetime | str | None) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def dt_text(value: datetime | str | None) -> str | None:
+    parsed = as_utc(value)
+    return parsed.isoformat() if parsed else None
+
+
+def json_text(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+
+
+def json_value(value: str | None, default: Any = None) -> Any:
+    if not value:
+        return default
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return default
+
+
+def token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def row_dict(row: Any) -> dict[str, Any] | None:
+    return dict(row) if row is not None else None
+
+
+@dataclass(frozen=True)
+class Principal:
+    id: str
+    username: str
+    role: str
+    scopes: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role in {"ADMIN", "OBLAST"}
+
+
+def principal_for_token(connection: Any, token: str) -> Principal | None:
+    row = connection.execute(
+        "SELECT id, username, role FROM users WHERE token_hash = ? AND disabled_at IS NULL",
+        (token_hash(token),),
+    ).fetchone()
+    if not row:
+        return None
+    scopes = tuple(
+        (scope["scope_type"], scope["scope_id"])
+        for scope in connection.execute(
+            "SELECT scope_type, scope_id FROM role_scopes WHERE user_id = ?",
+            (row["id"],),
+        ).fetchall()
+    )
+    return Principal(row["id"], row["username"], row["role"], scopes)
+
+
+def device_for_token(connection: Any, device_id: str, token: str) -> Any | None:
+    return connection.execute(
+        "SELECT d.*, mp.line_id, mp.id AS point_id "
+        "FROM devices d JOIN monitoring_points mp ON mp.id = d.monitoring_point_id "
+        "WHERE d.id = ? AND d.auth_token_hash = ? AND d.blocked_at IS NULL AND mp.active = 1",
+        (device_id, token_hash(token)),
+    ).fetchone()
+
+
+def line_row(connection: Any, line_id: str) -> Any | None:
+    return connection.execute(
+        "SELECT l.*, o.school_id, o.name AS organization_name, o.district, o.address, o.contact_name, o.contact_phone, "
+        "o.latitude, o.longitude, p.name AS provider_name, p.support_contact "
+        "FROM lines l JOIN organizations o ON o.id = l.organization_id "
+        "LEFT JOIN providers p ON p.id = l.provider_id WHERE l.id = ?",
+        (line_id,),
+    ).fetchone()
+
+
+def _scope_matches(principal: Principal, line: Any) -> bool:
+    if principal.is_admin:
+        return True
+    scopes = set(principal.scopes)
+    if principal.role == "PROVIDER":
+        return ("PROVIDER", line["provider_id"]) in scopes or ("LINE", line["id"]) in scopes
+    if principal.role == "DISTRICT":
+        return (
+            ("DISTRICT", line["district"]) in scopes
+            or ("ORGANIZATION", line["organization_id"]) in scopes
+            or ("LINE", line["id"]) in scopes
+        )
+    if principal.role == "SCHOOL":
+        return ("ORGANIZATION", line["organization_id"]) in scopes or (
+            "LINE",
+            line["id"],
+        ) in scopes
+    return False
+
+
+def line_allowed(connection: Any, principal: Principal, line_id: str) -> bool:
+    row = line_row(connection, line_id)
+    return bool(row and _scope_matches(principal, row))
+
+
+def line_scope_sql(principal: Principal, params: list[Any]) -> str:
+    """Return a SQL predicate; values are always appended as parameters."""
+    if principal.is_admin:
+        return "1 = 1"
+    scopes = set(principal.scopes)
+    if principal.role == "PROVIDER":
+        providers = [value for kind, value in scopes if kind == "PROVIDER"]
+        lines = [value for kind, value in scopes if kind == "LINE"]
+        clauses = []
+        if providers:
+            clauses.append("l.provider_id IN (%s)" % ",".join("?" for _ in providers))
+            params.extend(providers)
+        if lines:
+            clauses.append("l.id IN (%s)" % ",".join("?" for _ in lines))
+            params.extend(lines)
+        return "(" + " OR ".join(clauses or ["0 = 1"]) + ")"
+    if principal.role == "DISTRICT":
+        districts = [value for kind, value in scopes if kind == "DISTRICT"]
+        orgs = [value for kind, value in scopes if kind == "ORGANIZATION"]
+        lines = [value for kind, value in scopes if kind == "LINE"]
+        clauses = []
+        if districts:
+            clauses.append("o.district IN (%s)" % ",".join("?" for _ in districts))
+            params.extend(districts)
+        if orgs:
+            clauses.append("l.organization_id IN (%s)" % ",".join("?" for _ in orgs))
+            params.extend(orgs)
+        if lines:
+            clauses.append("l.id IN (%s)" % ",".join("?" for _ in lines))
+            params.extend(lines)
+        return "(" + " OR ".join(clauses or ["0 = 1"]) + ")"
+    orgs = [value for kind, value in scopes if kind == "ORGANIZATION"]
+    lines = [value for kind, value in scopes if kind == "LINE"]
+    clauses = []
+    if orgs:
+        clauses.append("l.organization_id IN (%s)" % ",".join("?" for _ in orgs))
+        params.extend(orgs)
+    if lines:
+        clauses.append("l.id IN (%s)" % ",".join("?" for _ in lines))
+        params.extend(lines)
+    return "(" + " OR ".join(clauses or ["0 = 1"]) + ")"
+
+
+def policy_snapshot(row: Any) -> dict[str, Any]:
+    if not row:
+        return {}
+    return {
+        "id": row["id"],
+        "scope_type": row["scope_type"],
+        "scope_id": row["scope_id"],
+        "version": row["version"],
+        "valid_from": row["valid_from"],
+        "valid_to": row["valid_to"],
+        "download_min": row["download_min"],
+        "upload_min": row["upload_min"],
+        "ping_max": row["ping_max"],
+        "jitter_max": row["jitter_max"],
+        "packet_loss_max": row["packet_loss_max"],
+        "availability_min": row["availability_min"],
+        "confirm_count": row["confirm_count"],
+        "confirm_minutes": row["confirm_minutes"],
+        "recovery_count": row["recovery_count"],
+        "recovery_minutes": row["recovery_minutes"],
+        "freshness_seconds": row["freshness_seconds"],
+    }
+
+
+def contract_snapshot(row: Any) -> dict[str, Any]:
+    if not row:
+        return {}
+    return {
+        "id": row["id"],
+        "line_id": row["line_id"],
+        "valid_from": row["valid_from"],
+        "valid_to": row["valid_to"],
+        "contract_no": row["contract_no"],
+        "download_min": row["download_min"],
+        "upload_min": row["upload_min"],
+        "ping_max": row["ping_max"],
+        "jitter_max": row["jitter_max"],
+        "packet_loss_max": row["packet_loss_max"],
+        "availability_min": row["availability_min"],
+    }
+
+
+def effective_policy(connection: Any, line_id: str, observed_at: str) -> Any | None:
+    row = connection.execute(
+        "SELECT * FROM threshold_policy_versions "
+        "WHERE scope_type = 'LINE' AND scope_id = ? AND valid_from <= ? "
+        "AND (valid_to IS NULL OR valid_to > ?) ORDER BY valid_from DESC LIMIT 1",
+        (line_id, observed_at, observed_at),
+    ).fetchone()
+    if row:
+        return row
+    return connection.execute(
+        "SELECT * FROM threshold_policy_versions "
+        "WHERE scope_type = 'GLOBAL' AND valid_from <= ? "
+        "AND (valid_to IS NULL OR valid_to > ?) ORDER BY valid_from DESC LIMIT 1",
+        (observed_at, observed_at),
+    ).fetchone()
+
+
+def effective_contract(connection: Any, line_id: str, observed_at: str) -> Any | None:
+    return connection.execute(
+        "SELECT * FROM contract_versions WHERE line_id = ? AND valid_from <= ? "
+        "AND (valid_to IS NULL OR valid_to > ?) ORDER BY valid_from DESC LIMIT 1",
+        (line_id, observed_at, observed_at),
+    ).fetchone()
+
+
+def _metric_violations(measurement: dict[str, Any], policy: Any) -> list[dict[str, Any]]:
+    if not policy:
+        return []
+    checks = [
+        ("download", "MIN", measurement.get("download"), policy["download_min"]),
+        ("upload", "MIN", measurement.get("upload"), policy["upload_min"]),
+        ("ping", "MAX", measurement.get("ping"), policy["ping_max"]),
+        ("jitter", "MAX", measurement.get("jitter"), policy["jitter_max"]),
+        ("packet_loss", "MAX", measurement.get("packet_loss"), policy["packet_loss_max"]),
+        ("availability", "MIN", measurement.get("availability"), policy["availability_min"]),
+    ]
+    violations: list[dict[str, Any]] = []
+    for metric, direction, actual, threshold in checks:
+        if actual is None:
+            continue
+        bad = actual < threshold if direction == "MIN" else actual > threshold
+        if bad:
+            violations.append(
+                {"code": f"BASELINE_{metric.upper()}", "metric": metric, "actual": actual, "threshold": threshold, "direction": direction}
+            )
+    return violations
+
+
+def _contract_violations(measurement: dict[str, Any], contract: Any) -> list[dict[str, Any]]:
+    if not contract:
+        return []
+    checks = [
+        ("download", "MIN", measurement.get("download"), contract["download_min"]),
+        ("upload", "MIN", measurement.get("upload"), contract["upload_min"]),
+        ("ping", "MAX", measurement.get("ping"), contract["ping_max"]),
+        ("jitter", "MAX", measurement.get("jitter"), contract["jitter_max"]),
+        ("packet_loss", "MAX", measurement.get("packet_loss"), contract["packet_loss_max"]),
+        ("availability", "MIN", measurement.get("availability"), contract["availability_min"]),
+    ]
+    result: list[dict[str, Any]] = []
+    for metric, direction, actual, threshold in checks:
+        if actual is None or threshold is None:
+            continue
+        bad = actual < threshold if direction == "MIN" else actual > threshold
+        if bad:
+            result.append(
+                {"code": f"CONTRACT_{metric.upper()}", "metric": metric, "actual": actual, "threshold": threshold, "direction": direction}
+            )
+    return result
+
+
+def evaluate_measurement(
+    connection: Any,
+    line_id: str,
+    measurement: dict[str, Any],
+) -> tuple[dict[str, Any], Any | None, Any | None]:
+    observed_at = dt_text(measurement["observed_at"])
+    policy = effective_policy(connection, line_id, observed_at)
+    contract = effective_contract(connection, line_id, observed_at)
+    if measurement["quality"] == "INVALID":
+        return (
+            {
+                "baseline_state": "UNKNOWN",
+                "contract_state": "UNKNOWN" if not contract else "UNKNOWN",
+                "violations": [],
+                "valid": False,
+                "reason": "measurement marked INVALID",
+                "policy_snapshot": policy_snapshot(policy),
+                "contract_snapshot": contract_snapshot(contract),
+            },
+            policy,
+            contract,
+        )
+    baseline = _metric_violations(measurement, policy)
+    if measurement["connection_status"] == "NO_INTERNET":
+        baseline.insert(
+            0,
+            {"code": "NO_INTERNET", "metric": "connection_status", "actual": "NO_INTERNET", "threshold": "reachable"},
+        )
+    has_metrics = any(
+        measurement.get(name) is not None
+        for name in ("download", "upload", "ping", "jitter", "packet_loss", "availability")
+    )
+    contract_bad = _contract_violations(measurement, contract)
+    if not policy:
+        # Connectivity evidence is still meaningful without a configured
+        # performance policy; metric-quality compliance remains unknown.
+        baseline_state = "VIOLATION" if measurement["connection_status"] == "NO_INTERNET" else "UNKNOWN"
+    elif baseline:
+        baseline_state = "VIOLATION"
+    elif has_metrics or measurement["connection_status"] == "OK":
+        baseline_state = "OK"
+    else:
+        baseline_state = "UNKNOWN"
+    contract_state = "DEVIATES" if contract_bad else ("MEETS" if contract and has_metrics else "UNKNOWN")
+    violations = baseline + contract_bad
+    reason = "No threshold violation"
+    if violations:
+        reason = "; ".join(
+            f"{item['metric']} {item['actual']} ({item['direction']} {item['threshold']})"
+            if item.get("direction")
+            else str(item["code"])
+            for item in violations
+        )
+    return (
+        {
+            "baseline_state": baseline_state,
+            "contract_state": contract_state,
+            "violations": violations,
+            "valid": True,
+            "reason": reason,
+            "policy_snapshot": policy_snapshot(policy),
+            "contract_snapshot": contract_snapshot(contract),
+        },
+        policy,
+        contract,
+    )
+
+
+def add_audit(
+    connection: Any,
+    actor_type: str,
+    actor_id: str,
+    action: str,
+    object_type: str,
+    object_id: str,
+    *,
+    scope_type: str | None = None,
+    scope_id: str | None = None,
+    before: Any = None,
+    after: Any = None,
+    request_id: str | None = None,
+) -> None:
+    connection.execute(
+        "INSERT INTO audit_events(actor_type, actor_id, action, object_type, object_id, "
+        "scope_type, scope_id, before_json, after_json, request_id, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            actor_type,
+            actor_id,
+            action,
+            object_type,
+            object_id,
+            scope_type,
+            scope_id,
+            json_text(before) if before is not None else None,
+            json_text(after) if after is not None else None,
+            request_id,
+            dt_text(utc_now()),
+        ),
+    )
+
+
+def add_incident_event(
+    connection: Any,
+    incident_id: int,
+    event_type: str,
+    actor: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    connection.execute(
+        "INSERT INTO incident_events(incident_id, event_type, actor, payload_json, created_at) VALUES (?, ?, ?, ?, ?)",
+        (incident_id, event_type, actor, json_text(payload or {}), dt_text(utc_now())),
+    )
+
+
+def read_recent_evaluations(connection: Any, line_id: str, limit: int) -> list[Any]:
+    return connection.execute(
+        "SELECT m.id, m.observed_at, m.connection_status, e.baseline_state, e.contract_state, "
+        "e.violations_json, e.valid, e.reason FROM measurements m "
+        "JOIN measurement_evaluations e ON e.measurement_id = m.id "
+        "WHERE m.line_id = ? ORDER BY m.observed_at DESC, m.id DESC LIMIT ?",
+        (line_id, limit),
+    ).fetchall()
+
+
+def _is_problem(evaluation: Any) -> bool:
+    if not evaluation or not evaluation["valid"]:
+        return False
+    return evaluation["baseline_state"] == "VIOLATION" or evaluation["contract_state"] == "DEVIATES"
+
+
+def _incident_problem(evaluation: dict[str, Any], violation_type: str) -> bool:
+    """Evaluate a new observation against the axis that opened the incident."""
+    if not evaluation.get("valid"):
+        return False
+    if violation_type == "NO_INTERNET":
+        return any(item.get("code") == "NO_INTERNET" for item in evaluation.get("violations", []))
+    if violation_type.startswith("CONTRACT_"):
+        return evaluation.get("contract_state") == "DEVIATES"
+    return evaluation.get("baseline_state") == "VIOLATION"
+
+
+def _problem_codes(evaluation: dict[str, Any]) -> list[str]:
+    return [item.get("code", "UNKNOWN") for item in evaluation.get("violations", [])]
+
+
+def _within_window(rows: list[Any], minutes: int) -> bool:
+    if minutes <= 0 or len(rows) < 2:
+        return True
+    timestamps = [as_utc(row["observed_at"]) for row in rows]
+    return (max(timestamps) - min(timestamps)).total_seconds() <= minutes * 60
+
+
+def _confirmed_streak(connection: Any, line_id: str, required: int, minutes: int = 0, target: str = "all") -> list[Any]:
+    recent = read_recent_evaluations(connection, line_id, max(required, 1))
+    if len(recent) < required or not _within_window(recent[:required], minutes):
+        return []
+    def problem(row: Any) -> bool:
+        if not row["valid"]:
+            return False
+        if target in {"connection", "baseline"}:
+            return row["baseline_state"] == "VIOLATION"
+        if target == "contract":
+            return row["contract_state"] == "DEVIATES"
+        return _is_problem(row)
+    return recent if all(problem(row) for row in recent[:required]) else []
+
+
+def _healthy_streak(connection: Any, line_id: str, required: int, minutes: int = 0, target: str = "all") -> list[Any]:
+    recent = read_recent_evaluations(connection, line_id, max(required, 1))
+    if len(recent) < required or not _within_window(recent[:required], minutes):
+        return []
+    def healthy(row: Any) -> bool:
+        if not row["valid"]:
+            return False
+        if target == "connection":
+            return row["baseline_state"] != "VIOLATION" and row["connection_status"] == "OK"
+        if target == "baseline":
+            return row["baseline_state"] == "OK"
+        if target == "contract":
+            return row["contract_state"] == "MEETS"
+        return not _is_problem(row)
+    return recent if all(healthy(row) for row in recent[:required]) else []
+
+
+def _current_state(connection: Any, line_id: str) -> Any | None:
+    return connection.execute("SELECT * FROM line_states WHERE line_id = ?", (line_id,)).fetchone()
+
+
+def _write_line_state(
+    connection: Any,
+    line_id: str,
+    *,
+    data_state: str,
+    connection_state: str,
+    contract_state: str,
+    recovery_state: str,
+    reason: str,
+    evidence_ids: Iterable[int],
+    policy: Any | None,
+    contract: Any | None = None,
+    occurred_at: str,
+) -> tuple[Any | None, bool]:
+    previous = _current_state(connection, line_id)
+    changed = not previous or any(
+        previous[field] != value
+        for field, value in (
+            ("data_state", data_state),
+            ("connection_state", connection_state),
+            ("contract_state", contract_state),
+            ("recovery_state", recovery_state),
+        )
+    )
+    if not changed:
+        connection.execute(
+            "UPDATE line_states SET updated_at = ?, reason = ?, evidence_ids_json = ?, policy_id = ? WHERE line_id = ?",
+            (occurred_at, reason, json_text(list(evidence_ids)), policy["id"] if policy else None, line_id),
+        )
+        return previous, False
+    effective_since = occurred_at
+    if previous and previous["connection_state"] == connection_state and previous["contract_state"] == contract_state:
+        effective_since = previous["effective_since"] or occurred_at
+    connection.execute(
+        "INSERT INTO line_states(line_id, data_state, connection_state, contract_state, recovery_state, effective_since, "
+        "updated_at, reason, evidence_ids_json, policy_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(line_id) DO UPDATE SET data_state=excluded.data_state, connection_state=excluded.connection_state, "
+        "contract_state=excluded.contract_state, recovery_state=excluded.recovery_state, effective_since=excluded.effective_since, "
+        "updated_at=excluded.updated_at, reason=excluded.reason, evidence_ids_json=excluded.evidence_ids_json, policy_id=excluded.policy_id",
+        (
+            line_id,
+            data_state,
+            connection_state,
+            contract_state,
+            recovery_state,
+            effective_since,
+            occurred_at,
+            reason,
+            json_text(list(evidence_ids)),
+            policy["id"] if policy else None,
+        ),
+    )
+    connection.execute(
+        "INSERT INTO line_state_events(line_id, previous_data_state, previous_connection_state, previous_contract_state, "
+        "data_state, connection_state, contract_state, recovery_state, reason, evidence_ids_json, config_snapshot_json, occurred_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            line_id,
+            previous["data_state"] if previous else None,
+            previous["connection_state"] if previous else None,
+            previous["contract_state"] if previous else None,
+            data_state,
+            connection_state,
+            contract_state,
+            recovery_state,
+            reason,
+            json_text(list(evidence_ids)),
+            json_text({"policy": policy_snapshot(policy), "contract": contract_snapshot(contract)}),
+            occurred_at,
+        ),
+    )
+    return previous, True
+
+
+def _latest_violations(connection: Any, line_id: str) -> list[dict[str, Any]]:
+    row = connection.execute(
+        "SELECT violations_json FROM measurement_evaluations e JOIN measurements m ON m.id = e.measurement_id "
+        "WHERE m.line_id = ? ORDER BY m.observed_at DESC, m.id DESC LIMIT 1",
+        (line_id,),
+    ).fetchone()
+    return json_value(row["violations_json"], []) if row else []
+
+
+def _incident_for_line(connection: Any, line_id: str, statuses: set[str] | None = None) -> Any | None:
+    statuses = statuses or OPEN_INCIDENT_STATUSES
+    placeholders = ",".join("?" for _ in statuses)
+    return connection.execute(
+        f"SELECT * FROM incidents WHERE line_id = ? AND status IN ({placeholders}) ORDER BY id DESC LIMIT 1",
+        (line_id, *statuses),
+    ).fetchone()
+
+
+def _latest_closed_incident(connection: Any, line_id: str, violation_type: str | None = None) -> Any | None:
+    params: list[Any] = [line_id]
+    where = ["line_id = ?", "status = 'CLOSED'"]
+    if violation_type:
+        where.append("violation_type = ?")
+        params.append(violation_type)
+    return connection.execute(
+        "SELECT * FROM incidents WHERE " + " AND ".join(where) + " ORDER BY id DESC LIMIT 1",
+        params,
+    ).fetchone()
+
+
+def _create_auto_incident(
+    connection: Any,
+    line_id: str,
+    occurred_at: str,
+    evidence: list[Any],
+    evaluation: dict[str, Any],
+    principal_id: str = "system",
+) -> int | None:
+    active = _incident_for_line(connection, line_id)
+    if active:
+        if active["status"] == "RESOLVED":
+            before = row_dict(active)
+            connection.execute(
+                "UPDATE incidents SET status = 'IN_PROGRESS', recovery_state = 'NONE', resolved_at = NULL WHERE id = ?",
+                (active["id"],),
+            )
+            add_incident_event(connection, active["id"], "REOPENED", principal_id, {"reason": "violation returned during recovery verification"})
+            add_audit(connection, "SYSTEM", principal_id, "incident.reopened", "incident", str(active["id"]), before=before, after={"status": "IN_PROGRESS"})
+        return int(active["id"])
+    code = _problem_codes(evaluation) or ["QUALITY_DEVIATION"]
+    violation_type = code[0]
+    previous = _latest_closed_incident(connection, line_id, violation_type)
+    snapshot = {
+        "line_id": line_id,
+        "confirmed_at": occurred_at,
+        "evidence_measurement_ids": [row["id"] for row in evidence],
+        "violations": evaluation["violations"],
+        "policy": evaluation["policy_snapshot"],
+        "contract": evaluation["contract_snapshot"],
+        "reason": evaluation["reason"],
+    }
+    started_at = evidence[-1]["observed_at"] if evidence else occurred_at
+    cursor = connection.execute(
+        "INSERT INTO incidents(incident_no, line_id, source, violation_type, status, recovery_state, started_at, confirmed_at, "
+        "assignee, recurrence_of, opening_snapshot_json, created_at) VALUES (?, ?, 'AUTO', ?, 'NEW', 'NONE', ?, ?, NULL, ?, ?, ?)",
+        (
+            "PENDING",
+            line_id,
+            violation_type,
+            started_at,
+            occurred_at,
+            previous["id"] if previous else None,
+            json_text(snapshot),
+            occurred_at,
+        ),
+    )
+    incident_id = int(cursor.lastrowid)
+    incident_no = f"INC-{incident_id:06d}"
+    connection.execute("UPDATE incidents SET incident_no = ? WHERE id = ?", (incident_no, incident_id))
+    add_incident_event(connection, incident_id, "CONFIRMED", "system", snapshot)
+    add_audit(connection, "SYSTEM", principal_id, "incident.created", "incident", str(incident_id), after=snapshot)
+    return incident_id
+
+
+def _update_recovery(
+    connection: Any,
+    line_id: str,
+    policy: Any | None,
+    occurred_at: str,
+    evidence: list[Any],
+    evaluation: dict[str, Any],
+) -> None:
+    incident = _incident_for_line(connection, line_id)
+    if not incident:
+        return
+    is_problem = _incident_problem(evaluation, incident["violation_type"])
+    if is_problem:
+        if incident["status"] == "RESOLVED":
+            _create_auto_incident(
+                connection,
+                line_id,
+                occurred_at,
+                evidence,
+                {
+                    "violations": evaluation.get("violations", _latest_violations(connection, line_id)),
+                    "reason": "violation returned",
+                    "policy_snapshot": evaluation.get("policy_snapshot") or policy_snapshot(policy),
+                    "contract_snapshot": evaluation.get("contract_snapshot", {}),
+                },
+            )
+        return
+    required = int(policy["recovery_count"] if policy else 3)
+    if incident["violation_type"] == "NO_INTERNET":
+        target = "connection"
+    elif incident["violation_type"].startswith("CONTRACT_"):
+        target = "contract"
+    else:
+        target = "baseline"
+    good = _healthy_streak(
+        connection,
+        line_id,
+        required,
+        int(policy["recovery_minutes"] if policy else 0),
+        target=target,
+    )
+    if not good:
+        if incident["recovery_state"] == "NONE":
+            if incident["source"] == "AUTO" and incident["status"] not in {"RESOLVED", "CLOSED"}:
+                connection.execute("UPDATE incidents SET status = 'RESOLVED', recovery_state = 'OBSERVED', resolved_at = ? WHERE id = ?", (occurred_at, incident["id"]))
+                add_incident_event(connection, incident["id"], "RECOVERY_OBSERVED", "system", {"measurement_id": evidence[0]["id"] if evidence else None, "status": "RESOLVED"})
+            else:
+                connection.execute("UPDATE incidents SET recovery_state = 'OBSERVED' WHERE id = ?", (incident["id"],))
+                add_incident_event(connection, incident["id"], "RECOVERY_OBSERVED", "system", {"measurement_id": evidence[0]["id"] if evidence else None})
+        return
+    if incident["recovery_state"] != "CONFIRMED":
+        connection.execute(
+            "UPDATE incidents SET recovery_state = 'CONFIRMED', closed_at = CASE WHEN status = 'RESOLVED' THEN ? ELSE closed_at END, "
+            "duration_minutes = CASE WHEN status = 'RESOLVED' THEN (julianday(?) - julianday(started_at)) * 1440 ELSE duration_minutes END "
+            "WHERE id = ?",
+            (occurred_at, occurred_at, incident["id"]),
+        )
+        add_incident_event(connection, incident["id"], "RECOVERY_CONFIRMED", "system", {"evidence_measurement_ids": [row["id"] for row in good]})
+    fresh = connection.execute("SELECT status FROM incidents WHERE id = ?", (incident["id"],)).fetchone()["status"]
+    if fresh == "RESOLVED":
+        connection.execute("UPDATE incidents SET status = 'CLOSED', closed_at = COALESCE(closed_at, ?), duration_minutes = (julianday(?) - julianday(started_at)) * 1440 WHERE id = ?", (occurred_at, occurred_at, incident["id"]))
+        add_incident_event(connection, incident["id"], "CLOSED", "system", {"reason": "sustained recovery confirmed"})
+
+
+def process_measurement(connection: Any, device: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    observed_at = dt_text(payload["observed_at"])
+    received_at = dt_text(utc_now())
+    existing = connection.execute(
+        "SELECT m.id, e.baseline_state, e.contract_state, e.violations_json FROM measurements m "
+        "LEFT JOIN measurement_evaluations e ON e.measurement_id = m.id WHERE m.device_id = ? AND m.client_event_id = ?",
+        (device["id"], payload["client_event_id"]),
+    ).fetchone()
+    if existing:
+        return {"client_event_id": payload["client_event_id"], "measurement_id": existing["id"], "duplicate": True, "accepted": True}
+    latest_before = connection.execute("SELECT observed_at FROM measurements WHERE line_id = ? ORDER BY observed_at DESC, id DESC LIMIT 1", (device["line_id"],)).fetchone()
+    late_observation = bool(latest_before and as_utc(observed_at) < as_utc(latest_before["observed_at"]))
+    measurement = dict(payload)
+    evaluation, policy, contract = evaluate_measurement(connection, device["line_id"], measurement)
+    try:
+        cursor = connection.execute(
+            "INSERT INTO measurements(device_id, line_id, monitoring_point_id, client_event_id, observed_at, received_at, mode, "
+            "download, upload, ping, jitter, packet_loss, availability, connection_status, raw_json, quality, policy_id, contract_version_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                device["id"],
+                device["line_id"],
+                device["point_id"],
+                payload["client_event_id"],
+                observed_at,
+                received_at,
+                payload["mode"],
+                payload.get("download"),
+                payload.get("upload"),
+                payload.get("ping"),
+                payload.get("jitter"),
+                payload.get("packet_loss"),
+                payload.get("availability"),
+                payload["connection_status"],
+                json_text(payload.get("raw", {})),
+                payload["quality"],
+                policy["id"] if policy else None,
+                contract["id"] if contract else None,
+            ),
+        )
+    except sqlite3.IntegrityError:
+        duplicate = connection.execute("SELECT id FROM measurements WHERE device_id = ? AND client_event_id = ?", (device["id"], payload["client_event_id"])).fetchone()
+        if not duplicate:
+            raise
+        return {"client_event_id": payload["client_event_id"], "measurement_id": duplicate["id"], "duplicate": True, "accepted": True}
+    measurement_id = int(cursor.lastrowid)
+    connection.execute(
+        "INSERT INTO measurement_evaluations(measurement_id, baseline_state, contract_state, violations_json, valid, reason, policy_snapshot_json, contract_snapshot_json, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            measurement_id,
+            evaluation["baseline_state"],
+            evaluation["contract_state"],
+            json_text(evaluation["violations"]),
+            int(evaluation["valid"]),
+            evaluation["reason"],
+            json_text(evaluation["policy_snapshot"]),
+            json_text(evaluation["contract_snapshot"]),
+            received_at,
+        ),
+    )
+    if late_observation:
+        # Backfilled observations remain immutable evidence, but cannot rewrite
+        # the current line verdict or incident streak retroactively.
+        connection.execute("UPDATE devices SET last_seen = ?, agent_version = ? WHERE id = ?", (received_at, payload.get("agent_version") or device["agent_version"], device["id"]))
+        return {
+            "client_event_id": payload["client_event_id"],
+            "measurement_id": measurement_id,
+            "duplicate": False,
+            "accepted": True,
+            "state_applied": False,
+            "evaluation": {
+                "baseline_state": evaluation["baseline_state"],
+                "contract_state": evaluation["contract_state"],
+                "violations": evaluation["violations"],
+                "reason": "Backfilled observation stored without rewriting current state; " + evaluation["reason"],
+            },
+        }
+    required = int(policy["confirm_count"] if policy else 3)
+    confirm_minutes = int(policy["confirm_minutes"] if policy else 0)
+    confirmed_connection_bad = _confirmed_streak(
+        connection,
+        device["line_id"],
+        required,
+        confirm_minutes,
+        target="baseline",
+    )
+    confirmed_contract_bad = _confirmed_streak(
+        connection,
+        device["line_id"],
+        required,
+        confirm_minutes,
+        target="contract",
+    )
+    active_before = _incident_for_line(connection, device["line_id"])
+    if active_before and active_before["violation_type"].startswith("CONTRACT_"):
+        confirmed_bad = confirmed_contract_bad
+    elif active_before:
+        # Keep connectivity recovery independent from a later contract miss.
+        confirmed_bad = confirmed_connection_bad
+    else:
+        confirmed_bad = confirmed_connection_bad or confirmed_contract_bad
+    current = _current_state(connection, device["line_id"])
+    latest_connection_problem = evaluation["baseline_state"] == "VIOLATION" and evaluation["valid"]
+    if confirmed_bad:
+        latest_codes = _problem_codes(evaluation)
+        baseline_bad = evaluation["baseline_state"] == "VIOLATION"
+        connection_state = "NO_INTERNET" if "NO_INTERNET" in latest_codes else ("DEGRADED" if baseline_bad else (current["connection_state"] if current else "OK"))
+        contract_state = evaluation["contract_state"] if evaluation["contract_state"] in {"MEETS", "DEVIATES"} else "UNKNOWN"
+        reason = f"Confirmed after {required} consecutive observations: {evaluation['reason']}"
+        evidence_ids = [row["id"] for row in confirmed_bad]
+        _, state_changed = _write_line_state(
+            connection,
+            device["line_id"],
+            data_state="FRESH",
+            connection_state=connection_state,
+            contract_state=contract_state,
+            recovery_state="NONE",
+            reason=reason,
+            evidence_ids=evidence_ids,
+            policy=policy,
+            contract=contract,
+            occurred_at=observed_at,
+        )
+        should_open_or_reopen = (
+            state_changed
+            or bool(active_before and active_before["status"] == "RESOLVED")
+            or bool(active_before is None and confirmed_contract_bad and not confirmed_connection_bad)
+        )
+        if should_open_or_reopen:
+            incident_id = _create_auto_incident(connection, device["line_id"], observed_at, confirmed_bad, evaluation)
+            if state_changed or (active_before and active_before["status"] == "RESOLVED"):
+                connection.execute(
+                    "INSERT INTO notifications(source_type, source_id, channel, recipient_scope, message, status, generated_at) VALUES (?, ?, 'WEB', ?, ?, 'GENERATED', ?)",
+                    ("INCIDENT", str(incident_id), device["line_id"], f"Подтверждено нарушение линии {device['line_id']}: {evaluation['reason']}", received_at),
+                )
+    else:
+        healthy = _healthy_streak(
+            connection,
+            device["line_id"],
+            int(policy["recovery_count"] if policy else 3),
+            int(policy["recovery_minutes"] if policy else 0),
+            target="connection",
+        )
+        if evaluation["baseline_state"] == "OK":
+            connection_state = (
+                "OK"
+                if healthy or not current or current["connection_state"] not in {"NO_INTERNET", "DEGRADED"}
+                else current["connection_state"]
+            )
+        elif current:
+            connection_state = current["connection_state"]
+        else:
+            connection_state = "UNKNOWN"
+        # A single contract miss is evidence on the measurement, not yet a
+        # line-level contract state.  Promote it only after the same
+        # confirmation window used for baseline incidents.
+        contract_state = (
+            "DEVIATES"
+            if confirmed_contract_bad or (current and current["contract_state"] == "DEVIATES" and evaluation["contract_state"] == "DEVIATES")
+            else ("MEETS" if evaluation["contract_state"] == "MEETS" else "UNKNOWN")
+        )
+        _write_line_state(
+            connection,
+            device["line_id"],
+            data_state="FRESH",
+            connection_state=connection_state,
+            contract_state=contract_state,
+            recovery_state="CONFIRMED" if healthy and current and current["connection_state"] in {"NO_INTERNET", "DEGRADED"} else ("OBSERVED" if latest_connection_problem is False and current and current["connection_state"] in {"NO_INTERNET", "DEGRADED"} else "NONE"),
+            reason=evaluation["reason"],
+            evidence_ids=[measurement_id],
+            policy=policy,
+            contract=contract,
+            occurred_at=observed_at,
+        )
+        _update_recovery(connection, device["line_id"], policy, observed_at, [dict(existing) if existing else {"id": measurement_id}], evaluation)
+    connection.execute("UPDATE devices SET last_seen = ?, agent_version = ? WHERE id = ?", (received_at, payload.get("agent_version") or device["agent_version"], device["id"]))
+    return {
+        "client_event_id": payload["client_event_id"],
+        "measurement_id": measurement_id,
+        "duplicate": False,
+        "accepted": True,
+        "state_applied": True,
+        "evaluation": {
+            "baseline_state": evaluation["baseline_state"],
+            "contract_state": evaluation["contract_state"],
+            "violations": evaluation["violations"],
+            "reason": evaluation["reason"],
+        },
+    }
+
+
+def mark_data_freshness(connection: Any, line_id: str, now: datetime | None = None) -> Any | None:
+    state = _current_state(connection, line_id)
+    if not state:
+        return None
+    now = now or utc_now()
+    policy = effective_policy(connection, line_id, dt_text(now))
+    last = connection.execute("SELECT MAX(observed_at) AS observed_at FROM measurements WHERE line_id = ?", (line_id,)).fetchone()
+    fresh_limit = int(policy["freshness_seconds"] if policy else 86400)
+    data_state = "FRESH"
+    if not last["observed_at"] or (now - as_utc(last["observed_at"])).total_seconds() > fresh_limit:
+        data_state = "NO_DATA"
+    if state["data_state"] != data_state:
+        # A stale feed is not fresh evidence of either connectivity or the
+        # contract axis. Keep the historical transition in state events, but
+        # expose the current verdict as unknown until new observations arrive.
+        next_connection_state = "UNKNOWN" if data_state == "NO_DATA" else state["connection_state"]
+        next_contract_state = "UNKNOWN" if data_state == "NO_DATA" else state["contract_state"]
+        _write_line_state(
+            connection,
+            line_id,
+            data_state=data_state,
+            connection_state=next_connection_state,
+            contract_state=next_contract_state,
+            recovery_state=state["recovery_state"],
+            reason="No fresh observations from monitoring point" if data_state == "NO_DATA" else state["reason"],
+            evidence_ids=json_value(state["evidence_ids_json"], []),
+            policy=policy,
+            contract=effective_contract(connection, line_id, dt_text(now)),
+            occurred_at=dt_text(now),
+        )
+    return _current_state(connection, line_id)
+
+
+def incident_snapshot(connection: Any, incident_id: int) -> dict[str, Any] | None:
+    row = connection.execute(
+        "SELECT i.*, l.organization_id, l.provider_id, l.role, l.technology, o.school_id, o.name AS organization_name, o.district, "
+        "p.name AS provider_name FROM incidents i JOIN lines l ON l.id = i.line_id JOIN organizations o ON o.id = l.organization_id "
+        "LEFT JOIN providers p ON p.id = l.provider_id WHERE i.id = ?",
+        (incident_id,),
+    ).fetchone()
+    if not row:
+        return None
+    result = dict(row)
+    result["opening_snapshot"] = json_value(result.pop("opening_snapshot_json"), {})
+    snapshot = result["opening_snapshot"] if isinstance(result["opening_snapshot"], dict) else {}
+    result["opening_snapshot"] = snapshot
+    result["number"] = result["incident_no"]
+    result["school_name"] = result["organization_name"]
+    result["provider"] = result["provider_name"] or "—"
+    result["severity"] = "CRITICAL" if result["violation_type"] == "NO_INTERNET" else "ATTENTION"
+    result["title"] = snapshot.get("title") or (
+        "Подтверждённое отсутствие соединения"
+        if result["violation_type"] == "NO_INTERNET"
+        else f"Подтверждённое нарушение {result['violation_type']}"
+    )
+    result["description"] = snapshot.get("manual_description") or snapshot.get("reason") or result["title"]
+    result["events"] = [
+        {**dict(event), "payload": json_value(event["payload_json"], {})}
+        for event in connection.execute("SELECT * FROM incident_events WHERE incident_id = ? ORDER BY id", (incident_id,)).fetchall()
+    ]
+    result["actions"] = [
+        {"at": event["created_at"], "text": event["event_type"], "actor": event["actor"], "payload": event["payload"]}
+        for event in result["events"]
+    ]
+    result["provider_cases"] = [
+        dict(case)
+        for case in connection.execute("SELECT * FROM provider_cases WHERE incident_id = ? ORDER BY id", (incident_id,)).fetchall()
+    ]
+    result["duration_minutes"] = result["duration_minutes"] or ((as_utc(result["closed_at"] or dt_text(utc_now())) - as_utc(result["started_at"])).total_seconds() / 60)
+    return result
+
+
+def provider_draft(connection: Any, incident_id: int, comment: str) -> str:
+    incident = incident_snapshot(connection, incident_id)
+    if not incident:
+        raise ValueError("incident not found")
+    snapshot = incident["opening_snapshot"]
+    line_id = incident["line_id"]
+    evidence = snapshot.get("evidence_measurement_ids", [])
+    metrics = connection.execute(
+        "SELECT observed_at, download, upload, ping, jitter, packet_loss, availability FROM measurements WHERE id IN (%s) ORDER BY observed_at"
+        % ",".join("?" for _ in evidence),
+        evidence,
+    ).fetchall() if evidence else []
+    lines = [
+        f"Здравствуйте! Просим проверить качество услуги на линии {line_id} (школа {incident['school_id']}, {incident['organization_name']}).",
+        f"Система мониторинга подтвердила нарушение {incident['violation_type']} с {incident['started_at']}.",
+        f"Применённые пороги: {json_text(snapshot.get('policy', {}))}.",
+        f"Договорный ориентир на момент наблюдений: {json_text(snapshot.get('contract', {}))}.",
+        f"Наблюдения: {json_text([dict(row) for row in metrics])}.",
+        "Формулировка описывает технически наблюдаемое отклонение и не является юридическим выводом.",
+    ]
+    if comment:
+        lines.append(f"Комментарий заказчика: {comment}")
+    return "\n".join(lines)
+
+
+def refresh_situations(connection: Any) -> None:
+    rows = connection.execute(
+        "SELECT i.id, i.violation_type, i.started_at, l.provider_id, p.name AS provider_name, o.district "
+        "FROM incidents i JOIN lines l ON l.id = i.line_id JOIN organizations o ON o.id = l.organization_id "
+        "LEFT JOIN providers p ON p.id = l.provider_id WHERE i.status != 'CLOSED' ORDER BY i.started_at"
+    ).fetchall()
+    groups: dict[tuple[Any, ...], list[Any]] = {}
+    for row in rows:
+        started = as_utc(row["started_at"])
+        bucket = started.replace(minute=(started.minute // 15) * 15, second=0, microsecond=0)
+        groups.setdefault((row["provider_id"], row["district"], row["violation_type"], bucket.isoformat()), []).append(row)
+    now = dt_text(utc_now())
+    existing = {
+        (row["provider_id"], row["district"], row["violation_type"], row["start_at"]): row
+        for row in connection.execute("SELECT * FROM situations WHERE status = 'OPEN'").fetchall()
+    }
+    active_ids: set[int] = set()
+    for key, members in groups.items():
+        provider_id, district, violation_type, bucket = key
+        reason = {"provider": members[0]["provider_name"], "district": district, "violation_type": violation_type, "time_window_minutes": 15}
+        current = existing.get(key)
+        if current:
+            situation_id = int(current["id"])
+            connection.execute("UPDATE situations SET title = ?, reason_json = ?, updated_at = ? WHERE id = ?", (f"Возможная ситуация: {members[0]['provider_name'] or 'неизвестный provider'} / {district}", json_text(reason), now, situation_id))
+        else:
+            cursor = connection.execute(
+                "INSERT INTO situations(title, status, provider_id, district, violation_type, start_at, reason_json, created_at, updated_at) VALUES (?, 'OPEN', ?, ?, ?, ?, ?, ?, ?)",
+                (f"Возможная ситуация: {members[0]['provider_name'] or 'неизвестный provider'} / {district}", provider_id, district, violation_type, bucket, json_text(reason), now, now),
+            )
+            situation_id = int(cursor.lastrowid)
+        active_ids.add(situation_id)
+        connection.execute("DELETE FROM situation_members WHERE situation_id = ?", (situation_id,))
+        connection.executemany("INSERT INTO situation_members(situation_id, incident_id) VALUES (?, ?)", [(situation_id, member["id"]) for member in members])
+    for current in existing.values():
+        if int(current["id"]) not in active_ids:
+            connection.execute("UPDATE situations SET status = 'CLOSED', updated_at = ? WHERE id = ?", (now, current["id"]))
