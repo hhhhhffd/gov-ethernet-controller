@@ -1,129 +1,90 @@
 # VKO LINKWATCH
 
-Локальный MVP системы доказательного мониторинга интернет-линий организаций образования ВКО. Продукт ведёт линию от контекста и автономных наблюдений до подтверждённого состояния, инцидента, обращения поставщику, проверки восстановления и паспорта качества за период.
+LINKWATCH — контур доказательного мониторинга интернет-линий организаций
+образования ВКО. Runtime состоит из Go-сервера, PostgreSQL и нативного Rust
+агента; браузерный интерфейс остаётся статическим `web/` и использует прежние
+`/api` и `/api/v1` контракты.
 
 ## Быстрый запуск
 
-Требуется Python 3.11+.
+Нужны Docker Compose, Go 1.23+ и Rust stable (для локального запуска агента).
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install -e '.[test]'
-python -m backend.seed --reset --measurements
-uvicorn backend.app.main:app --reload --port 8000
+docker compose up -d --build
+curl http://127.0.0.1:8080/health/ready
 ```
 
-Откройте http://127.0.0.1:8000/. Введите учётные данные в форме входа. Для
-изолированного демонстрационного среза без подключения к API добавьте `?demo=1` к адресу;
-такой режим явно помечается в интерфейсе. Для API доступны demo-учётные записи:
+В development Compose создаёт PostgreSQL-схему и deterministic demo fixture.
+Откройте <http://127.0.0.1:8080/> и войдите:
 
-| username | password | scope |
-|---|---|---|
+| username | password | область |
+| --- | --- | --- |
 | `admin` | `demo` | вся область |
-| `provider-a` | `demo` | линии Provider A |
+| `provider-a` | `demo` | Provider A |
 | `district` | `demo` | район Алтай |
-| `school-42` | `demo` | организация Школа №42 |
+| `school-42` | `demo` | Школа №42 |
 
-Если зависимости FastAPI ещё не установлены, установите проект командой выше. База по умолчанию `vko_mvp.db`; путь можно изменить через `VKO_DB_PATH`.
-
-В локальном профиле пароли demo хранятся как salted PBKDF2-хэши, а каждый
-вход получает отдельную истекающую bearer-сессию. Для production задайте
-`VKO_ENV=production`, `VKO_AUTH_MODE=password` и при первом старте
-`VKO_BOOTSTRAP_ADMIN_USERNAME` вместе с паролем длиной не менее 12 символов.
-Общий пароль `demo`, legacy user-токены и `VKO_AUTH_DISABLED` в production не
-принимаются; `backend.seed` также отказывается создавать demo-данные в
-production без явного override.
-
-## Демо-сценарий
-
-1. Для локального среза без подключения к API откройте `http://127.0.0.1:8000/?demo=1`; для API-варианта войдите как `admin` / `demo`.
-2. На обзоре проверьте раздельные оси «Качество» и «Договор», а также отдельный статус «Нет актуальных данных».
-3. Откройте линию `L-001`, раскройте evidence и effective policy.
-4. Нажмите «Запустить replay»: агентский fixture проходит через тот же batch ingest и state engine.
-5. Откройте инцидент, сформируйте draft обращения, отредактируйте текст, подтвердите проверку и явно отправьте.
-6. Перейдите в «Отчёты» и выгрузите raw/aggregate в CSV или XLSX.
-
-## Агент без внешнего Speedtest
+Одна end-to-end проверка сервера, PostgreSQL и Rust-агента:
 
 ```bash
-PYTHONPATH=agent python -m vko_agent --server http://127.0.0.1:8000 --once
+./scripts/smoke.sh
 ```
 
-`DemoProbe` детерминирован; `OfflineBuffer` хранит очередь в SQLite WAL. Пример systemd unit находится в `agent/systemd/`.
+## Компоненты и инварианты
 
-Для реальной телеметрии агента используйте `VKO_PROBE=network`: NetworkProbe
-собирает ограниченные HTTP/TCP/ping и throughput-метрики, не запускает shell и
-сохраняет технические детали в `raw`. URL throughput лучше указывать на
-контролируемый оператором endpoint.
+- `server/` — Go HTTP API и state engine; PostgreSQL является единственным
+  source of truth. Все effective policy/contract snapshots сохраняются рядом с
+  observation, а `client_event_id` обеспечивает идемпотентный ingest.
+- `agent/` — Rust CLI `run`, `once`, `probe`, `version`. Очередь — crash-safe
+  filesystem spool: файл удаляется только после подтверждения сервера.
+- `migrations/001_initial.sql` и embedded
+  `server/internal/database/migrations/001_initial.sql` — versioned schema.
+- `web/` — существующий frontend; API выдаёт совместимые поля `status`,
+  `state`, `latest`, `policy`, `contract`, `incidents`, отчёты CSV/XLSX.
 
-Обращения и уведомления проходят через настраиваемые transport-адаптеры. В
-staging по умолчанию сохраняется внутренний hand-off; в production задайте
-`VKO_PROVIDER_TRANSPORT=webhook` (или `smtp`) и
-`VKO_NOTIFICATION_TRANSPORT=webhook`. Ошибка внешней доставки не маскируется:
-объект получает `FAILED`, число попыток и текст ошибки, после чего доступен
-повтор через admin API. В production внутренние transport и `DemoProbe`
-отключены, если оператор явно не меняет профиль окружения.
+Состояния качества, договора и свежести разделены. Нарушение становится
+подтверждённым только после последовательных observations по effective policy;
+backfill сохраняет evidence и не переписывает текущий state. Закрытие инцидента
+требует подтверждённого восстановления. Outbound provider/notification
+transport сохраняет `FAILED`, число попыток и ошибку; повтор выполняется через
+admin API.
 
-Схема обновляется версионированными additive migrations при старте либо явно:
+## API и конфигурация
+
+Основные маршруты: `/health`, `/health/ready`, `/api/v1/auth/login`,
+`/api/v1/agent/measurements:batch`, `/api/v1/agent/heartbeat`,
+`/api/v1/agent/config`, `/api/v1/lines`, `/api/v1/incidents`,
+`/api/v1/situations`, `/api/v1/reports/aggregate`,
+`/api/v1/reports/quality-passport`, `/api/v1/exports` и `/api/v1/admin/*`.
+
+Локальные параметры находятся в `.env.example`; production-шаблон —
+`.env.prod.example`. Секреты не должны попадать в git. Для production задайте
+`LINKWATCH_ENV=production`, PostgreSQL credentials, bootstrap admin (пароль не
+короче 12 символов), HTTPS CORS origins и webhook transport.
+
+Агент принимает `LINKWATCH_*`; старые `VKO_*` имена поддерживаются для плавной
+миграции. Приоритет локальной конфигурации: defaults → JSON-файл → environment.
+Если задать `LINKWATCH_USE_SERVER_CONFIG=1`, расписание из
+`/api/v1/agent/config` применяется после локальных значений; при недоступности
+сервера агент продолжает работу с локальной конфигурацией и очередью. Пример:
 
 ```bash
-python scripts/migrate.py --db "$VKO_DB_PATH"
+LINKWATCH_SERVER_URL=http://127.0.0.1:8080 \
+LINKWATCH_DEVICE_ID=device-42-primary \
+LINKWATCH_DEVICE_TOKEN=demo-device-42-primary-token \
+LINKWATCH_PROBE=demo \
+cargo run --release --manifest-path agent/Cargo.toml -- once
 ```
 
-## Проверки
+## Проверки и production-like запуск
 
 ```bash
-PYTHONPATH=agent python -m unittest discover -s agent/tests -v
-python -m compileall backend agent
-node --check web/app.js
+make server-test
+make agent-test
+make smoke
 ```
 
-После установки test extras:
-
-```bash
-pytest
-```
-
-## Production-like PostgreSQL прогон
-
-`docker-compose.prod.yml` поднимает PostgreSQL 16 и два-worker Uvicorn image. Это
-staging-профиль: demo-данные и внутренние hand-off включаются только настройками
-staging. В `VKO_ENV=production` используется password/session auth с bootstrap-
-администратором; TLS reverse proxy и внешние transport endpoints задаются на
-уровне развёртывания.
-
-В PowerShell из корня репозитория:
-
-```powershell
-$env:VKO_POSTGRES_PASSWORD = "<локальный случайный пароль>"
-.\scripts\windows\start-vko-prod.ps1
-```
-
-После публикации порта WSL-агент запускается так:
-
-```bash
-export VKO_DEVICE_TOKEN='<токен зарегистрированного устройства>'
-./scripts/wsl/run-agent-once.sh
-```
-
-Black-box проверка опубликованного Postgres backend:
-
-```bash
-export VKO_DEVICE_TOKEN='<reserve token>'
-export VKO_PRIMARY_DEVICE_TOKEN='<primary token>'
-.venv/bin/python scripts/verify_postgres.py
-```
-
-Smoke можно повторять на persistent volume: каждый запуск использует новые
-event IDs и timestamps после последнего evidence.
-
-Остановить стек без удаления volume:
-
-```powershell
-.\scripts\windows\stop-vko-prod.ps1
-```
-
-Подробный отчёт о прогоне и выборе стека: `docs/PRODUCTION_RUN_REPORT.md`.
-
-Архитектура и краткие отчёты оркестрации находятся в `.agent/`; полное ТЗ остаётся источником истины по пути `/mnt/c/Users/user/Desktop/VKO_Product_Concept_PRIORITIZED.md`.
+Для PowerShell используйте `scripts/windows/start-vko-prod.ps1` и
+`scripts/windows/stop-vko-prod.ps1`; они запускают Go image из
+`docker-compose.prod.yml`. Windows binary агента собирается
+`scripts/build-agent.ps1` в `dist/linkwatch-agent-windows-amd64.exe`.

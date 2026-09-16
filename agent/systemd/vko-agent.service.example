@@ -1,13 +1,12 @@
 [Unit]
-Description=VKO LINKWATCH monitoring agent
+Description=LINKWATCH monitoring agent
 After=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/vko-agent
-EnvironmentFile=/etc/vko-agent.env
-Environment=PYTHONPATH=/opt/vko-agent/agent
-ExecStart=/usr/bin/python3 -m vko_agent
+WorkingDirectory=/opt/linkwatch-agent
+EnvironmentFile=/etc/linkwatch-agent.env
+ExecStart=/opt/linkwatch-agent/linkwatch-agent run
 Restart=always
 RestartSec=15
 

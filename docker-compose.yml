@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${LINKWATCH_POSTGRES_DB:-linkwatch}
+      POSTGRES_USER: ${LINKWATCH_POSTGRES_USER:-linkwatch}
+      POSTGRES_PASSWORD: ${LINKWATCH_POSTGRES_PASSWORD:-linkwatch-dev-password}
+    ports:
+      - "127.0.0.1:${LINKWATCH_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - linkwatch-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  linkwatch-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      LINKWATCH_DATABASE_URL: postgres://${LINKWATCH_POSTGRES_USER:-linkwatch}:${LINKWATCH_POSTGRES_PASSWORD:-linkwatch-dev-password}@postgres:5432/${LINKWATCH_POSTGRES_DB:-linkwatch}?sslmode=disable
+      LINKWATCH_ENV: ${LINKWATCH_ENV:-development}
+      LINKWATCH_SEED_DEMO: ${LINKWATCH_SEED_DEMO:-1}
+      LINKWATCH_AUTH_DISABLED: ${LINKWATCH_AUTH_DISABLED:-0}
+      LINKWATCH_CORS_ORIGINS: ${LINKWATCH_CORS_ORIGINS:-http://localhost:8080,http://127.0.0.1:8080}
+      LINKWATCH_SESSION_TTL_SECONDS: ${LINKWATCH_SESSION_TTL_SECONDS:-28800}
+      LINKWATCH_MAX_BACKFILL_DAYS: ${LINKWATCH_MAX_BACKFILL_DAYS:-90}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${LINKWATCH_SERVER_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health/ready >/dev/null"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  linkwatch-postgres:

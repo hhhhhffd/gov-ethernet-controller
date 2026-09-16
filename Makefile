@@ -1,24 +1,35 @@
-.PHONY: install seed migrate run test smoke agent-once
+.PHONY: server-test server-build agent-test agent-build agent-release compose-up compose-down smoke \
+	build-server test-server build-agent test-agent up down
 
-install:
-	python -m pip install -e '.[test]'
+server-test:
+	cd server && GOPATH=$${GOPATH:-/tmp/linkwatch-gopath} GOCACHE=$${GOCACHE:-/tmp/linkwatch-go-cache} go test ./...
 
-seed:
-	python -m backend.seed --reset --measurements
+server-build:
+	cd server && CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' ./cmd/linkwatch-server
 
-migrate:
-	python scripts/migrate.py
+agent-test:
+	cargo test --manifest-path agent/Cargo.toml
 
-run:
-	uvicorn backend.app.main:app --reload --port 8000
+agent-build:
+	cargo build --manifest-path agent/Cargo.toml
 
-test:
-	pytest
-	PYTHONPATH=agent python -m unittest discover -s agent/tests -v
+agent-release:
+	cargo build --release --manifest-path agent/Cargo.toml
+
+compose-up:
+	docker compose up -d --build
+
+compose-down:
+	docker compose down
 
 smoke:
-	python -m compileall backend agent
-	node --check web/app.js
+	./scripts/smoke.sh
 
-agent-once:
-	PYTHONPATH=agent python -m vko_agent --server http://127.0.0.1:8000 --once
+# Keep the command names from the migration brief alongside the descriptive
+# names used by existing local scripts.
+build-server: server-build
+test-server: server-test
+build-agent: agent-build
+test-agent: agent-test
+up: compose-up
+down: compose-down
