@@ -377,8 +377,9 @@ fn warmup_download(
     url: &str,
     auth: Option<(&str, &str)>,
 ) -> Result<(), String> {
+    // Keep warmup compatible with simple HTTP endpoints that do not implement
+    // Range. The response is still bounded locally before the body is dropped.
     let response = with_auth(client.get(url), auth)
-        .header(reqwest::header::RANGE, "bytes=0-65535")
         .send()
         .map_err(|error| error.to_string())?;
     if !response.status().is_success() {
