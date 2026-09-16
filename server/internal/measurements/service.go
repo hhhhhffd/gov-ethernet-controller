@@ -698,14 +698,24 @@ func (s *Service) finishNotification(ctx context.Context, item pendingNotificati
 			backoff := time.Duration(1<<exponent) * time.Minute
 			nextAttempt = now.Add(backoff)
 		}
-		_, err := s.DB.Pool.Exec(ctx, `UPDATE notifications SET status='FAILED',delivery_error=$1,delivery_retryable=$2,next_attempt_at=$3,delivery_started_at=NULL WHERE id=$4`, deliveryErr.Error(), retryable, nextAttempt, item.ID)
+		tag, err := s.DB.Pool.Exec(ctx, `UPDATE notifications SET status='FAILED',delivery_error=$1,delivery_retryable=$2,next_attempt_at=$3,delivery_started_at=NULL WHERE id=$4 AND status='DELIVERING' AND delivery_attempts=$5`, deliveryErr.Error(), retryable, nextAttempt, item.ID, item.Attempts)
+		if err == nil && tag.RowsAffected() == 0 {
+			// A newer worker reclaimed this row after the provider call exceeded
+			// the stale-delivery timeout; its result is now authoritative.
+			return nil
+		}
 		return err
 	}
 	channel := result.Channel
 	if channel == "" {
 		channel = "WEB"
 	}
-	_, err := s.DB.Pool.Exec(ctx, `UPDATE notifications SET status='SENT',channel=$1,sent_at=$2,delivery_error=NULL,delivery_retryable=FALSE,next_attempt_at=NULL,delivery_started_at=NULL WHERE id=$3`, channel, now, item.ID)
+	tag, err := s.DB.Pool.Exec(ctx, `UPDATE notifications SET status='SENT',channel=$1,sent_at=$2,delivery_error=NULL,delivery_retryable=FALSE,next_attempt_at=NULL,delivery_started_at=NULL WHERE id=$3 AND status='DELIVERING' AND delivery_attempts=$4`, channel, now, item.ID, item.Attempts)
+	if err == nil && tag.RowsAffected() == 0 {
+		// See the failure branch above: do not let a stale provider response
+		// overwrite a later attempt.
+		return nil
+	}
 	return err
 }
 
