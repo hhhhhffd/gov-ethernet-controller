@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import queue
 import re
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -225,6 +227,11 @@ CREATE TABLE IF NOT EXISTS provider_cases (
     draft_text TEXT NOT NULL,
     final_text TEXT,
     status TEXT NOT NULL DEFAULT 'DRAFT',
+    delivery_channel TEXT NOT NULL DEFAULT 'INTERNAL',
+    delivery_status TEXT NOT NULL DEFAULT 'PENDING',
+    delivery_attempts INTEGER NOT NULL DEFAULT 0,
+    delivery_error TEXT,
+    external_ticket_no TEXT,
     created_by TEXT NOT NULL,
     sent_by TEXT,
     sent_at TEXT,
@@ -258,6 +265,8 @@ CREATE TABLE IF NOT EXISTS notifications (
     recipient_scope TEXT NOT NULL,
     message TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'GENERATED',
+    delivery_attempts INTEGER NOT NULL DEFAULT 0,
+    delivery_error TEXT,
     generated_at TEXT NOT NULL,
     sent_at TEXT,
     read_at TEXT
@@ -268,6 +277,7 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT NOT NULL UNIQUE,
     role TEXT NOT NULL,
     token_hash TEXT NOT NULL,
+    password_hash TEXT,
     disabled_at TEXT,
     created_at TEXT NOT NULL
 );
@@ -279,6 +289,20 @@ CREATE TABLE IF NOT EXISTS role_scopes (
     scope_id TEXT NOT NULL,
     UNIQUE(user_id, scope_type, scope_id)
 );
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    last_seen_at TEXT,
+    ip_address TEXT,
+    user_agent TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_auth_session_token ON auth_sessions(token_hash, expires_at, revoked_at);
+CREATE INDEX IF NOT EXISTS ix_auth_session_user ON auth_sessions(user_id, revoked_at, expires_at);
 
 CREATE TABLE IF NOT EXISTS audit_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -295,6 +319,11 @@ CREATE TABLE IF NOT EXISTS audit_events (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_audit_object_time ON audit_events(object_type, object_id, created_at);
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
 """
 
 
@@ -333,6 +362,10 @@ class _PostgresCursor:
         return self._cursor.fetchall()
 
     @property
+    def rowcount(self) -> int:
+        return int(getattr(self._cursor, "rowcount", 0))
+
+    @property
     def lastrowid(self) -> int | None:
         # The service layer requests this immediately after INSERT. Every such
         # table uses an identity sequence, so LASTVAL() is equivalent to the
@@ -342,18 +375,26 @@ class _PostgresCursor:
 
 
 class _PostgresConnection:
-    """Small DB-API compatibility wrapper for the existing synchronous code."""
+    """Small DB-API compatibility wrapper for the existing synchronous code.
+
+    ``release`` is supplied by :class:`PostgresConnectionPool` when a request
+    borrows a pooled connection.  Keeping the wrapper here means the existing
+    service layer keeps its tiny SQLite-like API while production requests do
+    not open a fresh TCP connection for every call.
+    """
 
     is_postgres = True
 
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str | None = None, *, raw_connection: Any | None = None, release: Any | None = None) -> None:
         try:
             import psycopg
             from psycopg.rows import dict_row
         except ImportError as exc:  # pragma: no cover - exercised only in a misconfigured deployment
             raise RuntimeError("PostgreSQL support requires psycopg[binary]") from exc
         self._psycopg = psycopg
-        self._connection = psycopg.connect(dsn, row_factory=dict_row)
+        self._release = release
+        self._closed = False
+        self._connection = raw_connection if raw_connection is not None else psycopg.connect(dsn, row_factory=dict_row)
 
     def execute(self, query: str, params: Any = ()) -> _PostgresCursor:
         try:
@@ -383,7 +424,109 @@ class _PostgresConnection:
         self._connection.rollback()
 
     def close(self) -> None:
-        self._connection.close()
+        if self._closed:
+            return
+        self._closed = True
+        if self._release:
+            self._release(self._connection)
+        else:
+            self._connection.close()
+
+
+class PostgresConnectionPool:
+    """A small bounded synchronous pool for the I/O-bound API.
+
+    The application routes are synchronous at the database boundary, so a
+    lightweight queue-based pool is sufficient and avoids adding another
+    runtime dependency solely for connection management. Connections are
+    created lazily up to ``max_size`` and rolled back before being returned to
+    the pool, which also clears an aborted PostgreSQL transaction.
+    """
+
+    def __init__(self, dsn: str, *, min_size: int = 1, max_size: int = 10) -> None:
+        if min_size < 0 or max_size < 1 or min_size > max_size:
+            raise ValueError("pool sizes must satisfy 0 <= min_size <= max_size")
+        self.dsn = dsn
+        self.min_size = min_size
+        self.max_size = max_size
+        self._available: queue.LifoQueue[Any] = queue.LifoQueue(maxsize=max_size)
+        self._lock = threading.Lock()
+        self._total = 0
+        self._closed = False
+        for _ in range(min_size):
+            raw = self._new_connection()
+            self._total += 1
+            self._available.put_nowait(raw)
+
+    def _new_connection(self) -> Any:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:  # pragma: no cover - deployment configuration error
+            raise RuntimeError("PostgreSQL support requires psycopg[binary]") from exc
+        return psycopg.connect(self.dsn, row_factory=dict_row)
+
+    def acquire(self) -> _PostgresConnection:
+        if self._closed:
+            raise RuntimeError("PostgreSQL connection pool is closed")
+        try:
+            raw = self._available.get_nowait()
+        except queue.Empty:
+            with self._lock:
+                can_create = self._total < self.max_size
+                # Reserve the slot while holding the lock. This prevents two
+                # request threads from both observing capacity and exceeding
+                # max_size during simultaneous connection creation.
+                if can_create:
+                    raw = self._new_connection()
+                    self._total += 1
+                else:
+                    raw = None
+            if raw is None:
+                raw = self._available.get(timeout=30)
+        return _PostgresConnection(raw_connection=raw, release=self.release)
+
+    def release(self, raw: Any) -> None:
+        if self._closed:
+            try:
+                raw.close()
+            finally:
+                with self._lock:
+                    self._total = max(0, self._total - 1)
+            return
+        try:
+            raw.rollback()
+            self._available.put_nowait(raw)
+        except Exception:
+            try:
+                raw.close()
+            finally:
+                with self._lock:
+                    self._total = max(0, self._total - 1)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        while True:
+            try:
+                raw = self._available.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                raw.close()
+            finally:
+                with self._lock:
+                    self._total = max(0, self._total - 1)
+
+    @property
+    def size(self) -> int:
+        with self._lock:
+            return self._total
+
+    @property
+    def available(self) -> int:
+        return self._available.qsize()
 
 
 def connect(db_path: str | Path | None = None) -> Any:
@@ -400,27 +543,106 @@ def connect(db_path: str | Path | None = None) -> Any:
     return connection
 
 
+def _column_names(connection: Any, table: str) -> set[str]:
+    """Return columns for a table without relying on a database-specific ORM."""
+    if getattr(connection, "is_postgres", False):
+        rows = connection.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = ?",
+            (table,),
+        ).fetchall()
+        return {str(row["column_name"]) for row in rows}
+    return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _ensure_column(connection: Any, table: str, column: str, definition: str) -> None:
+    # Table/column names and definitions are internal constants from the
+    # migration list below; values supplied by users never reach this helper.
+    if column not in _column_names(connection, table):
+        connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _run_migrations(connection: Any) -> None:
+    """Apply additive, versioned schema changes to databases created by older MVPs.
+
+    The initial schema remains executable from a clean checkout, while these
+    migrations make an existing SQLite/PostgreSQL volume safe to upgrade in
+    place. Each version is recorded only after its statements succeed.
+    """
+    applied = {
+        int(row["version"])
+        for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()
+    }
+    migrations = {
+        1: lambda: (
+            _ensure_column(connection, "users", "password_hash", "TEXT"),
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS auth_sessions ("
+                "id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), "
+                "token_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, "
+                "revoked_at TEXT, last_seen_at TEXT, ip_address TEXT, user_agent TEXT)"
+            ),
+            connection.execute("CREATE INDEX IF NOT EXISTS ix_auth_session_token ON auth_sessions(token_hash, expires_at, revoked_at)"),
+            connection.execute("CREATE INDEX IF NOT EXISTS ix_auth_session_user ON auth_sessions(user_id, revoked_at, expires_at)"),
+        ),
+        2: lambda: (
+            _ensure_column(connection, "provider_cases", "delivery_channel", "TEXT NOT NULL DEFAULT 'INTERNAL'"),
+            _ensure_column(connection, "provider_cases", "delivery_status", "TEXT NOT NULL DEFAULT 'PENDING'"),
+            _ensure_column(connection, "provider_cases", "delivery_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            _ensure_column(connection, "provider_cases", "delivery_error", "TEXT"),
+            _ensure_column(connection, "provider_cases", "external_ticket_no", "TEXT"),
+            _ensure_column(connection, "notifications", "delivery_attempts", "INTEGER NOT NULL DEFAULT 0"),
+            _ensure_column(connection, "notifications", "delivery_error", "TEXT"),
+        ),
+    }
+    now = _migration_timestamp()
+    for version in sorted(migrations):
+        if version in applied:
+            continue
+        migrations[version]()
+        connection.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)", (version, now))
+
+
+def _migration_timestamp() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
 def init_db(db_path: str | Path | None = None) -> None:
     connection = connect(db_path)
     try:
         is_postgres = getattr(connection, "is_postgres", False)
+        advisory_locked = False
         if is_postgres:
             # Multiple Uvicorn workers import the app concurrently. Serialize
             # first-run DDL so two workers cannot race on PostgreSQL catalogs.
             connection.execute("SELECT pg_advisory_lock(742031)")
+            advisory_locked = True
         try:
             connection.executescript(POSTGRES_SCHEMA if is_postgres else SCHEMA)
+            _run_migrations(connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
         finally:
-            if is_postgres:
-                connection.execute("SELECT pg_advisory_unlock(742031)")
-        connection.commit()
+            if is_postgres and advisory_locked:
+                # A failed DDL transaction is aborted in PostgreSQL, so roll
+                # it back before releasing the session-level advisory lock.
+                try:
+                    connection.execute("SELECT pg_advisory_unlock(742031)")
+                    connection.commit()
+                except Exception:
+                    # Closing the connection below also releases the lock. Do
+                    # not hide the original migration failure with cleanup.
+                    connection.rollback()
     finally:
         connection.close()
 
 
 @contextmanager
-def get_connection(db_path: str | Path | None = None) -> Iterator[Any]:
-    connection = connect(db_path)
+def get_connection(db_path: str | Path | None = None, *, pool: PostgresConnectionPool | None = None) -> Iterator[Any]:
+    connection = pool.acquire() if pool is not None else connect(db_path)
     try:
         yield connection
         connection.commit()

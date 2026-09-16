@@ -23,7 +23,7 @@ Push-Location $repo
 try {
     docker compose -p $ComposeProject -f docker-compose.prod.yml up -d --build
     docker compose -p $ComposeProject -f docker-compose.prod.yml ps
-    Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/health" -f $AppPort) -TimeoutSec 15
+    Invoke-RestMethod -Uri ("http://127.0.0.1:{0}/health/ready" -f $AppPort) -TimeoutSec 15
     Write-Host "VKO staging stack is ready. Run scripts/wsl/run-agent-once.sh from WSL."
 }
 finally {

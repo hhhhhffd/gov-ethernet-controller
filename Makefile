@@ -1,10 +1,13 @@
-.PHONY: install seed run test smoke agent-once
+.PHONY: install seed migrate run test smoke agent-once
 
 install:
 	python -m pip install -e '.[test]'
 
 seed:
 	python -m backend.seed --reset --measurements
+
+migrate:
+	python scripts/migrate.py
 
 run:
 	uvicorn backend.app.main:app --reload --port 8000

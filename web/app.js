@@ -17,6 +17,8 @@
     currentCaseId: null,
     apiOnline: false,
     usingDemoData: false,
+    // Demo data is opt-in per URL, never persisted across environments.
+    demoMode: new URLSearchParams(window.location.search).get("demo") === "1",
     lineLimit: 30,
   };
 
@@ -84,20 +86,39 @@
   }
   function unwrap(value, keys = ["items", "data", "results"]) { if (Array.isArray(value)) return value; for (const key of keys) if (value && Array.isArray(value[key])) return value[key]; return []; }
 
-  async function login(silent = false) {
-    const credentials = { username: "admin", password: "demo" };
+  function showLogin(message = "Введите рабочие учётные данные.") {
+    const backdrop = $("#authBackdrop"); if (!backdrop) return;
+    $("#authMessage").textContent = message;
+    backdrop.classList.remove("hidden");
+    ($("#loginUsername").value ? $("#loginPassword") : $("#loginUsername")).focus();
+  }
+  function hideLogin() { const backdrop = $("#authBackdrop"); if (backdrop) backdrop.classList.add("hidden"); }
+  async function login(silent = false, suppliedCredentials = null) {
+    const credentials = suppliedCredentials && { username: suppliedCredentials.username, password: suppliedCredentials.password };
+    if (!credentials || !credentials.username || !credentials.password) {
+      state.apiOnline = false;
+      state.usingDemoData = state.demoMode;
+      if (!state.demoMode || suppliedCredentials) showLogin("Введите рабочие учётные данные.");
+      if (!silent && !state.demoMode) toast("Войдите, чтобы открыть операционные данные", "warn");
+      return false;
+    }
     try {
-      const response = await apiTry(["/api/login", "/api/v1/auth/login", "/api/v1/login"], { method: "POST", body: JSON.stringify(credentials), _retried: true });
-      state.token = response.token || response.access_token || response.session || "demo-session";
-      state.user = response.user || { name: "Айдана К.", role_label: "Областной уровень", role: "oblast" };
+      const response = await apiTry(["/api/login", "/api/auth/login", "/api/v1/auth/login", "/api/v1/login"], { method: "POST", body: JSON.stringify(credentials), _retried: true });
+      const token = response.token || response.access_token || response.session;
+      if (!token) throw new Error("auth response did not contain a session token");
+      state.token = token;
+      state.user = response.user || { name: credentials.username, role_label: "Пользователь", role: "USER" };
       localStorage.setItem("vko_token", state.token);
       state.apiOnline = true;
+      state.usingDemoData = false;
+      hideLogin();
       updateUser();
       return true;
     } catch (error) {
-      state.usingDemoData = true;
+      state.usingDemoData = state.demoMode;
       state.apiOnline = false;
-      if (!silent) toast("Сервер пока недоступен — показываем демонстрационный срез", "warn");
+      if (!state.demoMode) showLogin(error && error.status === 401 ? "Не удалось войти. Проверьте имя пользователя и пароль." : "Сервис авторизации пока недоступен.");
+      if (!silent) toast(state.demoMode ? "Сервер недоступен — показываем явно выбранный демонстрационный срез" : "Сервер недоступен — операционные данные не загружены", "warn");
       return false;
     }
   }
@@ -122,13 +143,13 @@
       renderOverview(overview || {});
       state.usingDemoData = false;
     } catch (error) {
-      state.usingDemoData = true;
-      state.lines = sampleLines.map(normalizeLine);
-      state.incidents = sampleIncidents.slice();
-      state.situations = sampleSituations.slice();
-      renderOverview({ schools: 128, active_devices: 117, problem_lines: 9, completeness: 94 });
-      $("#noticeTitle").textContent = "Демо-срез: сервер мониторинга недоступен";
-      $("#noticeText").textContent = "Показаны учебные данные. Не используйте их для операционных решений или официальной выгрузки.";
+      state.usingDemoData = state.demoMode;
+      state.lines = state.demoMode ? sampleLines.map(normalizeLine) : [];
+      state.incidents = state.demoMode ? sampleIncidents.slice() : [];
+      state.situations = state.demoMode ? sampleSituations.slice() : [];
+      renderOverview(state.demoMode ? { schools: 128, active_devices: 117, problem_lines: 9, completeness: 94 } : { counts: { schools: 0, lines: 0, active_devices: 0, problem_lines: 0 }, completeness: 0 });
+      $("#noticeTitle").textContent = state.demoMode ? "Демо-срез: сервер мониторинга недоступен" : "Сервер мониторинга недоступен";
+      $("#noticeText").textContent = state.demoMode ? "Показаны учебные данные. Не используйте их для операционных решений или официальной выгрузки." : "Текущая картина и официальные выгрузки недоступны. Проверьте соединение и повторите обновление.";
     }
     populateFilters();
     renderAll();
@@ -200,8 +221,8 @@
     $("#tableSummary").textContent = rows.length ? `Показано ${Math.min(rows.length, state.lineLimit)} из ${rows.length} линий` : "Нет строк";
   }
   function renderActivity() {
-    const root = $("#activityList"); const items = state.audit.length ? state.audit.slice(0, 5).map((item) => ({ at: item.at || item.created_at, text: item.description || item.action, detail: item.actor_name || item.actor || "Система" })) : [{ at: "2026-09-16T14:08:00Z", text: "Восстановление наблюдается на линии L-008", detail: "Автоматическое наблюдение" }, { at: "2026-09-16T13:00:00Z", text: "Создан инцидент INC-181", detail: "Средняя школа №42" }, { at: "2026-09-16T11:29:00Z", text: "Получены buffered-наблюдения от S-042", detail: "Агент · 4 записи" }, { at: "2026-09-16T11:17:00Z", text: "Подтверждено отсутствие соединения", detail: "Школа имени Абая" }];
-    root.innerHTML = items.map((item) => `<div class="activity-item"><time class="activity-time">${time(item.at)}</time><span class="activity-dot"></span><div class="activity-copy"><b>${escapeHtml(item.text || "Событие")}</b><small>${escapeHtml(item.detail || "")}</small></div></div>`).join("");
+    const root = $("#activityList"); const items = state.audit.length ? state.audit.slice(0, 5).map((item) => ({ at: item.at || item.created_at, text: item.description || item.action, detail: item.actor_name || item.actor || "Система" })) : state.usingDemoData ? [{ at: "2026-09-16T14:08:00Z", text: "Восстановление наблюдается на линии L-008", detail: "Автоматическое наблюдение" }, { at: "2026-09-16T13:00:00Z", text: "Создан инцидент INC-181", detail: "Средняя школа №42" }, { at: "2026-09-16T11:29:00Z", text: "Получены buffered-наблюдения от S-042", detail: "Агент · 4 записи" }, { at: "2026-09-16T11:17:00Z", text: "Подтверждено отсутствие соединения", detail: "Школа имени Абая" }] : [];
+    root.innerHTML = items.length ? items.map((item) => `<div class="activity-item"><time class="activity-time">${time(item.at)}</time><span class="activity-dot"></span><div class="activity-copy"><b>${escapeHtml(item.text || "Событие")}</b><small>${escapeHtml(item.detail || "")}</small></div></div>`).join("") : `<div class="table-empty">Нет доступных действий</div>`;
   }
   function renderIncidents() {
     const root = $("#incidentBoard"); if (!state.incidents.length) { root.innerHTML = `<div class="table-empty">Инцидентов нет</div>`; return; }
@@ -241,7 +262,7 @@
   async function openCaseModal(incident) {
     state.currentIncident = incident; $("#caseModalBackdrop").classList.remove("hidden"); $("#reviewConfirm").checked = false; $("#caseSend").disabled = true; $("#draftText").value = "Формируем черновик на основании подтверждённых фактов…";
     $("#caseFacts").innerHTML = [["Инцидент", incident.number || incident.id], ["Школа", incident.school_name], ["Линия", incident.line_id], ["Провайдер", incident.provider]].map(([label, value]) => `<div class="case-fact"><span>${label}</span><b>${escapeHtml(value || "—")}</b></div>`).join("");
-    try { const response = await apiTry([`/api/incidents/${encodeURIComponent(incident.id)}/provider-case/draft`, `/api/v1/incidents/${encodeURIComponent(incident.id)}/provider-case/draft`], { method: "POST", body: JSON.stringify({}) }); state.currentCaseId = response.id || response.case_id || response.data?.id || null; const draft = response.draft || response.draft_text || response.text || response.message || response.data?.draft || response.data?.draft_text; $("#draftText").value = draft || templateDraft(incident); } catch (_) { state.currentCaseId = null; $("#draftText").value = templateDraft(incident); toast("Серверный черновик недоступен — показан локальный шаблон", "warn"); }
+    try { const response = await apiTry([`/api/incidents/${encodeURIComponent(incident.id)}/provider-case/draft`, `/api/v1/incidents/${encodeURIComponent(incident.id)}/provider-case/draft`], { method: "POST", body: JSON.stringify({}) }); state.currentCaseId = response.id || response.case_id || response.data?.id || null; const draft = response.draft || response.draft_text || response.text || response.message || response.data?.draft || response.data?.draft_text; $("#draftText").value = draft || templateDraft(incident); } catch (_) { state.currentCaseId = null; $("#draftText").value = state.usingDemoData ? templateDraft(incident) : "Серверный черновик недоступен. Обновите данные и повторите попытку."; $("#caseSend").disabled = true; toast(state.usingDemoData ? "Серверный черновик недоступен — показан локальный шаблон" : "Серверный черновик недоступен — отправка заблокирована", "warn"); }
   }
   function templateDraft(incident) { const evidenceLine = incident.source === "MANUAL" ? "Оператор просит проверить состояние линии; этот запрос сам по себе не является доказательством технического нарушения." : "Системой мониторинга зафиксировано подтверждённое отклонение."; return `Уважаемая служба технической поддержки ${incident.provider || "провайдера"}!
 
@@ -262,7 +283,7 @@
   function currentReportParams() { const params = new URLSearchParams({ period: state.filters.period }); ["district", "provider", "technology", "status"].forEach((key) => { if (state.filters[key]) params.set(key, state.filters[key]); }); if (state.filters.period === "custom") { ensureCustomDates(); if (state.filters.from) params.set("from", `${state.filters.from}T00:00:00Z`); if (state.filters.to) { const end = new Date(`${state.filters.to}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 1); params.set("to", end.toISOString()); } } return params.toString(); }
   async function downloadExport(kind = "raw-csv") { if (!validCustomPeriod()) return; const [type, format] = kind.split("-"); const params = new URLSearchParams({ type: type === "aggregate" ? "aggregate" : "raw", kind: type === "aggregate" ? "aggregate" : "raw", format: format === "xlsx" ? "xlsx" : "csv", period: state.filters.period }); ["district", "provider", "technology", "status"].forEach((key) => { if (state.filters[key]) params.set(key, state.filters[key]); }); if (state.filters.period === "custom") { const report = new URLSearchParams(currentReportParams()); ["from", "to"].forEach((key) => { if (report.get(key)) params.set(key, report.get(key)); }); } try { const response = await fetch(`/api/exports?${params.toString()}`, { headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}, method: "GET" }); if (!response.ok) { const fallback = await fetch(`/api/v1/exports?${params.toString()}`, { headers: state.token ? { Authorization: `Bearer ${state.token}` } : {} }); if (!fallback.ok) throw new Error("export"); return consumeDownload(fallback, type, format); } return consumeDownload(response, type, format); } catch (_) { toast("Серверная выгрузка недоступна — файл не создан", "warn"); } }
   async function consumeDownload(response, type, format) { const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `vko-${type}-${new Date().toISOString().slice(0, 10)}.${format}`; link.click(); URL.revokeObjectURL(url); toast(`Выгрузка ${format.toUpperCase()} подготовлена`); }
-  async function loadPassport() { if (!validCustomPeriod()) return; const query = currentReportParams(); try { const payload = await apiTry([`/api/reports/quality-passport?${query}`, `/api/v1/reports/quality-passport?${query}`]); const data = payload.data || payload; renderPassport({ baseline_rate: data.baseline_compliance, contract_rate: data.contract_compliance, received: data.measurements_received, expected: data.measurements_expected, incident_count: data.incidents?.count, problem_minutes: data.incidents?.total_duration_minutes, completeness: data.data_completeness, sufficient_data: data.sufficient_data }); } catch (_) { renderPassport(); } }
+  async function loadPassport() { if (!validCustomPeriod()) return; const query = currentReportParams(); try { const payload = await apiTry([`/api/reports/quality-passport?${query}`, `/api/v1/reports/quality-passport?${query}`]); const data = payload.data || payload; renderPassport({ baseline_rate: data.baseline_compliance, contract_rate: data.contract_compliance, received: data.measurements_received, expected: data.measurements_expected, incident_count: data.incidents?.count, problem_minutes: data.incidents?.total_duration_minutes, completeness: data.data_completeness, sufficient_data: data.sufficient_data }); } catch (_) { renderPassport(state.usingDemoData ? {} : { sufficient_data: false }); if (!state.usingDemoData) toast("Паспорт качества недоступен — серверный отчёт не получен", "warn"); } }
 
   function showView(view) {
     const isOverview = view === "overview" || view === "lines";
@@ -287,8 +308,9 @@
     $$("[data-table-view]").forEach((button) => button.addEventListener("click", () => { state.filters.view = button.dataset.tableView; $$("[data-table-view]").forEach((item) => item.classList.toggle("active", item === button)); renderLines(); }));
     $$("[data-export]").forEach((button) => button.addEventListener("click", () => downloadExport(button.dataset.export)));
     $("#loadMore").addEventListener("click", () => { state.lineLimit += 30; renderLines(); });
+    const loginForm = $("#loginForm"); if (loginForm) loginForm.addEventListener("submit", async (event) => { event.preventDefault(); const submit = $("#loginSubmit"); submit.disabled = true; try { await login(false, { username: $("#loginUsername").value.trim(), password: $("#loginPassword").value }); if (state.apiOnline) { await loadData(); await loadPassport(); } } finally { submit.disabled = false; } });
     ["mapZoomIn", "mapZoomOut", "mapReset"].forEach((id) => { const button = $(`#${id}`); if (button) button.addEventListener("click", () => { const svg = $(".vko-map"); const current = Number(svg.dataset.zoom || 1); const next = id === "mapZoomIn" ? Math.min(1.45, current + .1) : id === "mapZoomOut" ? Math.max(.8, current - .1) : 1; svg.dataset.zoom = next; svg.style.transform = `scale(${next})`; }); });
   }
-  async function boot() { bindEvents(); await login(true); await loadData(); await loadPassport(); }
+  async function boot() { bindEvents(); if (!state.token && !state.demoMode) showLogin(); await loadData(); await loadPassport(); }
   document.addEventListener("DOMContentLoaded", boot);
 })();

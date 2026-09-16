@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .app.db import get_connection, init_db
-from .app.services import dt_text, process_measurement, token_hash, utc_now
+from .app.services import dt_text, hash_password, process_measurement, token_hash, utc_now
 
 
 DEMO_USER_TOKENS = {
@@ -45,6 +46,7 @@ def _clear_demo(connection) -> None:
         "measurement_evaluations",
         "measurements",
         "role_scopes",
+        "auth_sessions",
         "users",
         "agent_schedules",
         "devices",
@@ -59,6 +61,8 @@ def _clear_demo(connection) -> None:
 
 
 def seed_demo(db_path: str | Path | None = None, *, reset: bool = False, seed_measurements: bool = False) -> None:
+    if os.getenv("VKO_ENV", "development").lower() == "production" and os.getenv("VKO_ALLOW_DEMO_SEED") != "1":
+        raise RuntimeError("demo seed is disabled in production; use an explicit staging profile")
     init_db(db_path)
     with get_connection(db_path) as connection:
         # Multiple Uvicorn workers can bootstrap a fresh PostgreSQL database at
@@ -136,8 +140,12 @@ def seed_demo(db_path: str | Path | None = None, *, reset: bool = False, seed_me
             ("user-provider-a", "provider-a", "PROVIDER"),
             ("user-school-42", "school-42", "SCHOOL"),
         ]
+        demo_password_hash = hash_password("demo")
         for user_id, username, role in users:
-            _insert_seed(connection, "INSERT OR IGNORE INTO users(id, username, role, token_hash, created_at) VALUES (?, ?, ?, ?, ?)", (user_id, username, role, token_hash(DEMO_USER_TOKENS[username]), now))
+            _insert_seed(connection, "INSERT OR IGNORE INTO users(id, username, role, token_hash, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)", (user_id, username, role, token_hash(DEMO_USER_TOKENS[username]), demo_password_hash, now))
+            # Upgrade a database seeded by an older MVP without changing an
+            # operator-managed password hash that is already present.
+            connection.execute("UPDATE users SET password_hash = ? WHERE id = ? AND (password_hash IS NULL OR password_hash = '')", (demo_password_hash, user_id))
         scopes = [
             ("user-district", "DISTRICT", "Алтай"),
             ("user-provider-a", "PROVIDER", "provider-a"),

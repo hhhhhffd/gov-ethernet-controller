@@ -12,11 +12,11 @@ from pathlib import Path
 from typing import Any, Iterator
 from xml.sax.saxutils import escape as xml_escape
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
-from .db import connect, get_connection, init_db, resolve_db_path
+from .db import PostgresConnectionPool, connect, get_connection, init_db, is_postgres_path, resolve_db_path
 from .schemas import (
     AgentBatchIn,
     ContractIn,
@@ -41,6 +41,7 @@ from .services import (
     add_incident_event,
     as_utc,
     contract_snapshot,
+    dispatch_notification,
     dt_text,
     effective_contract,
     effective_policy,
@@ -53,14 +54,28 @@ from .services import (
     principal_for_token,
     process_measurement,
     provider_draft,
+    revoke_token,
+    issue_session,
+    hash_password,
+    verify_password,
     refresh_situations,
     token_hash,
     utc_now,
 )
+from .transports import DeliveryError, deliver_provider_case
 
 
 def _bool(value: Any) -> bool:
-    return bool(value) and value not in {"0", "false", "False", 0}
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _session_ttl_seconds() -> int:
+    try:
+        return int(os.getenv("VKO_SESSION_TTL_SECONDS", str(8 * 60 * 60)))
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail="invalid VKO_SESSION_TTL_SECONDS configuration") from exc
 
 
 def _state_dict(row: Any | None) -> dict[str, Any]:
@@ -146,6 +161,25 @@ def _period_bounds(
     if start >= end:
         raise HTTPException(status_code=422, detail="from must be earlier than to")
     return start, end
+
+
+def _validate_device_time(value: datetime, *, field: str) -> str:
+    """Apply server-side clock-skew bounds while allowing bounded backfill."""
+    current = utc_now()
+    parsed = as_utc(value)
+    if parsed is None:
+        raise HTTPException(status_code=422, detail=f"{field} is required")
+    if parsed > current + timedelta(minutes=10):
+        raise HTTPException(status_code=422, detail=f"{field} is too far in the future")
+    configured_backfill = os.getenv("VKO_MAX_BACKFILL_DAYS")
+    if configured_backfill and configured_backfill.strip():
+        try:
+            max_backfill_days = int(configured_backfill)
+        except ValueError as exc:
+            raise HTTPException(status_code=500, detail="invalid VKO_MAX_BACKFILL_DAYS configuration") from exc
+        if max_backfill_days < 0 or parsed < current - timedelta(days=max_backfill_days):
+            raise HTTPException(status_code=422, detail=f"{field} is older than the allowed backfill window")
+    return dt_text(parsed) or ""
 
 
 def _line_or_404(connection: Any, principal: Principal, line_id: str) -> Any:
@@ -469,6 +503,21 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     init_db(database_path)
     app = FastAPI(title="VKO Internet Line Monitoring API", version="0.1.0")
     app.state.db_path = database_path
+    db_pool: PostgresConnectionPool | None = None
+    if is_postgres_path(database_path) and _bool(os.getenv("VKO_DB_POOL", "1")):
+        try:
+            min_size = max(0, int(os.getenv("VKO_DB_POOL_MIN", "1")))
+            max_size = max(1, int(os.getenv("VKO_DB_POOL_MAX", "10")))
+        except ValueError as exc:
+            raise RuntimeError("VKO_DB_POOL_MIN and VKO_DB_POOL_MAX must be integers") from exc
+        if min_size > max_size:
+            raise RuntimeError("VKO_DB_POOL_MIN cannot exceed VKO_DB_POOL_MAX")
+        db_pool = PostgresConnectionPool(database_path, min_size=min_size, max_size=max_size)
+        app.state.db_pool = db_pool
+
+        @app.on_event("shutdown")
+        async def close_db_pool() -> None:
+            db_pool.close()
     if memory_anchor is not None:
         app.state.memory_anchor = memory_anchor
 
@@ -499,15 +548,35 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             return Response(candidate.read_bytes(), media_type=media)
 
     async def db_dependency() -> Iterator[Any]:
-        with get_connection(database_path) as connection:
+        with get_connection(database_path, pool=db_pool) as connection:
             yield connection
 
     # A fresh checkout should be useful immediately. Explicit `backend.seed` still
     # remains the source of truth for repeatable resets; this bootstrap only runs
     # when the configured database has no users yet.
-    with get_connection(database_path) as bootstrap_connection:
+    environment = os.getenv("VKO_ENV", "development").lower()
+    auth_mode = os.getenv("VKO_AUTH_MODE", "password").lower()
+    with get_connection(database_path, pool=db_pool) as bootstrap_connection:
         has_users = bootstrap_connection.execute("SELECT 1 FROM users LIMIT 1").fetchone()
-    if not has_users and os.getenv("VKO_AUTO_SEED", "1") != "0" and os.getenv("VKO_ENV", "development").lower() != "production":
+    if not has_users and environment == "production":
+        bootstrap_username = os.getenv("VKO_BOOTSTRAP_ADMIN_USERNAME", "").strip()
+        bootstrap_password = os.getenv("VKO_BOOTSTRAP_ADMIN_PASSWORD", "")
+        if bootstrap_username or bootstrap_password:
+            if not bootstrap_username or len(bootstrap_password) < 12:
+                raise RuntimeError("VKO_BOOTSTRAP_ADMIN_USERNAME and a 12+ character VKO_BOOTSTRAP_ADMIN_PASSWORD are required")
+            now = dt_text(utc_now())
+            bootstrap_token_hash = token_hash(secrets.token_urlsafe(32))
+            with get_connection(database_path, pool=db_pool) as bootstrap_connection:
+                if getattr(bootstrap_connection, "is_postgres", False):
+                    bootstrap_connection.execute("SELECT pg_advisory_xact_lock(742033)")
+                if not bootstrap_connection.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+                    bootstrap_connection.execute(
+                        "INSERT INTO users(id, username, role, token_hash, password_hash, created_at) VALUES (?, ?, 'ADMIN', ?, ?, ?)",
+                        (f"bootstrap-{uuid.uuid4().hex[:12]}", bootstrap_username, bootstrap_token_hash, hash_password(bootstrap_password), now),
+                    )
+        elif auth_mode == "password":
+            raise RuntimeError("an empty production database requires VKO_BOOTSTRAP_ADMIN_USERNAME and VKO_BOOTSTRAP_ADMIN_PASSWORD")
+    if not has_users and os.getenv("VKO_AUTO_SEED", "1") != "0" and environment != "production":
         from ..seed import seed_demo
 
         seed_demo(database_path, seed_measurements=True)
@@ -541,29 +610,62 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "vko-backend"}
 
+    @app.get("/health/ready")
+    async def readiness() -> dict[str, str]:
+        try:
+            with get_connection(database_path, pool=db_pool) as connection:
+                connection.execute("SELECT 1").fetchone()
+        except Exception as exc:  # pragma: no cover - exercised by deployment failures
+            raise HTTPException(status_code=503, detail="database is not ready") from exc
+        return {"status": "ready", "service": "vko-backend"}
+
     @app.post("/api/login")
+    @app.post("/api/auth/login")
     @app.post("/api/v1/auth/login")
     @app.post("/api/v1/login")
     async def login(request: Request, payload: dict[str, Any] = Body(default={}), connection: Any = Depends(db_dependency)) -> dict[str, Any]:
         username = str(payload.get("username") or payload.get("login") or "").strip()
         password = str(payload.get("password") or "")
-        # Demo users deliberately use the same non-secret password. Real deployments
-        # should replace this endpoint with an external identity provider/password hash.
-        if os.getenv("VKO_ENV", "development").lower() == "production":
-            raise HTTPException(status_code=503, detail="demo login is disabled in production")
-        if not username or password != "demo":
+        if not username or not password:
             raise HTTPException(status_code=401, detail="invalid credentials")
         user = connection.execute("SELECT * FROM users WHERE username = ? AND disabled_at IS NULL", (username,)).fetchone()
         if not user:
             raise HTTPException(status_code=401, detail="invalid credentials")
-        token = secrets.token_urlsafe(32)
-        connection.execute("UPDATE users SET token_hash = ? WHERE id = ?", (token_hash(token), user["id"]))
+        environment = os.getenv("VKO_ENV", "development").lower()
+        auth_mode = os.getenv("VKO_AUTH_MODE", "password").lower()
+        if auth_mode in {"oidc", "external"}:
+            raise HTTPException(status_code=503, detail="external identity provider integration is not configured in this service")
+        valid_password = verify_password(password, user["password_hash"])
+        # Databases created before password_hash was introduced can still be
+        # used in an explicitly non-production demo profile. Production never
+        # falls back to the shared demo password.
+        if not valid_password and environment != "production" and password == "demo" and not user["password_hash"]:
+            valid_password = True
+        if not valid_password:
+            raise HTTPException(status_code=401, detail="invalid credentials")
+        token, expires_at = issue_session(
+            connection,
+            user["id"],
+            ttl_seconds=_session_ttl_seconds(),
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("User-Agent"),
+        )
         add_audit(connection, "USER", user["id"], "auth.login", "user", user["id"], request_id=request.headers.get("X-Request-ID"))
-        return {"token": token, "user": {"id": user["id"], "username": user["username"], "role": user["role"], "role_label": {"ADMIN": "Администратор", "OBLAST": "Областной уровень", "DISTRICT": "Районный уровень", "PROVIDER": "Провайдер", "SCHOOL": "Школа"}.get(user["role"], user["role"])}}
+        return {"token": token, "token_type": "Bearer", "expires_at": expires_at, "user": {"id": user["id"], "username": user["username"], "role": user["role"], "role_label": {"ADMIN": "Администратор", "OBLAST": "Областной уровень", "DISTRICT": "Районный уровень", "PROVIDER": "Провайдер", "SCHOOL": "Школа"}.get(user["role"], user["role"])}}
 
+    @app.get("/api/auth/me")
     @app.get("/api/v1/auth/me")
     async def auth_me(principal: Principal = Depends(principal_dependency)) -> dict[str, Any]:
         return {"id": principal.id, "username": principal.username, "role": principal.role, "scopes": [{"type": kind, "id": value} for kind, value in principal.scopes]}
+
+    @app.post("/api/v1/auth/logout")
+    @app.post("/api/auth/logout")
+    async def logout(request: Request, principal: Principal = Depends(principal_dependency), connection: Any = Depends(db_dependency)) -> dict[str, Any]:
+        authorization = request.headers.get("Authorization", "")
+        token = authorization[7:].strip() if authorization.startswith("Bearer ") else ""
+        revoked = revoke_token(connection, token) if token else False
+        add_audit(connection, "USER", principal.id, "auth.logout", "user", principal.id, after={"revoked": revoked}, request_id=request.headers.get("X-Request-ID"))
+        return {"status": "ok", "revoked": revoked}
 
     @app.post("/api/admin/devices/register", status_code=201)
     @app.post("/api/v1/admin/devices/register", status_code=201)
@@ -584,19 +686,19 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     @app.post("/api/agent/heartbeat")
     @app.post("/api/v1/agent/heartbeat")
     async def agent_heartbeat(payload: HeartbeatIn, device: Any = Depends(device_dependency), connection: Any = Depends(db_dependency)) -> dict[str, Any]:
-        seen_at = dt_text(payload.seen_at or utc_now())
-        if as_utc(seen_at) > utc_now() + timedelta(minutes=10):
-            raise HTTPException(status_code=422, detail="seen_at is too far in the future")
+        seen_at = _validate_device_time(payload.seen_at or utc_now(), field="seen_at")
         connection.execute("UPDATE devices SET last_seen = ?, agent_version = ? WHERE id = ?", (seen_at, payload.agent_version, device["id"]))
         return {"device_id": device["id"], "line_id": device["line_id"], "last_seen": seen_at, "agent_version": payload.agent_version}
 
     @app.post("/api/agent/measurements:batch")
     @app.post("/api/v1/agent/measurements:batch")
     async def agent_measurements(payload: AgentBatchIn, device: Any = Depends(device_dependency), connection: Any = Depends(db_dependency)) -> dict[str, Any]:
-        future_limit = utc_now() + timedelta(minutes=10)
-        if any(as_utc(item.observed_at) > future_limit for item in payload.measurements):
-            raise HTTPException(status_code=422, detail="observed_at is too far in the future")
-        results = [process_measurement(connection, device, item.model_dump()) for item in payload.measurements]
+        measurements = []
+        for item in payload.measurements:
+            data = item.model_dump()
+            data["observed_at"] = _validate_device_time(item.observed_at, field="observed_at")
+            measurements.append(data)
+        results = [process_measurement(connection, device, item) for item in measurements]
         return {"device_id": device["id"], "line_id": device["line_id"], "results": results, "accepted": sum(1 for item in results if item["accepted"]), "duplicates": sum(1 for item in results if item["duplicate"])}
 
     @app.get("/api/agent/config")
@@ -614,6 +716,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     @app.post("/api/v1/demo/replay")
     async def demo_replay(payload: dict[str, Any] = Body(default={}), principal: Principal = Depends(principal_dependency), connection: Any = Depends(db_dependency)) -> dict[str, Any]:
         """Replay one deterministic degradation through the real ingestion/state path."""
+        if os.getenv("VKO_ENV", "development").lower() == "production":
+            raise HTTPException(status_code=404, detail="demo replay is disabled in production")
         scenario = str(payload.get("scenario") or "school-42")
         if scenario != "school-42":
             raise HTTPException(status_code=422, detail="only school-42 demo scenario is available")
@@ -926,6 +1030,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.post("/api/provider-cases/{case_id}/send")
     @app.post("/api/v1/provider-cases/{case_id}/send")
+    @app.post("/api/provider-cases/{case_id}/retry")
+    @app.post("/api/v1/provider-cases/{case_id}/retry")
     async def send_provider_case(case_id: int, payload: ProviderSendIn, request: Request, principal: Principal = Depends(principal_dependency), connection: Any = Depends(db_dependency)) -> dict[str, Any]:
         case = connection.execute("SELECT * FROM provider_cases WHERE id = ?", (case_id,)).fetchone()
         if not case:
@@ -934,19 +1040,38 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         if not incident or not line_allowed(connection, principal, incident["line_id"]):
             raise HTTPException(status_code=404, detail="provider case not found")
         _require_workflow_role(principal, "provider_send")
+        if case["status"] == "SENT":
+            # A retried browser request must be idempotent and must not create a
+            # second ticket at the provider.
+            return {**dict(case), "incident_id": incident["id"]}
         if not payload.reviewed:
             raise HTTPException(status_code=409, detail="human review confirmation required before sending")
-        final_text = payload.final_text or case["draft_text"]
+        final_text = payload.final_text or payload.text or case["draft_text"]
         if not final_text.strip():
             raise HTTPException(status_code=422, detail="final_text cannot be empty")
         now = dt_text(utc_now())
-        ticket_no = payload.ticket_no or f"PROVIDER-{case_id:06d}"
-        connection.execute("UPDATE provider_cases SET final_text = ?, ticket_no = ?, status = 'SENT', sent_by = ?, sent_at = ? WHERE id = ?", (final_text, ticket_no, principal.username, now, case_id))
+        attempts = int(case["delivery_attempts"] or 0) + 1
+        connection.execute("UPDATE provider_cases SET final_text = ?, delivery_attempts = ?, delivery_error = NULL WHERE id = ?", (final_text, attempts, case_id))
+        line = line_row(connection, incident["line_id"])
+        provider = connection.execute("SELECT * FROM providers WHERE id = ?", (line["provider_id"],)).fetchone() if line and line["provider_id"] else None
+        case_for_delivery = {**dict(case), "id": case_id, "final_text": final_text}
+        try:
+            delivery = deliver_provider_case(case_for_delivery, incident, provider)
+        except DeliveryError as exc:
+            connection.execute("UPDATE provider_cases SET status = 'FAILED', delivery_status = 'FAILED', delivery_error = ? WHERE id = ?", (str(exc)[:2000], case_id))
+            add_incident_event(connection, incident["id"], "PROVIDER_CASE_DELIVERY_FAILED", principal.username, {"provider_case_id": case_id, "error": str(exc), "retryable": exc.retryable})
+            add_audit(connection, "USER", principal.id, "provider_case.delivery_failed", "provider_case", str(case_id), after={"status": "FAILED", "attempts": attempts, "error": str(exc)}, request_id=request.headers.get("X-Request-ID"))
+            # Preserve the failed attempt in the durable transaction before
+            # telling the caller to retry or fix transport configuration.
+            connection.commit()
+            raise HTTPException(status_code=502, detail="provider delivery failed; the case remains retryable") from exc
+        ticket_no = payload.ticket_no or delivery.external_id or f"PROVIDER-{case_id:06d}"
+        connection.execute("UPDATE provider_cases SET ticket_no = ?, external_ticket_no = ?, status = 'SENT', delivery_channel = ?, delivery_status = 'SENT', delivery_error = NULL, sent_by = ?, sent_at = ? WHERE id = ?", (ticket_no, delivery.external_id, delivery.channel, principal.username, now, case_id))
         current = connection.execute("SELECT status FROM incidents WHERE id = ?", (incident["id"],)).fetchone()["status"]
         if current == "NEW":
             connection.execute("UPDATE incidents SET status = 'SENT_TO_PROVIDER' WHERE id = ?", (incident["id"],))
         add_incident_event(connection, incident["id"], "PROVIDER_CASE_SENT", principal.username, {"provider_case_id": case_id, "ticket_no": ticket_no})
-        add_audit(connection, "USER", principal.id, "provider_case.sent", "provider_case", str(case_id), after={"ticket_no": ticket_no, "status": "SENT", "reviewed": True, "reviewed_by": principal.username}, request_id=request.headers.get("X-Request-ID"))
+        add_audit(connection, "USER", principal.id, "provider_case.sent", "provider_case", str(case_id), after={"ticket_no": ticket_no, "external_ticket_no": delivery.external_id, "delivery_channel": delivery.channel, "status": "SENT", "reviewed": True, "reviewed_by": principal.username}, request_id=request.headers.get("X-Request-ID"))
         return {**dict(connection.execute("SELECT * FROM provider_cases WHERE id = ?", (case_id,)).fetchone()), "incident_id": incident["id"]}
 
     @app.get("/api/situations")
@@ -962,6 +1087,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 item = dict(row)
                 item["reason"] = _json(item.pop("reason_json"), {})
                 item["incident_ids"] = [member["incident_id"] for member in members]
+                item["affected_count"] = len(members)
+                item["provider"] = item["reason"].get("provider") or item.get("provider_id")
+                item["severity"] = "CRITICAL" if item.get("violation_type") == "NO_INTERNET" else "ATTENTION"
                 result.append(item)
         return result
 
@@ -992,6 +1120,16 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             scope = line_scope_sql(principal, params)
             rows = connection.execute("SELECT n.* FROM notifications n JOIN incidents i ON n.source_type = 'INCIDENT' AND n.source_id = CAST(i.id AS TEXT) JOIN lines l ON l.id = i.line_id JOIN organizations o ON o.id = l.organization_id WHERE " + scope + " ORDER BY n.generated_at DESC LIMIT 200", params).fetchall()
         return [dict(row) for row in rows]
+
+    @app.post("/api/admin/notifications/{notification_id}/dispatch")
+    @app.post("/api/v1/admin/notifications/{notification_id}/dispatch")
+    async def dispatch_notification_endpoint(notification_id: int, request: Request, principal: Principal = Depends(principal_dependency), connection: Any = Depends(db_dependency)) -> dict[str, Any]:
+        _require_admin(principal)
+        result = dispatch_notification(connection, notification_id)
+        if not result:
+            raise HTTPException(status_code=404, detail="notification not found")
+        add_audit(connection, "USER", principal.id, "notification.dispatch", "notification", str(notification_id), after={"status": result.get("status"), "delivery_attempts": result.get("delivery_attempts")}, request_id=request.headers.get("X-Request-ID"))
+        return result
 
     @app.get("/api/exports")
     @app.post("/api/exports")
@@ -1226,12 +1364,20 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         _require_admin(principal)
         if connection.execute("SELECT 1 FROM users WHERE id = ? OR username = ?", (payload.id, payload.username)).fetchone():
             raise HTTPException(status_code=409, detail="user id or username already exists")
+        environment = os.getenv("VKO_ENV", "development").lower()
+        if environment == "production" and (not payload.password or len(payload.password) < 12):
+            raise HTTPException(status_code=422, detail="a 12+ character password is required in production")
         now = dt_text(utc_now())
         token = secrets.token_urlsafe(32)
-        connection.execute("INSERT INTO users(id, username, role, token_hash, disabled_at, created_at) VALUES (?, ?, ?, ?, ?, ?)", (payload.id, payload.username, payload.role, token_hash(token), now if payload.disabled else None, now))
+        password_hash = hash_password(payload.password) if payload.password else None
+        connection.execute("INSERT INTO users(id, username, role, token_hash, password_hash, disabled_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (payload.id, payload.username, payload.role, token_hash(token), password_hash, now if payload.disabled else None, now))
+        if not payload.disabled:
+            # The one-time bearer token remains useful to API clients that
+            # provision users before they have a password-based login flow.
+            issue_session(connection, payload.id, token=token, ttl_seconds=_session_ttl_seconds())
         for scope in payload.scopes:
             connection.execute("INSERT INTO role_scopes(user_id, scope_type, scope_id) VALUES (?, ?, ?)", (payload.id, scope.scope_type, scope.scope_id))
-        values = payload.model_dump(exclude={"scopes"})
+        values = payload.model_dump(exclude={"scopes", "password"})
         add_audit(connection, "USER", principal.id, "user.created", "user", payload.id, after={**values, "scope_count": len(payload.scopes)}, request_id=request.headers.get("X-Request-ID"))
         return {"id": payload.id, "username": payload.username, "role": payload.role, "disabled": payload.disabled, "scopes": [scope.model_dump() for scope in payload.scopes], "token": token, "created_at": now}
 
@@ -1248,11 +1394,26 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         if duplicate:
             raise HTTPException(status_code=409, detail="username already exists")
         disabled_at = dt_text(utc_now()) if payload.disabled else None
-        connection.execute("UPDATE users SET id = ?, username = ?, role = ?, disabled_at = ? WHERE id = ?", (payload.id, payload.username, payload.role, disabled_at, user_id))
+        password_clause = ""
+        password_params: list[Any] = []
+        if payload.password:
+            if os.getenv("VKO_ENV", "development").lower() == "production" and len(payload.password) < 12:
+                raise HTTPException(status_code=422, detail="a 12+ character password is required in production")
+            password_clause = ", password_hash = ?"
+            password_params.append(hash_password(payload.password))
+        connection.execute("UPDATE users SET id = ?, username = ?, role = ?, disabled_at = ?" + password_clause + " WHERE id = ?", (payload.id, payload.username, payload.role, disabled_at, *password_params, user_id))
+        if payload.disabled or payload.password:
+            connection.execute("UPDATE auth_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL", (dt_text(utc_now()), user_id))
+        if payload.disabled or payload.password:
+            # Also invalidate the compatibility token stored by pre-session
+            # databases; otherwise changing a password or disabling/re-enabling
+            # a user would leave an older bearer credential usable in
+            # development/staging.
+            connection.execute("UPDATE users SET token_hash = ? WHERE id = ?", (token_hash(secrets.token_urlsafe(32)), payload.id))
         connection.execute("DELETE FROM role_scopes WHERE user_id = ?", (user_id,))
         for scope in payload.scopes:
             connection.execute("INSERT INTO role_scopes(user_id, scope_type, scope_id) VALUES (?, ?, ?)", (payload.id, scope.scope_type, scope.scope_id))
-        add_audit(connection, "USER", principal.id, "user.updated", "user", payload.id, before={"id": current["id"], "username": current["username"], "role": current["role"], "disabled": bool(current["disabled_at"])}, after={"id": payload.id, "username": payload.username, "role": payload.role, "disabled": payload.disabled, "scope_count": len(payload.scopes)}, request_id=request.headers.get("X-Request-ID"))
+        add_audit(connection, "USER", principal.id, "user.updated", "user", payload.id, before={"id": current["id"], "username": current["username"], "role": current["role"], "disabled": bool(current["disabled_at"])}, after={"id": payload.id, "username": payload.username, "role": payload.role, "disabled": payload.disabled, "password_changed": bool(payload.password), "scope_count": len(payload.scopes)}, request_id=request.headers.get("X-Request-ID"))
         return {"id": payload.id, "username": payload.username, "role": payload.role, "disabled": payload.disabled, "scopes": [scope.model_dump() for scope in payload.scopes]}
 
     @app.post("/api/admin/devices/{device_id}/unblock")
@@ -1367,6 +1528,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     @app.post("/api/admin/demo/reset")
     @app.post("/api/v1/admin/demo/reset")
     async def demo_reset(payload: DemoResetIn, principal: Principal = Depends(principal_dependency), connection: Any = Depends(db_dependency)) -> dict[str, Any]:
+        if os.getenv("VKO_ENV", "development").lower() == "production":
+            raise HTTPException(status_code=404, detail="demo reset is disabled in production")
         _require_admin(principal)
         # Keep the reset implementation in seed.py so CLI and API use one fixture.
         from ..seed import _clear_demo, seed_demo

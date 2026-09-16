@@ -22,6 +22,20 @@ services:
     environment:
       VKO_ENV: ${VKO_ENV:-staging}
       VKO_AUTO_SEED: ${VKO_AUTO_SEED:-1}
+      VKO_AUTH_MODE: ${VKO_AUTH_MODE:-password}
+      VKO_BOOTSTRAP_ADMIN_USERNAME: ${VKO_BOOTSTRAP_ADMIN_USERNAME:-}
+      VKO_BOOTSTRAP_ADMIN_PASSWORD: ${VKO_BOOTSTRAP_ADMIN_PASSWORD:-}
+      VKO_SESSION_TTL_SECONDS: ${VKO_SESSION_TTL_SECONDS:-28800}
+      VKO_MAX_BACKFILL_DAYS: ${VKO_MAX_BACKFILL_DAYS:-90}
+      VKO_DB_POOL: ${VKO_DB_POOL:-1}
+      VKO_DB_POOL_MIN: ${VKO_DB_POOL_MIN:-1}
+      VKO_DB_POOL_MAX: ${VKO_DB_POOL_MAX:-10}
+      VKO_PROVIDER_TRANSPORT: ${VKO_PROVIDER_TRANSPORT:-internal}
+      VKO_PROVIDER_WEBHOOK_URL: ${VKO_PROVIDER_WEBHOOK_URL:-}
+      VKO_PROVIDER_WEBHOOK_TOKEN: ${VKO_PROVIDER_WEBHOOK_TOKEN:-}
+      VKO_NOTIFICATION_TRANSPORT: ${VKO_NOTIFICATION_TRANSPORT:-internal}
+      VKO_NOTIFICATION_WEBHOOK_URL: ${VKO_NOTIFICATION_WEBHOOK_URL:-}
+      VKO_NOTIFICATION_WEBHOOK_TOKEN: ${VKO_NOTIFICATION_WEBHOOK_TOKEN:-}
       VKO_DATABASE_URL: postgresql://${VKO_POSTGRES_USER}:${VKO_POSTGRES_PASSWORD}@postgres:5432/${VKO_POSTGRES_DB}
       VKO_CORS_ORIGINS: ${VKO_CORS_ORIGINS:-http://127.0.0.1:8000,http://localhost:8000}
     depends_on:
@@ -30,7 +44,7 @@ services:
     ports:
       - "127.0.0.1:${VKO_APP_PORT:-8000}:8000"
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)\""]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)\""]
       interval: 5s
       timeout: 5s
       retries: 20

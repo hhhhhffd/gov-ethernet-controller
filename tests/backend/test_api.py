@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import io
+import os
 import tempfile
 import unittest
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
 from backend.app.main import create_app
+from backend.app.transports import DeliveryError, DeliveryResult
 
 
 class ApiTests(unittest.IsolatedAsyncioTestCase):
@@ -31,6 +34,7 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_health_login_scope_and_static_ui(self) -> None:
         self.assertEqual((await self.client.get("/health")).status_code, 200)
+        self.assertEqual((await self.client.get("/health/ready")).status_code, 200)
         self.assertEqual((await self.client.post("/api/login", json={"username": "admin", "password": "wrong"})).status_code, 401)
         admin = {"Authorization": f"Bearer {await self.token()}"}
         lines = await self.client.get("/api/v1/lines", headers=admin)
@@ -56,6 +60,48 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         page = await self.client.get("/")
         self.assertEqual(page.status_code, 200)
         self.assertIn("LINKWATCH", page.text)
+
+    async def test_sessions_are_independent_and_logout_revokes_only_one(self) -> None:
+        first = await self.token()
+        second = await self.token()
+        first_headers = {"Authorization": f"Bearer {first}"}
+        second_headers = {"Authorization": f"Bearer {second}"}
+        self.assertEqual((await self.client.get("/api/v1/auth/me", headers=first_headers)).status_code, 200)
+        self.assertEqual((await self.client.get("/api/v1/auth/me", headers=second_headers)).status_code, 200)
+        logout = await self.client.post("/api/v1/auth/logout", headers=first_headers)
+        self.assertEqual(logout.status_code, 200, logout.text)
+        self.assertEqual((await self.client.get("/api/v1/auth/me", headers=first_headers)).status_code, 401)
+        self.assertEqual((await self.client.get("/api/v1/auth/me", headers=second_headers)).status_code, 200)
+
+    async def test_production_uses_hashed_password_and_bootstrap_admin(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ,
+            {
+                "VKO_ENV": "production",
+                "VKO_AUTO_SEED": "0",
+                "VKO_BOOTSTRAP_ADMIN_USERNAME": "root",
+                "VKO_BOOTSTRAP_ADMIN_PASSWORD": "correct horse battery staple",
+                "VKO_AUTH_DISABLED": "0",
+            },
+            clear=False,
+        ):
+            app = create_app(Path(directory) / "production.sqlite3")
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+                wrong = await client.post("/api/login", json={"username": "root", "password": "demo"})
+                self.assertEqual(wrong.status_code, 401)
+                login = await client.post("/api/login", json={"username": "root", "password": "correct horse battery staple"})
+                self.assertEqual(login.status_code, 200, login.text)
+                headers = {"Authorization": f"Bearer {login.json()['token']}"}
+                self.assertEqual((await client.get("/api/v1/auth/me", headers=headers)).status_code, 200)
+                self.assertEqual((await client.post("/api/v1/demo/replay", headers=headers)).status_code, 404)
+                self.assertEqual((await client.post("/api/v1/admin/demo/reset", headers=headers, json={"seed_measurements": False})).status_code, 404)
+    async def test_strict_payload_rejects_unknown_agent_fields(self) -> None:
+        response = await self.client.post(
+            "/api/v1/agent/measurements:batch",
+            json={"measurements": [{**self.measurement("strict"), "typo_metric": 123}]},
+            headers={"X-Device-ID": "device-42-primary", "X-Device-Token": "demo-device-42-primary-token"},
+        )
+        self.assertEqual(response.status_code, 422)
 
     async def post_measurements(self, device_id: str, device_token: str, values: list[dict]) -> list[dict]:
         headers = {"X-Device-ID": device_id, "X-Device-Token": device_token}
@@ -127,6 +173,66 @@ class ApiTests(unittest.IsolatedAsyncioTestCase):
         closed = (await self.client.get(f"/api/v1/incidents/{incident['id']}", headers=headers)).json()
         self.assertEqual(closed["status"], "CLOSED")
         self.assertEqual(closed["recovery_state"], "CONFIRMED")
+
+    async def test_provider_delivery_failure_is_durable_and_retryable(self) -> None:
+        bad = [self.measurement(f"delivery-outage-{index}", download=None, upload=None, ping=None, connection_status="NO_INTERNET") for index in range(3)]
+        await self.post_measurements("device-42-reserve", "demo-device-42-reserve-token", bad)
+        token = await self.token()
+        headers = {"Authorization": f"Bearer {token}"}
+        incident = (await self.client.get("/api/v1/incidents?line_id=line-42-reserve", headers=headers)).json()[0]
+        draft = await self.client.post(f"/api/v1/incidents/{incident['id']}/provider-case/draft", json={}, headers=headers)
+        case_id = draft.json()["id"]
+        with patch("backend.app.main.deliver_provider_case", side_effect=DeliveryError("provider is offline")):
+            failed = await self.client.post(f"/api/v1/provider-cases/{case_id}/send", json={"reviewed": True}, headers=headers)
+        self.assertEqual(failed.status_code, 502, failed.text)
+        detail = (await self.client.get(f"/api/v1/incidents/{incident['id']}", headers=headers)).json()
+        failed_case = detail["provider_cases"][0]
+        self.assertEqual(failed_case["status"], "FAILED")
+        self.assertEqual(failed_case["delivery_attempts"], 1)
+        with patch("backend.app.main.deliver_provider_case", return_value=DeliveryResult("WEBHOOK", "EXT-42")):
+            retried = await self.client.post(f"/api/v1/provider-cases/{case_id}/retry", json={"reviewed": True}, headers=headers)
+        self.assertEqual(retried.status_code, 200, retried.text)
+        self.assertEqual(retried.json()["status"], "SENT")
+        self.assertEqual(retried.json()["external_ticket_no"], "EXT-42")
+
+    async def test_notification_delivery_failure_is_visible_for_retry(self) -> None:
+        outage = [self.measurement(f"notification-outage-{index}", download=None, upload=None, ping=None, connection_status="NO_INTERNET") for index in range(3)]
+        with patch("backend.app.transports.deliver_notification", side_effect=DeliveryError("notification endpoint is offline")):
+            await self.post_measurements("device-42-reserve", "demo-device-42-reserve-token", outage)
+        token = await self.token()
+        headers = {"Authorization": f"Bearer {token}"}
+        notifications = await self.client.get("/api/v1/notifications", headers=headers)
+        self.assertEqual(notifications.status_code, 200)
+        reserve_incident = (await self.client.get("/api/v1/incidents?line_id=line-42-reserve", headers=headers)).json()[0]
+        failed = next(item for item in notifications.json() if item["source_type"] == "INCIDENT" and item["source_id"] == str(reserve_incident["id"]))
+        self.assertEqual(failed["status"], "FAILED")
+        with patch("backend.app.transports.deliver_notification", return_value=DeliveryResult("WEBHOOK", "MSG-1")):
+            dispatched = await self.client.post(f"/api/v1/admin/notifications/{failed['id']}/dispatch", headers=headers)
+        self.assertEqual(dispatched.status_code, 200, dispatched.text)
+        self.assertEqual(dispatched.json()["status"], "SENT")
+
+    async def test_monitoring_recovery_closes_without_provider_ack(self) -> None:
+        outage = [self.measurement(f"no-ack-outage-{index}", download=None, upload=None, ping=None, connection_status="NO_INTERNET") for index in range(3)]
+        await self.post_measurements("device-42-reserve", "demo-device-42-reserve-token", outage)
+        recovery = [self.measurement(f"no-ack-recovery-{index}", download=96, upload=95) for index in range(3)]
+        await self.post_measurements("device-42-reserve", "demo-device-42-reserve-token", recovery)
+        token = await self.token()
+        incidents = await self.client.get("/api/v1/incidents?line_id=line-42-reserve", headers={"Authorization": f"Bearer {token}"})
+        self.assertEqual(incidents.status_code, 200)
+        self.assertEqual(incidents.json()[0]["status"], "CLOSED")
+        self.assertEqual(incidents.json()[0]["recovery_state"], "CONFIRMED")
+
+    async def test_situation_requires_two_correlated_incidents(self) -> None:
+        token = await self.token()
+        headers = {"Authorization": f"Bearer {token}"}
+        first = await self.client.post("/api/v1/incidents", json={"line_id": "line-07-primary", "violation_type": "NO_INTERNET"}, headers=headers)
+        second = await self.client.post("/api/v1/incidents", json={"line_id": "line-07-primary", "violation_type": "NO_INTERNET"}, headers=headers)
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 201)
+        situations = await self.client.get("/api/v1/situations", headers=headers)
+        self.assertEqual(situations.status_code, 200, situations.text)
+        match = next(item for item in situations.json() if set(item["incident_ids"]) == {first.json()["id"], second.json()["id"]})
+        self.assertEqual(match["affected_count"], 2)
 
     async def test_manual_incident_cannot_close_without_recovery_and_exports_are_files(self) -> None:
         token = await self.token()

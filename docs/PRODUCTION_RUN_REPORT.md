@@ -3,6 +3,26 @@
 Дата прогона: 16 сентября 2026 г.
 Среда: Linux/WSL внутри текущего окружения, Docker Desktop 4.91.0 / Engine 29.8.0.
 
+## Актуализация после hardening
+
+Этот файл сохраняет исторические результаты первоначального staging-прогона. В
+текущем рабочем дереве поверх него добавлены следующие production-path блоки:
+
+- password/session auth с salted PBKDF2, независимыми сессиями, logout/revoke и
+  bootstrap-администратором; demo seed/replay/reset не выполняются в production;
+- `NetworkProbe` с ограниченными HTTP/TCP/ping и throughput-измерениями для
+  агента; `DemoProbe` в production запрещён без явного override;
+- webhook/SMTP provider delivery и webhook notifications с HTTPS-проверкой,
+  idempotency keys, bounded timeouts, durable `FAILED`/attempts/error и retry API;
+- versioned additive migrations (`schema_migrations`) и bounded PostgreSQL
+  connection pool;
+- ситуации создаются только для корреляций от двух инцидентов (порог задаётся
+  `VKO_SITUATION_MIN_MEMBERS`), а строгие API-модели отклоняют неизвестные поля.
+
+Ниже приведён отчёт именно о первом прогоне и его ограничениях; перед внешним
+production всё ещё обязательны TLS/reverse proxy, секрет-хранилище,
+наблюдаемость и нагрузочная проверка.
+
 ## Короткий итог
 
 Production-like стенд поднят и оставлен работающим:
@@ -15,7 +35,10 @@ Production-like стенд поднят и оставлен работающим
 - контрольная точка после первого завершённого smoke + WSL agent: `13` измерений, `2` инцидента, `1` отправленное обращение поставщику; после двух повторных smoke без сброса volume финальный счётчик persistent БД — `53`/`6`/`5`;
 - существующая локальная регрессия не сломалась: 7 backend-тестов и 3 agent-теста прошли.
 
-Это именно production-like staging, а не готовый внешний production: в нём намеренно оставлены demo seed/login, локальные порты и детерминированный probe. Ограничения перечислены ниже.
+Это именно production-like staging, а не готовый внешний production: в нём
+намеренно оставлены локальные порты и staging-профиль. Production-профиль
+отдельно отключает demo seed/auth и требует явные credentials и transport
+endpoints. Ограничения перечислены ниже.
 
 ## Что было сделано
 
@@ -175,7 +198,9 @@ docker compose ... config --quiet                     PASS
 - FastAPI даёт готовые health/API маршруты и понятную эксплуатацию через Uvicorn/Docker;
 - Python снижает время до работающего vertical slice и риск расхождения между UI, API, state engine и агентом.
 
-Цена выбора известна: синхронное подключение к БД на запрос, отсутствие connection pool и более высокий базовый overhead по сравнению с Rust. Для MVP/staging это приемлемо; для внешнего production нужны pool, миграции, наблюдаемость и нагрузочное измерение.
+Цена выбора известна: синхронный DB-API слой и более высокий базовый overhead
+по сравнению с Rust. Connection pool и migrations уже добавлены; перед внешним
+production нужны наблюдаемость и нагрузочное измерение.
 
 ## Почему не переписывать агент на Rust сразу
 
@@ -187,7 +212,8 @@ docker compose ... config --quiet                     PASS
 - текущие тесты и demo fixture написаны вокруг Python `Probe`/`MonitoringAgent`; параллельная Rust-реализация временно удвоит код и матрицу тестирования;
 - потребуется новый toolchain/runtime, сборка для Windows и Linux/WSL, cross-compilation, упаковка и обновление operational scripts;
 - при ошибке в Rust-сериализации или времени можно получить тихо неполные доказательства, что опаснее выигрыша нескольких миллисекунд;
-- rewrite не меняет backend bottleneck: сейчас он синхронно открывает соединение к БД на каждый request, поэтому ускорение агента не решит основное масштабирование.
+- rewrite не меняет backend bottleneck: state engine и HTTP-обвязка остаются
+  Python I/O-bound, поэтому ускорение агента само по себе не решит масштабирование.
 
 Без измеренного CPU/memory bottleneck это был бы архитектурный риск без доказанной пользы. Рекомендованный путь, если Rust потребуется:
 
@@ -201,12 +227,17 @@ docker compose ... config --quiet                     PASS
 
 ## Ограничения и риски текущего стенда
 
-- `VKO_ENV=staging` и `VKO_AUTO_SEED=1` нужны для smoke. При `VKO_ENV=production` demo login и auto-seed блокируются; необходимо подключить внешний IdP/хэширование паролей и секрет-хранилище.
+- `VKO_ENV=staging` и `VKO_AUTO_SEED=1` нужны для smoke. При
+  `VKO_ENV=production` demo seed/replay/reset и auth bypass блокируются; для
+  bootstrap нужен явный парольный администратор или заранее настроенный IdP.
 - Порты привязаны к loopback; для внешнего доступа нужен TLS reverse proxy, firewall и нормальная ротация device/user tokens.
-- Схема пока bootstrap-ится DDL на старте, миграционного инструмента нет. Advisory lock решает конкурентный первый старт, но не заменяет versioned migrations.
-- PostgreSQL adapter синхронный и открывает соединение на request; перед реальной нагрузкой нужен psycopg pool или SQLAlchemy и нагрузочный тест.
+- PostgreSQL compatibility layer остаётся синхронным; pool и versioned additive
+  migrations покрывают эксплуатационный минимум, но перед реальной нагрузкой
+  нужен отдельный нагрузочный прогон.
 - Compose строит DSN из переменных. Пароли с URL-reserved символами нужно экранировать либо передавать через секрет/отдельный DSN.
-- `DemoProbe` детерминирован и не является реальным Speedtest/telemetry probe.
+- `NetworkProbe` ограничен стандартной библиотекой и endpoint-конфигурацией;
+  throughput URL и ping target нужно заменить на контролируемые оператором
+  точки, а не считать публичные defaults SLA-измерителем.
 - Browser/Playwright smoke в этой среде не запускался: браузерные зависимости отсутствуют; API и JS syntax проверены.
 - Нативный вызов `powershell.exe` из текущего WSL невозможен (`cannot execute binary file: Exec format error`). PowerShell-скрипт подготовлен и синтаксически просмотрен для запуска из Windows, но именно Windows PowerShell в этой Linux-сессии не исполнялся. Docker и агент фактически прогнаны из WSL.
 - `.git/index` в sandbox read-only, поэтому коммит создать нельзя; файлы и результаты находятся в рабочем дереве.

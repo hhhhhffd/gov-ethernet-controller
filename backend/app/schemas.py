@@ -8,11 +8,22 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    # Evidence and workflow APIs should reject misspelled fields instead of
+    # silently dropping them. Fields intentionally sent by the agent/UI are
+    # declared explicitly below, so strictness remains compatible with the
+    # documented clients.
+    model_config = ConfigDict(extra="forbid")
 
 
 class AgentMeasurementIn(StrictModel):
     client_event_id: str = Field(min_length=1, max_length=128)
+    # These are diagnostic fields from the agent payload. The server resolves
+    # the authoritative binding from the authenticated device and never trusts
+    # these values for authorization or persistence.
+    device_id: str | None = Field(default=None, max_length=128)
+    school_id: str | None = Field(default=None, max_length=128)
+    line_id: str | None = Field(default=None, max_length=128)
+    monitoring_point_id: str | None = Field(default=None, max_length=128)
     agent_version: str | None = Field(default=None, max_length=64)
     observed_at: datetime
     mode: Literal["LIGHT", "PERFORMANCE"] = "PERFORMANCE"
@@ -108,6 +119,7 @@ class UserAdminIn(StrictModel):
     id: str = Field(min_length=1, max_length=128)
     username: str = Field(min_length=1, max_length=128)
     role: Literal["ADMIN", "OBLAST", "DISTRICT", "PROVIDER", "SCHOOL"]
+    password: str | None = Field(default=None, min_length=8, max_length=1024)
     disabled: bool = False
     scopes: list[ScopeIn] = Field(default_factory=list, max_length=100)
 
@@ -135,6 +147,7 @@ class ManualIncidentIn(StrictModel):
     violation_type: str = Field(default="MANUAL_REVIEW", max_length=128)
     description: str = Field(default="", max_length=4000)
     assignee: str | None = None
+    source: Literal["MANUAL"] = "MANUAL"
 
 
 class ProviderDraftIn(StrictModel):
@@ -145,6 +158,10 @@ class ProviderSendIn(StrictModel):
     final_text: str | None = Field(default=None, max_length=12000)
     ticket_no: str | None = Field(default=None, max_length=128)
     reviewed: bool = False
+    # Compatibility aliases used by the vanilla UI; the route still takes the
+    # case ID from its path and does not trust incident_id for authorization.
+    incident_id: int | None = None
+    text: str | None = Field(default=None, max_length=12000)
 
 
 class PolicyIn(StrictModel):
