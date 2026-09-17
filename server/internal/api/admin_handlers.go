@@ -651,9 +651,15 @@ func (s *Server) adminPoints(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		var id, line, location string
 		var primary, active bool
 		var created time.Time
-		if rows.Scan(&id, &line, &location, &primary, &active, &created) == nil {
-			result = append(result, map[string]interface{}{"id": id, "line_id": line, "location": location, "is_primary": primary, "active": active, "created_at": created})
+		if err := rows.Scan(&id, &line, &location, &primary, &active, &created); err != nil {
+			writeError(w, 500, "could not read points")
+			return
 		}
+		result = append(result, map[string]interface{}{"id": id, "line_id": line, "location": location, "is_primary": primary, "active": active, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read points")
+		return
 	}
 	writeJSON(w, 200, result)
 }

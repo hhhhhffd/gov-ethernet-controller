@@ -328,9 +328,15 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 		var scopeType, scopeID, requestID *string
 		var before, after []byte
 		var created time.Time
-		if rows.Scan(&id, &actorType, &actorID, &action, &objType, &objID, &scopeType, &scopeID, &before, &after, &requestID, &created) == nil {
-			result = append(result, map[string]interface{}{"id": id, "actor_type": actorType, "actor_id": actorID, "action": action, "object_type": objType, "object_id": objID, "scope_type": scopeType, "scope_id": scopeID, "before": decodeJSONBytes(before), "after": decodeJSONBytes(after), "request_id": requestID, "created_at": created})
+		if err := rows.Scan(&id, &actorType, &actorID, &action, &objType, &objID, &scopeType, &scopeID, &before, &after, &requestID, &created); err != nil {
+			writeError(w, 500, "could not read audit")
+			return
 		}
+		result = append(result, map[string]interface{}{"id": id, "actor_type": actorType, "actor_id": actorID, "action": action, "object_type": objType, "object_id": objID, "scope_type": scopeType, "scope_id": scopeID, "before": decodeJSONBytes(before), "after": decodeJSONBytes(after), "request_id": requestID, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read audit")
+		return
 	}
 	writeJSON(w, 200, result)
 }
@@ -355,9 +361,15 @@ func (s *Server) notifications(w http.ResponseWriter, r *http.Request) {
 		var delivery *string
 		var retryable bool
 		var nextAttempt, deliveryStarted, generated, sent, read *time.Time
-		if rows.Scan(&id, &sourceType, &sourceID, &channel, &scope, &message, &status, &attempts, &delivery, &retryable, &nextAttempt, &deliveryStarted, &generated, &sent, &read) == nil {
-			result = append(result, map[string]interface{}{"id": id, "source_type": sourceType, "source_id": sourceID, "channel": channel, "recipient_scope": scope, "message": message, "status": status, "delivery_attempts": attempts, "delivery_error": delivery, "delivery_retryable": retryable, "next_attempt_at": nextAttempt, "delivery_started_at": deliveryStarted, "generated_at": generated, "sent_at": sent, "read_at": read})
+		if err := rows.Scan(&id, &sourceType, &sourceID, &channel, &scope, &message, &status, &attempts, &delivery, &retryable, &nextAttempt, &deliveryStarted, &generated, &sent, &read); err != nil {
+			writeError(w, 500, "could not read notifications")
+			return
 		}
+		result = append(result, map[string]interface{}{"id": id, "source_type": sourceType, "source_id": sourceID, "channel": channel, "recipient_scope": scope, "message": message, "status": status, "delivery_attempts": attempts, "delivery_error": delivery, "delivery_retryable": retryable, "next_attempt_at": nextAttempt, "delivery_started_at": deliveryStarted, "generated_at": generated, "sent_at": sent, "read_at": read})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read notifications")
+		return
 	}
 	writeJSON(w, 200, result)
 }

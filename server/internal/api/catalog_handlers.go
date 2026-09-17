@@ -80,17 +80,25 @@ func (s *Server) mapPoints(w http.ResponseWriter, r *http.Request) {
 		var effectiveSince, updatedAt *time.Time
 		var evidence []byte
 		var policyID *int64
-		if rows.Scan(&line.ID, &line.OrganizationID, &providerID, &line.Role, &line.Technology, &line.Status, &line.SchoolID, &line.OrganizationName, &line.District, &line.Address, &line.ContactName, &line.ContactPhone, &line.Latitude, &line.Longitude, &providerName, &supportContact, &dataState, &connectionState, &contractState, &recoveryState, &reason, &effectiveSince, &updatedAt, &evidence, &policyID) != nil {
-			continue
+		if err := rows.Scan(&line.ID, &line.OrganizationID, &providerID, &line.Role, &line.Technology, &line.Status, &line.SchoolID, &line.OrganizationName, &line.District, &line.Address, &line.ContactName, &line.ContactPhone, &line.Latitude, &line.Longitude, &providerName, &supportContact, &dataState, &connectionState, &contractState, &recoveryState, &reason, &effectiveSince, &updatedAt, &evidence, &policyID); err != nil {
+			writeError(w, 500, "could not read map")
+			return
 		}
 		line.ProviderID = stringValue(providerID)
 		line.ProviderName = stringValue(providerName)
 		line.SupportContact = stringValue(supportContact)
 		line.State = &stateRecord{DataState: dataState, ConnectionState: connectionState, ContractState: contractState, RecoveryState: recoveryState, Reason: reason, EffectiveSince: effectiveSince, UpdatedAt: updatedAt, Evidence: []int64{}, PolicyID: policyID}
 		if len(evidence) > 0 {
-			_ = jsonUnmarshal(evidence, &line.State.Evidence)
+			if err := jsonUnmarshal(evidence, &line.State.Evidence); err != nil {
+				writeError(w, 500, "could not decode map evidence")
+				return
+			}
 		}
 		result = append(result, map[string]interface{}{"line_id": line.ID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "district": line.District, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "role": line.Role, "technology": line.Technology, "state": stateMap(*line.State)})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read map")
+		return
 	}
 	writeJSON(w, 200, result)
 }
@@ -113,9 +121,15 @@ func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
 		var lat, lon *float64
 		var active bool
 		var created time.Time
-		if rows.Scan(&id, &school, &name, &district, &address, &lat, &lon, &contact, &phone, &active, &created) == nil {
-			result = append(result, map[string]interface{}{"id": id, "school_id": school, "name": name, "district": district, "address": address, "latitude": lat, "longitude": lon, "contact_name": contact, "contact_phone": phone, "active": active, "created_at": created})
+		if err := rows.Scan(&id, &school, &name, &district, &address, &lat, &lon, &contact, &phone, &active, &created); err != nil {
+			writeError(w, 500, "could not read organizations")
+			return
 		}
+		result = append(result, map[string]interface{}{"id": id, "school_id": school, "name": name, "district": district, "address": address, "latitude": lat, "longitude": lon, "contact_name": contact, "contact_phone": phone, "active": active, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read organizations")
+		return
 	}
 	writeJSON(w, 200, result)
 }
@@ -137,9 +151,15 @@ func (s *Server) listProviders(w http.ResponseWriter, r *http.Request) {
 		var id, name, contact string
 		var active bool
 		var created time.Time
-		if rows.Scan(&id, &name, &contact, &active, &created) == nil {
-			result = append(result, map[string]interface{}{"id": id, "name": name, "support_contact": contact, "active": active, "created_at": created})
+		if err := rows.Scan(&id, &name, &contact, &active, &created); err != nil {
+			writeError(w, 500, "could not read providers")
+			return
 		}
+		result = append(result, map[string]interface{}{"id": id, "name": name, "support_contact": contact, "active": active, "created_at": created})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read providers")
+		return
 	}
 	writeJSON(w, 200, result)
 }

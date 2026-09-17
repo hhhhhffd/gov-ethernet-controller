@@ -211,7 +211,11 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "could not query passport")
 		return
 	}
-	lines := s.reportLineCount(r.Context(), r, p)
+	lines, err := s.reportLineCount(r.Context(), r, p)
+	if err != nil {
+		writeError(w, 500, "could not count report lines")
+		return
+	}
 	var tests int
 	if s.DB.Pool.QueryRow(r.Context(), `SELECT tests_per_day FROM agent_schedules WHERE id=1`).Scan(&tests) != nil {
 		tests = 4
@@ -232,7 +236,11 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 			contractKnown++
 		}
 	}
-	incidentCount, duration := s.incidentStats(r, p, start, end)
+	incidentCount, duration, err := s.incidentStats(r, p, start, end)
+	if err != nil {
+		writeError(w, 500, "could not calculate incident statistics")
+		return
+	}
 	complete := 0.0
 	if expected > 0 {
 		complete = float64(len(rows)) / float64(expected) * 100
@@ -243,12 +251,12 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]interface{}{"from": start, "to": end, "line_id": r.URL.Query().Get("line_id"), "measurements_received": len(rows), "measurements_expected": expected, "data_completeness": complete, "baseline_compliance": ratio(baselineOK, baselineKnown), "contract_compliance": ratio(contractOK, contractKnown), "incidents": map[string]interface{}{"count": incidentCount, "total_duration_minutes": duration}, "sufficient_data": expected > 0 && float64(len(rows)) >= float64(expected)*.8})
 }
 
-func (s *Server) reportLineCount(ctx context.Context, r *http.Request, p *auth.Principal) int {
+func (s *Server) reportLineCount(ctx context.Context, r *http.Request, p *auth.Principal) (int, error) {
 	ids, err := s.reportLineIDs(ctx, r, p, true)
 	if err != nil {
-		return 0
+		return 0, err
 	}
-	return len(ids)
+	return len(ids), nil
 }
 
 func normalizeReportStatus(value string) string {
@@ -321,12 +329,12 @@ func ratio(ok, known int) *float64 {
 	return &value
 }
 
-func (s *Server) incidentStats(r *http.Request, p *auth.Principal, start, end time.Time) (int, float64) {
+func (s *Server) incidentStats(r *http.Request, p *auth.Principal, start, end time.Time) (int, float64, error) {
 	where, params := scopeSQL(p, 1)
 	params = append(params, end, start)
 	rows, err := s.DB.Pool.Query(r.Context(), `SELECT i.started_at,i.closed_at FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id WHERE `+where+` AND i.started_at < $`+itoa(len(params)-1)+` AND (i.closed_at IS NULL OR i.closed_at >= $`+itoa(len(params)), params...)
 	if err != nil {
-		return 0, 0
+		return 0, 0, err
 	}
 	defer rows.Close()
 	count := 0
@@ -334,8 +342,8 @@ func (s *Server) incidentStats(r *http.Request, p *auth.Principal, start, end ti
 	for rows.Next() {
 		var began time.Time
 		var closed *time.Time
-		if rows.Scan(&began, &closed) != nil {
-			continue
+		if err := rows.Scan(&began, &closed); err != nil {
+			return 0, 0, err
 		}
 		left := start
 		if began.After(left) {
@@ -350,7 +358,10 @@ func (s *Server) incidentStats(r *http.Request, p *auth.Principal, start, end ti
 		}
 		count++
 	}
-	return count, duration
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+	return count, duration, nil
 }
 
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
