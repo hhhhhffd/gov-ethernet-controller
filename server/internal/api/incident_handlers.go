@@ -281,21 +281,49 @@ func (s *Server) createManualIncident(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAudit(r.Context(), s, p, "incident.created_manual", "incident", fmt.Sprint(id), nil, map[string]interface{}{"line_id": line.ID, "manual_description": payload.Description})
-	fresh, freshErr := mustIncident(s, id)
+	fallback := func() {
+		writeJSON(w, 201, map[string]interface{}{
+			"id":                id,
+			"incident_no":       fmt.Sprintf("INC-%06d", id),
+			"number":            fmt.Sprintf("INC-%06d", id),
+			"line_id":           line.ID,
+			"organization_id":   line.OrganizationID,
+			"school_id":         line.SchoolID,
+			"organization_name": line.OrganizationName,
+			"school_name":       line.OrganizationName,
+			"district":          line.District,
+			"provider_id":       line.ProviderID,
+			"provider_name":     line.ProviderName,
+			"source":            "MANUAL",
+			"violation_type":    payload.ViolationType,
+			"status":            "NEW",
+			"recovery_state":    "NONE",
+			"started_at":        now,
+			"assignee":          payload.Assignee,
+			"description":       payload.Description,
+			"opening_snapshot":  decodeJSONBytes(snapshot),
+			"events":            []map[string]interface{}{},
+			"provider_cases":    []map[string]interface{}{},
+			"readback_degraded": true,
+		})
+	}
+	fresh, freshErr := mustIncident(r.Context(), s, id)
 	if freshErr != nil {
-		writeError(w, 500, "could not read incident")
+		s.Logger.Error("could not read newly created incident", "incident_id", id, "error", freshErr)
+		fallback()
 		return
 	}
 	mapped, mapErr := s.incidentMap(r.Context(), fresh)
 	if mapErr != nil {
-		writeError(w, 500, "could not read incident details")
+		s.Logger.Error("could not read newly created incident details", "incident_id", id, "error", mapErr)
+		fallback()
 		return
 	}
 	writeJSON(w, 201, mapped)
 }
 
-func mustIncident(s *Server, id int64) (incidentRecord, error) {
-	return s.scanIncident(s.DB.Pool.QueryRow(context.Background(), `SELECT i.id,i.incident_no,i.line_id,i.source,i.violation_type,i.status,i.recovery_state,i.started_at,i.confirmed_at,i.resolved_at,i.closed_at,i.duration_minutes,i.assignee,i.recurrence_of,i.opening_snapshot_json,l.organization_id,l.provider_id,o.school_id,o.name,o.district,p.name FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE i.id=$1`, id))
+func mustIncident(ctx context.Context, s *Server, id int64) (incidentRecord, error) {
+	return s.scanIncident(s.DB.Pool.QueryRow(ctx, `SELECT i.id,i.incident_no,i.line_id,i.source,i.violation_type,i.status,i.recovery_state,i.started_at,i.confirmed_at,i.resolved_at,i.closed_at,i.duration_minutes,i.assignee,i.recurrence_of,i.opening_snapshot_json,l.organization_id,l.provider_id,o.school_id,o.name,o.district,p.name FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE i.id=$1`, id))
 }
 
 func (s *Server) incidentEvent(w http.ResponseWriter, r *http.Request, item incidentRecord, p *auth.Principal) {
@@ -367,14 +395,30 @@ func (s *Server) incidentEvent(w http.ResponseWriter, r *http.Request, item inci
 		return
 	}
 	writeAudit(r.Context(), s, p, "incident."+strings.ToLower(eventType), "incident", fmt.Sprint(item.ID), nil, map[string]interface{}{"note": payload.Note, "status": payload.Status})
+	fallbackStatus := item.Status
+	switch payload.EventType {
+	case "provider_fixed":
+		fallbackStatus = "RESOLVED"
+	case "send_to_provider":
+		fallbackStatus = "SENT_TO_PROVIDER"
+	case "status":
+		if payload.Status != "" {
+			fallbackStatus = payload.Status
+		}
+	}
+	fallback := func() {
+		writeJSON(w, 200, map[string]interface{}{"id": item.ID, "incident_no": item.Number, "number": item.Number, "line_id": item.LineID, "organization_id": item.OrganizationID, "school_id": item.SchoolID, "organization_name": item.OrganizationName, "school_name": item.OrganizationName, "district": item.District, "provider_id": item.ProviderID, "provider_name": item.ProviderName, "source": item.Source, "violation_type": item.ViolationType, "status": fallbackStatus, "recovery_state": item.RecoveryState, "started_at": item.StartedAt, "event_type": eventType, "note": payload.Note, "readback_degraded": true})
+	}
 	fresh, visible := s.loadIncident(r.Context(), item.ID, p)
 	if !visible {
-		writeError(w, 404, "incident not found")
+		s.Logger.Error("could not read incident after event mutation", "incident_id", item.ID)
+		fallback()
 		return
 	}
 	mapped, mapErr := s.incidentMap(r.Context(), fresh)
 	if mapErr != nil {
-		writeError(w, 500, "could not read incident details")
+		s.Logger.Error("could not read incident details after event mutation", "incident_id", item.ID, "error", mapErr)
+		fallback()
 		return
 	}
 	writeJSON(w, 200, mapped)
@@ -565,7 +609,8 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 	if currentStatus != nil && *currentStatus == "SENT" {
 		cases, casesErr := s.providerCases(r.Context(), incidentID)
 		if casesErr != nil {
-			writeError(w, 500, "could not read provider cases")
+			s.Logger.Error("could not read already-sent provider case", "case_id", id, "error", casesErr)
+			writeJSON(w, 200, map[string]interface{}{"id": id, "incident_id": incidentID, "ticket_no": ticket, "status": "SENT", "delivery_status": "SENT", "readback_degraded": true})
 			return
 		}
 		for _, item := range cases {
@@ -668,7 +713,8 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 	writeAudit(r.Context(), s, p, "provider_case.sent", "provider_case", fmt.Sprint(id), nil, map[string]interface{}{"ticket_no": ticketNo, "external_ticket_no": delivery.ExternalID, "delivery_channel": delivery.Channel, "status": "SENT", "reviewed": true})
 	cases, casesErr := s.providerCases(r.Context(), incidentID)
 	if casesErr != nil {
-		writeError(w, 500, "could not read provider cases")
+		s.Logger.Error("could not read sent provider case", "case_id", id, "error", casesErr)
+		writeJSON(w, 200, map[string]interface{}{"id": id, "incident_id": incidentID, "ticket_no": ticketNo, "external_ticket_no": delivery.ExternalID, "final_text": *final, "status": "SENT", "delivery_channel": delivery.Channel, "delivery_status": "SENT", "readback_degraded": true})
 		return
 	}
 	for _, item := range cases {
@@ -677,7 +723,8 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 			return
 		}
 	}
-	writeError(w, 404, "provider case not found")
+	s.Logger.Error("sent provider case missing from readback", "case_id", id, "incident_id", incidentID)
+	writeJSON(w, 200, map[string]interface{}{"id": id, "incident_id": incidentID, "ticket_no": ticketNo, "external_ticket_no": delivery.ExternalID, "final_text": *final, "status": "SENT", "delivery_channel": delivery.Channel, "delivery_status": "SENT", "readback_degraded": true})
 }
 
 func firstString(value *string, fallback *string) string {
