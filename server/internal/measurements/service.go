@@ -361,7 +361,9 @@ func readRecent(ctx context.Context, q interface {
 		if err := rows.Scan(&item.ID, &item.ObservedAt, &item.ConnectionStatus, &item.BaselineState, &item.ContractState, &item.Valid, &raw); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(raw, &item.Violations)
+		if err := json.Unmarshal(raw, &item.Violations); err != nil {
+			return nil, fmt.Errorf("decode evaluation violations: %w", err)
+		}
 		result = append(result, item)
 	}
 	return result, rows.Err()
@@ -415,7 +417,9 @@ func loadState(ctx context.Context, q interface {
 		return nil, err
 	}
 	state.EffectiveSince, state.PolicyID = effective, policyID
-	_ = json.Unmarshal(evidence, &state.EvidenceIDs)
+	if err := json.Unmarshal(evidence, &state.EvidenceIDs); err != nil {
+		return nil, fmt.Errorf("decode line state evidence: %w", err)
+	}
 	return state, nil
 }
 
@@ -432,7 +436,10 @@ func writeState(ctx context.Context, q interface {
 	if previous != nil && previous.ConnectionState == connectionState && previous.ContractState == contractState && previous.EffectiveSince != nil {
 		effectiveSince = *previous.EffectiveSince
 	}
-	evidenceJSON, _ := json.Marshal(evidence)
+	evidenceJSON, err := json.Marshal(evidence)
+	if err != nil {
+		return fmt.Errorf("marshal line state evidence: %w", err)
+	}
 	policyID := nullablePolicyID(policy)
 	if _, err := q.Exec(ctx, `INSERT INTO line_states(line_id,data_state,connection_state,contract_state,recovery_state,effective_since,updated_at,reason,evidence_ids_json,policy_id)
         VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$8::jsonb,$9) ON CONFLICT(line_id) DO UPDATE SET data_state=EXCLUDED.data_state,connection_state=EXCLUDED.connection_state,contract_state=EXCLUDED.contract_state,recovery_state=EXCLUDED.recovery_state,effective_since=EXCLUDED.effective_since,updated_at=EXCLUDED.updated_at,reason=EXCLUDED.reason,evidence_ids_json=EXCLUDED.evidence_ids_json,policy_id=EXCLUDED.policy_id`, lineID, dataState, connectionState, contractState, recoveryState, effectiveSince, reason, string(evidenceJSON), policyID); err != nil {
@@ -441,7 +448,10 @@ func writeState(ctx context.Context, q interface {
 	if !changed {
 		return nil
 	}
-	snapshot, _ := json.Marshal(map[string]interface{}{"policy": evaluation.SnapshotPolicy(policy), "contract": evaluation.SnapshotContract(contract)})
+	snapshot, err := json.Marshal(map[string]interface{}{"policy": evaluation.SnapshotPolicy(policy), "contract": evaluation.SnapshotContract(contract)})
+	if err != nil {
+		return fmt.Errorf("marshal line state snapshot: %w", err)
+	}
 	var previousData, previousConnection, previousContract interface{}
 	if previous != nil {
 		previousData, previousConnection, previousContract = previous.DataState, previous.ConnectionState, previous.ContractState
@@ -764,7 +774,9 @@ func activeIncident(ctx context.Context, q interface {
 		return nil, err
 	}
 	item.ConfirmedAt, item.ResolvedAt, item.ClosedAt = confirmedAt, resolvedAt, closedAt
-	_ = json.Unmarshal(raw, &item.Opening)
+	if err := json.Unmarshal(raw, &item.Opening); err != nil {
+		return nil, fmt.Errorf("decode incident snapshot: %w", err)
+	}
 	return item, nil
 }
 
@@ -777,7 +789,10 @@ func createIncident(ctx context.Context, tx pgx.Tx, lineID string, at time.Time,
 	if len(evidence) > 0 {
 		started = evidence[len(evidence)-1].ObservedAt
 	}
-	snapshot, _ := json.Marshal(map[string]interface{}{"line_id": lineID, "confirmed_at": at.UTC().Format(time.RFC3339), "evidence_measurement_ids": ids(evidence), "violations": result.Violations, "policy": result.PolicySnapshot, "contract": result.ContractSnapshot, "reason": result.Reason})
+	snapshot, err := json.Marshal(map[string]interface{}{"line_id": lineID, "confirmed_at": at.UTC().Format(time.RFC3339), "evidence_measurement_ids": ids(evidence), "violations": result.Violations, "policy": result.PolicySnapshot, "contract": result.ContractSnapshot, "reason": result.Reason})
+	if err != nil {
+		return 0, fmt.Errorf("marshal incident snapshot: %w", err)
+	}
 	var previousID interface{}
 	if previous != nil {
 		previousID = previous.ID
@@ -794,7 +809,7 @@ func createIncident(ctx context.Context, tx pgx.Tx, lineID string, at time.Time,
 	}
 	var id int64
 	placeholder := "PENDING-" + RandomEventID()
-	err := tx.QueryRow(ctx, `INSERT INTO incidents(incident_no,line_id,source,violation_type,status,recovery_state,started_at,confirmed_at,recurrence_of,opening_snapshot_json,created_at)
+	err = tx.QueryRow(ctx, `INSERT INTO incidents(incident_no,line_id,source,violation_type,status,recovery_state,started_at,confirmed_at,recurrence_of,opening_snapshot_json,created_at)
 	        VALUES ($1,$2,'AUTO',$3,'NEW','NONE',$4,$5,$6,$7::jsonb,$5) RETURNING id`, placeholder, lineID, violationType, started, at, previousID, string(snapshot)).Scan(&id)
 	if err != nil {
 		return 0, err

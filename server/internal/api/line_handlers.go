@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -117,7 +118,9 @@ func (s *Server) state(ctx context.Context, lineID string) (stateRecord, error) 
 	if err != nil {
 		return stateRecord{}, err
 	}
-	_ = jsonUnmarshal(evidence, &result.Evidence)
+	if err := jsonUnmarshal(evidence, &result.Evidence); err != nil {
+		return stateRecord{}, fmt.Errorf("decode line state evidence: %w", err)
+	}
 	return result, nil
 }
 
@@ -248,7 +251,10 @@ func (s *Server) listLines(w http.ResponseWriter, r *http.Request) {
 			line.State.EffectiveSince = effectiveSince
 			line.State.UpdatedAt = updatedAt
 			line.State.PolicyID = policyID
-			_ = jsonUnmarshal(evidence, &line.State.Evidence)
+			if err := jsonUnmarshal(evidence, &line.State.Evidence); err != nil {
+				writeError(w, 500, "could not decode line state evidence")
+				return
+			}
 		}
 		if latestID != nil && latestObservedAt != nil && latestClientEventID != nil && latestDeviceID != nil && latestMode != nil && latestConnectionStatus != nil {
 			line.Latest = &latestRecord{ID: *latestID, ClientEventID: *latestClientEventID, ObservedAt: *latestObservedAt, DeviceID: *latestDeviceID, Mode: *latestMode, ConnectionStatus: *latestConnectionStatus, Download: latestDownload, Upload: latestUpload, Ping: latestPing, Jitter: latestJitter, PacketLoss: latestPacketLoss, Availability: latestAvailability}
@@ -516,9 +522,15 @@ func (s *Server) lineMeasurements(w http.ResponseWriter, r *http.Request, lineID
 	result := []map[string]interface{}{}
 	for rows.Next() {
 		item, e := scanMeasurement(rows)
-		if e == nil {
-			result = append(result, measurementMap(item))
+		if e != nil {
+			writeError(w, 500, "could not read measurements")
+			return
 		}
+		result = append(result, measurementMap(item))
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read measurements")
+		return
 	}
 	writeJSON(w, 200, result)
 }
@@ -536,12 +548,20 @@ func (s *Server) lineStates(w http.ResponseWriter, r *http.Request, lineID strin
 		var data, connection, contract, recovery, reason string
 		var effective, updated, occurred *time.Time
 		var evidence, configSnapshot []byte
-		if rows.Scan(&previousData, &previousConnection, &previousContract, &data, &connection, &contract, &recovery, &reason, &effective, &updated, &evidence, &configSnapshot, &occurred) != nil {
-			continue
+		if err := rows.Scan(&previousData, &previousConnection, &previousContract, &data, &connection, &contract, &recovery, &reason, &effective, &updated, &evidence, &configSnapshot, &occurred); err != nil {
+			writeError(w, 500, "could not read states")
+			return
 		}
 		var ids []int64
-		_ = jsonUnmarshal(evidence, &ids)
+		if err := jsonUnmarshal(evidence, &ids); err != nil {
+			writeError(w, 500, "could not decode state evidence")
+			return
+		}
 		result = append(result, map[string]interface{}{"previous_data_state": previousData, "previous_connection_state": previousConnection, "previous_contract_state": previousContract, "data_state": data, "connection_state": connection, "contract_state": contract, "recovery_state": recovery, "reason": reason, "effective_since": effective, "updated_at": updated, "occurred_at": occurred, "evidence_ids": ids, "config_snapshot": decodeJSONBytes(configSnapshot)})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read states")
+		return
 	}
 	writeJSON(w, 200, result)
 }
