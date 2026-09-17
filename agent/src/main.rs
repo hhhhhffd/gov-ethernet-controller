@@ -6,7 +6,7 @@ mod probe;
 mod queue;
 mod scheduler;
 
-use client::Client;
+use client::{Client, HeartbeatTelemetry};
 use config::Config;
 use lifecycle::{install_signal_handler, InstanceLock, StopToken};
 use probe::Probe;
@@ -14,7 +14,7 @@ use queue::Queue;
 use serde_json::{json, Value};
 use std::{
     env,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
@@ -93,13 +93,70 @@ fn run() -> Result<(), String> {
     }
 }
 
+struct RuntimeTelemetry {
+    boot_id: String,
+    started_at: Instant,
+    last_probe_at: Option<String>,
+    last_probe_status: Option<String>,
+}
+
+impl RuntimeTelemetry {
+    fn new() -> Self {
+        Self {
+            boot_id: Uuid::new_v4().to_string(),
+            started_at: Instant::now(),
+            last_probe_at: None,
+            last_probe_status: None,
+        }
+    }
+
+    fn snapshot(&self, queue: &Queue) -> HeartbeatTelemetry {
+        let queue_depth = match queue.count() {
+            Ok(depth) => Some(depth),
+            Err(error) => {
+                eprintln!("linkwatch-agent: queue depth unavailable: {error}");
+                None
+            }
+        };
+        HeartbeatTelemetry {
+            boot_id: Some(self.boot_id.clone()),
+            uptime_seconds: Some(self.started_at.elapsed().as_secs()),
+            queue_depth,
+            last_probe_at: self.last_probe_at.clone(),
+            last_probe_status: self.last_probe_status.clone(),
+        }
+    }
+
+    fn record_success(&mut self, value: &Value) {
+        self.last_probe_at = value
+            .get("observed_at")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| Some(chrono_like_now()));
+        self.last_probe_status = Some(
+            if value.get("connection_status").and_then(Value::as_str) == Some("NO_INTERNET") {
+                "no_internet"
+            } else {
+                "ok"
+            }
+            .into(),
+        );
+    }
+
+    fn record_error(&mut self) {
+        self.last_probe_at = Some(chrono_like_now());
+        self.last_probe_status = Some("error".into());
+    }
+}
+
 fn run_once(
     config: &Config,
     probe: &mut dyn Probe,
     queue: &Queue,
     client: &Client,
 ) -> Result<(), String> {
-    if let Err(error) = client.heartbeat() {
+    let telemetry = RuntimeTelemetry::new();
+    if let Err(error) = client.heartbeat(&telemetry.snapshot(queue)) {
         eprintln!("linkwatch-agent: heartbeat failed: {error}");
     }
     let payload = event(config, probe.measure("performance")?);
@@ -130,6 +187,7 @@ fn run_loop(
         .map_err(|error| format!("load scheduler state: {error}"))?;
     let mut last_maintenance: Option<SystemTime> = None;
     let mut light_due: Option<SystemTime> = None;
+    let mut telemetry = RuntimeTelemetry::new();
 
     loop {
         if stop.is_requested() {
@@ -145,7 +203,7 @@ fn run_loop(
             .map(|last| now.duration_since(last).unwrap_or_default() >= MAINTENANCE_INTERVAL)
             .unwrap_or(true);
         if maintenance_due {
-            if let Err(error) = client.heartbeat() {
+            if let Err(error) = client.heartbeat(&telemetry.snapshot(&queue)) {
                 eprintln!("linkwatch-agent: heartbeat failed: {error}");
             }
             flush_pending(&client, &queue);
@@ -177,13 +235,17 @@ fn run_loop(
                     match probe.measure("light") {
                         Ok(value) => {
                             let light = event(&config, value);
+                            telemetry.record_success(&light);
                             let id = queue::Queue::event_id(&light);
                             queue
                                 .enqueue(&id, &light)
                                 .map_err(|error| format!("enqueue light measurement: {error}"))?;
                             flush_pending(&client, &queue);
                         }
-                        Err(error) => eprintln!("linkwatch-agent: light probe failed: {error}"),
+                        Err(error) => {
+                            telemetry.record_error();
+                            eprintln!("linkwatch-agent: light probe failed: {error}");
+                        }
                     }
                 }
                 continue;
@@ -207,6 +269,7 @@ fn run_loop(
                         // update recoverable if the process crashes between
                         // those two filesystem operations.
                         let mut payload = event(&config, value);
+                        telemetry.record_success(&payload);
                         payload["client_event_id"] = json!(format!("scheduled-{day}-{slot}"));
                         let event_id = queue::Queue::event_id(&payload);
                         queue
@@ -220,6 +283,7 @@ fn run_loop(
                         println!("measurement collected: {event_id}");
                     }
                     Err(error) => {
+                        telemetry.record_error();
                         eprintln!("linkwatch-agent: performance probe failed: {error}");
                         if stop.wait(Duration::from_secs(30)) {
                             println!("shutdown requested; pending measurements remain queued");

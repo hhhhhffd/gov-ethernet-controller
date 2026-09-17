@@ -5,6 +5,15 @@ use std::time::Duration;
 const UPLOAD_FETCH_LIMIT: usize = 100;
 const UPLOAD_BATCH_SIZE: usize = 50;
 
+#[derive(Debug, Clone, Default)]
+pub struct HeartbeatTelemetry {
+    pub boot_id: Option<String>,
+    pub uptime_seconds: Option<u64>,
+    pub queue_depth: Option<usize>,
+    pub last_probe_at: Option<String>,
+    pub last_probe_status: Option<String>,
+}
+
 pub struct Client {
     config: Config,
     http: reqwest::blocking::Client,
@@ -90,17 +99,18 @@ impl Client {
             .json()
             .map_err(|error| format!("decode server response: {error}"))
     }
-    pub fn heartbeat(&self) -> Result<Value, String> {
+    pub fn heartbeat(&self, telemetry: &HeartbeatTelemetry) -> Result<Value, String> {
         let url = format!(
             "{}/api/v1/agent/heartbeat",
             self.config.server_url.trim_end_matches('/')
         );
+        let payload = heartbeat_payload(&self.config.agent_version, telemetry);
         let response = self
             .http
             .post(url)
             .header("X-Device-ID", &self.config.device_id)
             .header("X-Device-Token", &self.config.device_token)
-            .json(&json!({"agent_version":self.config.agent_version}))
+            .json(&payload)
             .send()
             .map_err(|error| error.to_string())?;
         if !response.status().is_success() {
@@ -131,6 +141,17 @@ impl Client {
     }
 }
 
+fn heartbeat_payload(agent_version: &str, telemetry: &HeartbeatTelemetry) -> Value {
+    json!({
+        "agent_version": agent_version,
+        "boot_id": telemetry.boot_id,
+        "uptime_seconds": telemetry.uptime_seconds,
+        "queue_depth": telemetry.queue_depth,
+        "last_probe_at": telemetry.last_probe_at,
+        "last_probe_status": telemetry.last_probe_status,
+    })
+}
+
 fn build_http_client(config: &Config) -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(config.probe.timeout_seconds.max(1)))
@@ -159,7 +180,7 @@ fn acknowledged(response: &Value, payload: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{acknowledged, Client};
+    use super::{acknowledged, heartbeat_payload, Client, HeartbeatTelemetry};
     use crate::{config::Config, queue::Queue};
     use serde_json::json;
     use tempfile::tempdir;
@@ -179,6 +200,32 @@ mod tests {
             &json!({"results":[{"client_event_id":"event-a","accepted":false}]}),
             &payload
         ));
+    }
+
+    #[test]
+    fn heartbeat_payload_keeps_nullable_probe_snapshot_fields() {
+        let payload = heartbeat_payload("0.1.0", &HeartbeatTelemetry::default());
+        assert_eq!(payload["agent_version"], "0.1.0");
+        assert!(payload["boot_id"].is_null());
+        assert!(payload["uptime_seconds"].is_null());
+        assert!(payload["queue_depth"].is_null());
+        assert!(payload["last_probe_at"].is_null());
+        assert!(payload["last_probe_status"].is_null());
+
+        let payload = heartbeat_payload(
+            "0.1.0",
+            &HeartbeatTelemetry {
+                boot_id: Some("boot-1".into()),
+                uptime_seconds: Some(7),
+                queue_depth: Some(3),
+                last_probe_at: Some("2026-09-17T00:00:00Z".into()),
+                last_probe_status: Some("ok".into()),
+            },
+        );
+        assert_eq!(payload["boot_id"], "boot-1");
+        assert_eq!(payload["uptime_seconds"], 7);
+        assert_eq!(payload["queue_depth"], 3);
+        assert_eq!(payload["last_probe_status"], "ok");
     }
 
     #[test]

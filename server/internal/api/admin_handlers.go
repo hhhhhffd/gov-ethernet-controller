@@ -762,7 +762,7 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		return
 	}
 	if r.Method == http.MethodGet {
-		rows, err := s.DB.Pool.Query(r.Context(), `SELECT d.id,d.monitoring_point_id,mp.line_id,l.organization_id,o.school_id,o.name,d.agent_version,d.last_seen,d.blocked_at,d.created_at FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id JOIN lines l ON l.id=mp.line_id JOIN organizations o ON o.id=l.organization_id ORDER BY o.district,o.name,d.id`)
+		rows, err := s.DB.Pool.Query(r.Context(), `SELECT d.id,d.monitoring_point_id,mp.line_id,l.organization_id,o.school_id,o.name,d.agent_version,d.last_seen,d.blocked_at,d.created_at,d.agent_boot_id,d.agent_uptime_seconds,d.agent_queue_depth,d.agent_last_probe_at,d.agent_last_probe_status,d.agent_telemetry_received_at FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id JOIN lines l ON l.id=mp.line_id JOIN organizations o ON o.id=l.organization_id ORDER BY o.district,o.name,d.id`)
 		if err != nil {
 			writeError(w, 500, "could not query devices")
 			return
@@ -771,9 +771,11 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		result := []map[string]interface{}{}
 		for rows.Next() {
 			var id, point, line, organizationID, schoolID, organizationName, version string
-			var seen, blocked, created *time.Time
-			if rows.Scan(&id, &point, &line, &organizationID, &schoolID, &organizationName, &version, &seen, &blocked, &created) == nil {
-				result = append(result, map[string]interface{}{"id": id, "monitoring_point_id": point, "line_id": line, "organization_id": organizationID, "school_id": schoolID, "organization_name": organizationName, "agent_version": version, "last_seen": seen, "blocked_at": blocked, "blocked": blocked != nil, "created_at": created})
+			var seen, blocked, created, probeAt, telemetryReceived *time.Time
+			var bootID, probeStatus *string
+			var uptime, queueDepth *int64
+			if rows.Scan(&id, &point, &line, &organizationID, &schoolID, &organizationName, &version, &seen, &blocked, &created, &bootID, &uptime, &queueDepth, &probeAt, &probeStatus, &telemetryReceived) == nil {
+				result = append(result, map[string]interface{}{"id": id, "monitoring_point_id": point, "line_id": line, "organization_id": organizationID, "school_id": schoolID, "organization_name": organizationName, "agent_version": version, "last_seen": seen, "blocked_at": blocked, "blocked": blocked != nil, "created_at": created, "agent_boot_id": bootID, "agent_uptime_seconds": uptime, "agent_queue_depth": queueDepth, "agent_last_probe_at": probeAt, "agent_last_probe_status": probeStatus, "agent_telemetry_received_at": telemetryReceived})
 			}
 		}
 		writeJSON(w, 200, result)

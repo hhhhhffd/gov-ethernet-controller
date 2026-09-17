@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -74,12 +75,42 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		AgentVersion string     `json:"agent_version"`
-		SeenAt       *time.Time `json:"seen_at"`
+		AgentVersion    string     `json:"agent_version"`
+		SeenAt          *time.Time `json:"seen_at"`
+		BootID          string     `json:"boot_id"`
+		UptimeSeconds   *int64     `json:"uptime_seconds"`
+		QueueDepth      *int64     `json:"queue_depth"`
+		LastProbeAt     *time.Time `json:"last_probe_at"`
+		LastProbeStatus *string    `json:"last_probe_status"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, 422, "invalid heartbeat payload")
 		return
+	}
+	payload.BootID = strings.TrimSpace(payload.BootID)
+	if len(payload.BootID) > 128 {
+		writeError(w, 422, "boot_id must contain at most 128 characters")
+		return
+	}
+	if payload.UptimeSeconds != nil && *payload.UptimeSeconds < 0 {
+		writeError(w, 422, "uptime_seconds must be non-negative")
+		return
+	}
+	if payload.QueueDepth != nil && *payload.QueueDepth < 0 {
+		writeError(w, 422, "queue_depth must be non-negative")
+		return
+	}
+	if payload.LastProbeStatus != nil {
+		status := strings.ToLower(strings.TrimSpace(*payload.LastProbeStatus))
+		if status != "ok" && status != "no_internet" && status != "error" {
+			writeError(w, 422, "last_probe_status must be ok, no_internet or error")
+			return
+		}
+		*payload.LastProbeStatus = status
+	}
+	if payload.LastProbeAt != nil {
+		value := payload.LastProbeAt.UTC().Truncate(time.Second)
+		payload.LastProbeAt = &value
 	}
 	// seen_at is accepted for wire compatibility, but last_seen is
 	// authoritative server receipt time. Agent clocks must not be able to move
@@ -89,7 +120,43 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		payload.AgentVersion = device.AgentVersion
 	}
 	var lastSeen time.Time
-	if err := s.DB.Pool.QueryRow(r.Context(), `UPDATE devices SET last_seen=GREATEST(COALESCE(last_seen,$1),$1),agent_version=$2 WHERE id=$3 RETURNING last_seen`, receivedAt, payload.AgentVersion, device.ID).Scan(&lastSeen); err != nil {
+	if err := s.DB.Pool.QueryRow(r.Context(), `
+WITH heartbeat_state AS (
+    SELECT id,
+           ($3::text <> '' AND (
+               agent_boot_id IS NULL
+               OR agent_boot_id <> $3
+               OR $4::bigint IS NULL
+               OR agent_uptime_seconds IS NULL
+               OR $4::bigint > agent_uptime_seconds
+           )) AS accept_telemetry,
+           ($3::text <> '' AND (agent_boot_id IS NULL OR agent_boot_id <> $3)) AS boot_changed
+    FROM devices
+    WHERE id=$8
+)
+UPDATE devices AS d
+SET last_seen=GREATEST(COALESCE(d.last_seen,$1),$1),
+    agent_version=$2,
+    agent_boot_id=CASE WHEN heartbeat_state.accept_telemetry THEN NULLIF($3::text,'') ELSE d.agent_boot_id END,
+    agent_uptime_seconds=CASE WHEN heartbeat_state.accept_telemetry THEN $4::bigint ELSE d.agent_uptime_seconds END,
+    agent_queue_depth=CASE WHEN heartbeat_state.accept_telemetry THEN $5::bigint ELSE d.agent_queue_depth END,
+    agent_last_probe_at=CASE
+        WHEN heartbeat_state.accept_telemetry AND heartbeat_state.boot_changed THEN $6::timestamptz
+        WHEN heartbeat_state.accept_telemetry AND $6::timestamptz IS NOT NULL THEN $6::timestamptz
+        ELSE d.agent_last_probe_at
+    END,
+    agent_last_probe_status=CASE
+        WHEN heartbeat_state.accept_telemetry AND heartbeat_state.boot_changed THEN $7::text
+        WHEN heartbeat_state.accept_telemetry AND $7::text IS NOT NULL THEN $7::text
+        ELSE d.agent_last_probe_status
+    END,
+    agent_telemetry_received_at=CASE
+        WHEN heartbeat_state.accept_telemetry THEN $1
+        ELSE d.agent_telemetry_received_at
+    END
+FROM heartbeat_state
+WHERE d.id=heartbeat_state.id
+RETURNING d.last_seen`, receivedAt, payload.AgentVersion, payload.BootID, payload.UptimeSeconds, payload.QueueDepth, payload.LastProbeAt, payload.LastProbeStatus, device.ID).Scan(&lastSeen); err != nil {
 		writeError(w, 500, "could not store heartbeat")
 		return
 	}
