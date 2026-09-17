@@ -20,6 +20,17 @@ impl Client {
         self.config = config;
     }
     pub fn upload_pending(&self, queue: &Queue) -> Result<(usize, usize), String> {
+        self.upload_pending_with(queue, |payloads| self.post_batch(payloads))
+    }
+
+    fn upload_pending_with<F>(
+        &self,
+        queue: &Queue,
+        mut post_batch: F,
+    ) -> Result<(usize, usize), String>
+    where
+        F: FnMut(&[Value]) -> Result<Value, String>,
+    {
         let pending = queue
             .pending(UPLOAD_FETCH_LIMIT)
             .map_err(|error| format!("read queue: {error}"))?;
@@ -29,7 +40,7 @@ impl Client {
                 .iter()
                 .map(|(_, payload)| payload.clone())
                 .collect::<Vec<_>>();
-            let response = match self.post_batch(&payloads) {
+            let response = match post_batch(&payloads) {
                 Ok(response) => response,
                 Err(error) => {
                     eprintln!("linkwatch-agent: upload batch failed: {error}");
@@ -47,10 +58,11 @@ impl Client {
                 }
             }
             // A successful HTTP response that acknowledges nothing is not
-            // safe to interpret as progress. Leave the queue intact and retry
-            // after the server contract or network becomes available.
+            // safe to interpret as progress for this batch. Leave its items
+            // intact, but continue with later batches so permanently rejected
+            // or malformed items cannot starve otherwise valid observations.
             if !acknowledged_any {
-                break;
+                continue;
             }
         }
         let remaining = queue
@@ -147,8 +159,10 @@ fn acknowledged(response: &Value, payload: &Value) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::acknowledged;
+    use super::{acknowledged, Client};
+    use crate::{config::Config, queue::Queue};
     use serde_json::json;
+    use tempfile::tempdir;
 
     #[test]
     fn queue_ack_requires_matching_accepted_result() {
@@ -165,5 +179,37 @@ mod tests {
             &json!({"results":[{"client_event_id":"event-a","accepted":false}]}),
             &payload
         ));
+    }
+
+    #[test]
+    fn rejected_batch_does_not_starve_a_later_batch() {
+        let dir = tempdir().unwrap();
+        let queue = Queue::open(dir.path()).unwrap();
+        for index in 0..51 {
+            let event_id = format!("event-{index:03}");
+            queue
+                .enqueue(&event_id, &json!({"client_event_id": event_id}))
+                .unwrap();
+        }
+        let client = Client::new(Config::default()).unwrap();
+
+        let mut batch_index = 0;
+        let (uploaded, remaining) = client
+            .upload_pending_with(&queue, |_payloads| {
+                let response = if batch_index == 0 {
+                    json!({"results": []})
+                } else {
+                    json!({
+                        "results": [{"client_event_id": "event-050", "accepted": true}]
+                    })
+                };
+                batch_index += 1;
+                Ok(response)
+            })
+            .unwrap();
+        assert_eq!(uploaded, 1);
+        assert_eq!(remaining, 50);
+        assert!(!dir.path().join("event-050.json").exists());
+        assert!(dir.path().join("event-000.json").exists());
     }
 }
