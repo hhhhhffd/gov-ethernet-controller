@@ -31,7 +31,10 @@ impl Client {
                 .collect::<Vec<_>>();
             let response = match self.post_batch(&payloads) {
                 Ok(response) => response,
-                Err(_) => break,
+                Err(error) => {
+                    eprintln!("linkwatch-agent: upload batch failed: {error}");
+                    break;
+                }
             };
             let mut acknowledged_any = false;
             for (path, payload) in batch {

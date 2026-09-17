@@ -74,7 +74,9 @@ fn run_once(
     queue: &Queue,
     client: &Client,
 ) -> Result<(), String> {
-    let _ = client.heartbeat();
+    if let Err(error) = client.heartbeat() {
+        eprintln!("linkwatch-agent: heartbeat failed: {error}");
+    }
     let payload = event(config, probe.measure("performance")?);
     let event_id = queue::Queue::event_id(&payload);
     queue
@@ -113,7 +115,9 @@ fn run_loop(
             .map(|last| now.duration_since(last).unwrap_or_default() >= MAINTENANCE_INTERVAL)
             .unwrap_or(true);
         if maintenance_due {
-            let _ = client.heartbeat();
+            if let Err(error) = client.heartbeat() {
+                eprintln!("linkwatch-agent: heartbeat failed: {error}");
+            }
             let _ = client.upload_pending(&queue);
             if use_server_config() {
                 if let Ok(remote) = client.server_config() {
