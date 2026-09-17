@@ -29,13 +29,23 @@ func (s *Server) listSituations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	result := []map[string]interface{}{}
+	situations := []situationRecord{}
 	for rows.Next() {
 		item, scanErr := scanSituation(rows)
 		if scanErr != nil {
 			writeError(w, 500, "could not read situation")
 			return
 		}
+		situations = append(situations, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		writeError(w, 500, "could not read situations")
+		return
+	}
+	rows.Close()
+	result := []map[string]interface{}{}
+	for _, item := range situations {
 		members, memberErr := s.situationMembers(r.Context(), item.ID)
 		if memberErr != nil {
 			writeError(w, 500, "could not read situation members")
@@ -142,6 +152,7 @@ func (s *Server) refreshSituations(ctx context.Context) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
+	rows.Close()
 	existingRows, err := s.DB.Pool.Query(ctx, `SELECT id,provider_id,district,violation_type,start_at FROM situations WHERE status='OPEN'`)
 	if err != nil {
 		return err

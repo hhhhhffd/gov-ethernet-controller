@@ -391,17 +391,29 @@ func (s *Server) monitoringPoints(ctx context.Context, lineID string) []map[stri
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	result := []map[string]interface{}{}
+	points := []struct {
+		id, lineID, location string
+		primary, active      bool
+		created              time.Time
+	}{}
 	for rows.Next() {
-		var id, location string
+		var id, pointLineID, location string
 		var primary, active bool
 		var created time.Time
-		if rows.Scan(&id, &lineID, &location, &primary, &active, &created) != nil {
+		if rows.Scan(&id, &pointLineID, &location, &primary, &active, &created) != nil {
 			continue
 		}
+		points = append(points, struct {
+			id, lineID, location string
+			primary, active      bool
+			created              time.Time
+		}{id: id, lineID: pointLineID, location: location, primary: primary, active: active, created: created})
+	}
+	rows.Close()
+	result := []map[string]interface{}{}
+	for _, point := range points {
 		devices := []map[string]interface{}{}
-		drows, e := s.DB.Pool.Query(ctx, `SELECT id,agent_version,last_seen,blocked_at,created_at FROM devices WHERE monitoring_point_id=$1 ORDER BY id`, id)
+		drows, e := s.DB.Pool.Query(ctx, `SELECT id,agent_version,last_seen,blocked_at,created_at FROM devices WHERE monitoring_point_id=$1 ORDER BY id`, point.id)
 		if e == nil {
 			for drows.Next() {
 				var did, ver string
@@ -413,7 +425,7 @@ func (s *Server) monitoringPoints(ctx context.Context, lineID string) []map[stri
 			}
 			drows.Close()
 		}
-		result = append(result, map[string]interface{}{"id": id, "line_id": lineID, "location": location, "is_primary": primary, "active": active, "created_at": created, "devices": devices})
+		result = append(result, map[string]interface{}{"id": point.id, "line_id": point.lineID, "location": point.location, "is_primary": point.primary, "active": point.active, "created_at": point.created, "devices": devices})
 	}
 	return result
 }

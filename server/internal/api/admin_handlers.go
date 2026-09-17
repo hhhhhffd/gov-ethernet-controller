@@ -101,26 +101,43 @@ func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request, p *auth.Prin
 		writeError(w, 500, "could not query users")
 		return
 	}
-	defer rows.Close()
-	result := []map[string]interface{}{}
+	users := []struct {
+		id, username, role string
+		disabled           *time.Time
+		created            time.Time
+	}{}
 	for rows.Next() {
 		var id, username, role string
 		var disabled *time.Time
 		var created time.Time
 		if rows.Scan(&id, &username, &role, &disabled, &created) == nil {
-			scopes := []map[string]string{}
-			scopeRows, e := s.DB.Pool.Query(r.Context(), `SELECT scope_type,scope_id FROM role_scopes WHERE user_id=$1 ORDER BY scope_type,scope_id`, id)
-			if e == nil {
-				for scopeRows.Next() {
-					var scopeType, scopeID string
-					if scopeRows.Scan(&scopeType, &scopeID) == nil {
-						scopes = append(scopes, map[string]string{"scope_type": scopeType, "scope_id": scopeID})
-					}
-				}
-				scopeRows.Close()
-			}
-			result = append(result, map[string]interface{}{"id": id, "username": username, "role": role, "disabled": disabled != nil, "disabled_at": disabled, "created_at": created, "scopes": scopes})
+			users = append(users, struct {
+				id, username, role string
+				disabled           *time.Time
+				created            time.Time
+			}{id: id, username: username, role: role, disabled: disabled, created: created})
 		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		writeError(w, 500, "could not read users")
+		return
+	}
+	rows.Close()
+	result := []map[string]interface{}{}
+	for _, user := range users {
+		scopes := []map[string]string{}
+		scopeRows, e := s.DB.Pool.Query(r.Context(), `SELECT scope_type,scope_id FROM role_scopes WHERE user_id=$1 ORDER BY scope_type,scope_id`, user.id)
+		if e == nil {
+			for scopeRows.Next() {
+				var scopeType, scopeID string
+				if scopeRows.Scan(&scopeType, &scopeID) == nil {
+					scopes = append(scopes, map[string]string{"scope_type": scopeType, "scope_id": scopeID})
+				}
+			}
+			scopeRows.Close()
+		}
+		result = append(result, map[string]interface{}{"id": user.id, "username": user.username, "role": user.role, "disabled": user.disabled != nil, "disabled_at": user.disabled, "created_at": user.created, "scopes": scopes})
 	}
 	writeJSON(w, 200, result)
 }
