@@ -34,6 +34,11 @@ LINKWATCH_PROBE=demo \
 cargo run --release --manifest-path agent/Cargo.toml -- once
 ```
 
+Линия, школа и monitoring point определяются сервером по аутентифицированному
+`device_id`. Старые поля `school_id`, `line_id`, `monitoring_point_id` и их
+`VKO_*` aliases принимаются для совместимости с прежними конфигурациями, но не
+влияют на отправляемую телеметрию.
+
 Для production используйте `LINKWATCH_PROBE=network` и контролируемые
 оператором endpoints в `LINKWATCH_CONFIG_FILE`/`VKO_PROBE_*`. NetworkProbe
 формирует reachability, ICMP ping samples (с безопасным TCP-connect fallback),

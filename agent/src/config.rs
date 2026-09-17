@@ -36,6 +36,9 @@ pub struct Config {
     pub server_url: String,
     pub device_id: String,
     pub device_token: String,
+    // Kept only so older JSON files and VKO_* environment variables remain
+    // parseable during migration. The server resolves these identities from
+    // the authenticated device mapping; the agent never sends them.
     pub school_id: String,
     pub line_id: String,
     pub monitoring_point_id: String,
@@ -54,9 +57,9 @@ impl Default for Config {
             server_url: "http://127.0.0.1:8080".into(),
             device_id: "device-42-primary".into(),
             device_token: "demo-device-42-primary-token".into(),
-            school_id: "school-42".into(),
-            line_id: "line-42-primary".into(),
-            monitoring_point_id: "point-42-primary".into(),
+            school_id: String::new(),
+            line_id: String::new(),
+            monitoring_point_id: String::new(),
             agent_version: env!("CARGO_PKG_VERSION").into(),
             performance_tests_per_day: 4,
             jitter_minutes: 8,
@@ -122,14 +125,8 @@ impl Config {
         {
             return Err("production requires a provisioned device token".into());
         }
-        if config.device_id.is_empty()
-            || config.device_token.is_empty()
-            || config.line_id.is_empty()
-            || config.monitoring_point_id.is_empty()
-        {
-            return Err(
-                "device_id, device_token, line_id and monitoring_point_id are required".into(),
-            );
+        if config.device_id.is_empty() || config.device_token.is_empty() {
+            return Err("device_id and device_token are required".into());
         }
         Ok(config)
     }
@@ -287,10 +284,13 @@ mod tests {
     #[test]
     fn json_config_keeps_defaults_for_omitted_fields() {
         let config: Config = serde_json::from_str(
-            r#"{"server_url":"https://monitoring.example","device_id":"device-1","device_token":"token-1","line_id":"line-1","monitoring_point_id":"point-1"}"#,
+            r#"{"server_url":"https://monitoring.example","device_id":"device-1","device_token":"token-1"}"#,
         )
         .expect("partial config should parse");
         assert_eq!(config.server_url, "https://monitoring.example");
+        assert!(config.school_id.is_empty());
+        assert!(config.line_id.is_empty());
+        assert!(config.monitoring_point_id.is_empty());
         assert_eq!(config.performance_tests_per_day, 4);
         assert_eq!(config.probe.timeout_seconds, 5);
         assert_eq!(config.probe.throughput_duration_seconds, 3);

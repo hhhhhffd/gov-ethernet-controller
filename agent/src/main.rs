@@ -229,12 +229,6 @@ fn event(config: &Config, result: Value) -> Value {
     let mut object = result.as_object().cloned().unwrap_or_default();
     object.insert("client_event_id".into(), json!(Uuid::new_v4()));
     object.insert("device_id".into(), json!(config.device_id));
-    object.insert("school_id".into(), json!(config.school_id));
-    object.insert("line_id".into(), json!(config.line_id));
-    object.insert(
-        "monitoring_point_id".into(),
-        json!(config.monitoring_point_id),
-    );
     object.insert("agent_version".into(), json!(config.agent_version));
     object.insert("observed_at".into(), json!(chrono_like_now()));
     Value::Object(object)
@@ -280,4 +274,25 @@ fn time_format(seconds: u64, nanos: u32) -> String {
     let second = day_seconds % 60;
     let _ = nanos;
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::event;
+    use crate::config::Config;
+    use serde_json::json;
+
+    #[test]
+    fn event_uses_device_identity_only() {
+        let mut config = Config::default();
+        config.school_id = "legacy-school".into();
+        config.line_id = "legacy-line".into();
+        config.monitoring_point_id = "legacy-point".into();
+
+        let payload = event(&config, json!({"mode": "LIGHT"}));
+        assert_eq!(payload["device_id"], "device-42-primary");
+        assert!(payload.get("school_id").is_none());
+        assert!(payload.get("line_id").is_none());
+        assert!(payload.get("monitoring_point_id").is_none());
+    }
 }
