@@ -1,4 +1,4 @@
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::{
     fs,
     io::{self, Write},
@@ -92,6 +92,41 @@ impl Queue {
         }
         Ok(())
     }
+
+    /// Move a permanently rejected item out of the retry spool and retain a
+    /// bounded diagnostic sidecar for operator inspection.
+    pub fn reject(&self, path: &Path, error_code: &str, error: &str) -> io::Result<PathBuf> {
+        let rejected = self.dir.join("rejected");
+        fs::create_dir_all(&rejected)?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("queue-item.json");
+        let target = rejected.join(name);
+        fs::rename(path, &target)?;
+
+        let metadata = json!({
+            "error_code": bounded_text(error_code, 128),
+            "error": bounded_text(error, 1024),
+            "rejected_at": super::chrono_like_now(),
+        });
+        let metadata_path = rejected.join(format!("{name}.error.json"));
+        let temporary = rejected.join(format!(".{name}.{}.tmp", std::process::id()));
+        let data = serde_json::to_vec(&metadata).map_err(io::Error::other)?;
+        {
+            let mut file = fs::File::create(&temporary)?;
+            file.write_all(&data)?;
+            file.sync_all()?;
+        }
+        fs::rename(&temporary, &metadata_path)?;
+        if let Ok(directory) = fs::File::open(&rejected) {
+            let _ = directory.sync_all();
+        }
+        if let Ok(directory) = fs::File::open(&self.dir) {
+            let _ = directory.sync_all();
+        }
+        Ok(target)
+    }
     pub fn count(&self) -> io::Result<usize> {
         Ok(fs::read_dir(&self.dir)?
             .filter_map(Result::ok)
@@ -143,6 +178,10 @@ impl Queue {
                 )
             })
     }
+}
+
+fn bounded_text(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 #[cfg(test)]
@@ -202,5 +241,32 @@ mod tests {
             fs::read_dir(dir.path().join("quarantine")).unwrap().count(),
             1
         );
+    }
+
+    #[test]
+    fn rejected_items_leave_retry_spool_with_bounded_metadata() {
+        let dir = tempdir().unwrap();
+        let queue = Queue::open(dir.path()).unwrap();
+        let path = queue
+            .enqueue(
+                "bad-event",
+                &serde_json::json!({"client_event_id":"bad-event"}),
+            )
+            .unwrap();
+        let target = queue
+            .reject(&path, &"x".repeat(200), &"e".repeat(2_000))
+            .unwrap();
+
+        assert!(!path.exists());
+        assert!(target.exists());
+        assert_eq!(queue.count().unwrap(), 0);
+        let metadata = fs::read_to_string(
+            dir.path()
+                .join("rejected")
+                .join("bad-event.json.error.json"),
+        )
+        .unwrap();
+        assert!(metadata.contains("error_code"));
+        assert!(metadata.len() < 1_300);
     }
 }

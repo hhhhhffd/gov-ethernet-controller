@@ -47,9 +47,22 @@ type Result struct {
 	Duplicate     bool                   `json:"duplicate"`
 	Accepted      bool                   `json:"accepted"`
 	Error         string                 `json:"error,omitempty"`
+	ErrorCode     string                 `json:"error_code,omitempty"`
+	Retryable     bool                   `json:"retryable"`
 	StateApplied  bool                   `json:"state_applied"`
 	Evaluation    map[string]interface{} `json:"evaluation,omitempty"`
 }
+
+// InputError marks a rejection caused by the submitted measurement rather
+// than by the database or another transient server dependency. The batch API
+// uses it to tell an agent when retrying the same JSON cannot succeed.
+type InputError struct {
+	Code string
+	Err  error
+}
+
+func (e *InputError) Error() string { return e.Err.Error() }
+func (e *InputError) Unwrap() error { return e.Err }
 
 type Service struct{ DB *database.DB }
 
@@ -98,7 +111,7 @@ type execer interface {
 
 func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, agentVersion string, input Input) (Result, error) {
 	if input.ClientEventID == "" {
-		return Result{}, fmt.Errorf("client_event_id is required")
+		return Result{}, &InputError{Code: "client_event_id_required", Err: fmt.Errorf("client_event_id is required")}
 	}
 	if input.Mode == "" {
 		input.Mode = "PERFORMANCE"
@@ -113,10 +126,10 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, agentV
 		input.Raw = map[string]interface{}{}
 	}
 	if input.ObservedAt.IsZero() {
-		return Result{}, fmt.Errorf("observed_at is required")
+		return Result{}, &InputError{Code: "observed_at_required", Err: fmt.Errorf("observed_at is required")}
 	}
 	if err := validateInput(input); err != nil {
-		return Result{}, err
+		return Result{}, &InputError{Code: "invalid_measurement", Err: err}
 	}
 	input.ObservedAt = input.ObservedAt.UTC().Truncate(time.Second)
 	tx, err := s.DB.Pool.Begin(ctx)

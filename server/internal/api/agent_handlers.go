@@ -41,17 +41,20 @@ func (s *Server) agentBatch(w http.ResponseWriter, r *http.Request) {
 		result := measurements.Result{ClientEventID: item.ClientEventID}
 		if item.ObservedAt.IsZero() {
 			result.Error = "observed_at is required"
+			result.ErrorCode = "observed_at_required"
 			results = append(results, result)
 			continue
 		}
 		if err := validateDeviceTime(item.ObservedAt); err != nil {
 			result.Error = err.Error()
+			result.ErrorCode = "clock_skew"
+			result.Retryable = true
 			results = append(results, result)
 			continue
 		}
 		processed, err := s.Measure.Process(r.Context(), device.ID, device.LineID, device.PointID, device.AgentVersion, item)
 		if err != nil {
-			result.Error = err.Error()
+			result = measurementErrorResult(item.ClientEventID, err)
 			results = append(results, result)
 			continue
 		}
@@ -67,6 +70,21 @@ func (s *Server) agentBatch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "results": results, "accepted": accepted, "duplicates": duplicates, "rejected": len(results) - accepted})
+}
+
+func measurementErrorResult(clientEventID string, err error) measurements.Result {
+	result := measurements.Result{
+		ClientEventID: clientEventID,
+		Error:         err.Error(),
+		ErrorCode:     "internal_error",
+		Retryable:     true,
+	}
+	var inputErr *measurements.InputError
+	if errors.As(err, &inputErr) {
+		result.ErrorCode = inputErr.Code
+		result.Retryable = false
+	}
+	return result
 }
 
 func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
