@@ -649,6 +649,36 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 	if !requireAdmin(w, p) {
 		return
 	}
+	if len(parts) > 1 && parts[1] == "rotate-token" && r.Method == http.MethodPost {
+		tx, err := s.DB.Pool.Begin(r.Context())
+		if err != nil {
+			writeError(w, 500, "could not begin device token rotation")
+			return
+		}
+		defer func() { _ = tx.Rollback(r.Context()) }()
+		var pointID, lineID string
+		if err := tx.QueryRow(r.Context(), `SELECT d.monitoring_point_id,mp.line_id FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id WHERE d.id=$1`, parts[0]).Scan(&pointID, &lineID); err != nil {
+			writeError(w, 404, "device not found")
+			return
+		}
+		token := randomSecret()
+		now := time.Now().UTC().Truncate(time.Second)
+		if _, err := tx.Exec(r.Context(), `UPDATE devices SET auth_token_hash=$1 WHERE id=$2`, auth.TokenHash(token), parts[0]); err != nil {
+			writeError(w, 500, "could not rotate device token")
+			return
+		}
+		after, _ := json.Marshal(map[string]interface{}{"rotated_at": now, "monitoring_point_id": pointID, "line_id": lineID})
+		if _, err := tx.Exec(r.Context(), `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,created_at) VALUES ('USER',$1,'device.token_rotated','device',$2,NULL,$3::jsonb,$4)`, p.ID, parts[0], string(after), now); err != nil {
+			writeError(w, 500, "could not audit device token rotation")
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, 500, "could not commit device token rotation")
+			return
+		}
+		writeJSON(w, 200, map[string]interface{}{"device_id": parts[0], "monitoring_point_id": pointID, "line_id": lineID, "device_token": token, "rotated_at": now})
+		return
+	}
 	if len(parts) > 0 && parts[0] == "register" && r.Method == http.MethodPost {
 		var payload struct {
 			DeviceID          string `json:"device_id"`

@@ -71,6 +71,10 @@ retryable-флаг и backoff; notification доставляется через 
 `/api/v1/agent/probe/upload`, `/api/v1/lines`, `/api/v1/incidents`,
 `/api/v1/situations`, `/api/v1/reports/aggregate`,
 `/api/v1/reports/quality-passport`, `/api/v1/exports` и `/api/v1/admin/*`.
+Администратор может перевыпустить секрет устройства через
+`POST /api/v1/admin/devices/{device_id}/rotate-token`; новый `device_token`
+возвращается только в ответе этой операции и должен быть сразу сохранён в
+секретном хранилище агента.
 
 Локальные параметры находятся в `.env.example`; production-шаблон —
 `.env.prod.example`. Секреты не должны попадать в git. Для production задайте
