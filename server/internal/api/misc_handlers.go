@@ -296,7 +296,12 @@ func (s *Server) situationDetail(w http.ResponseWriter, r *http.Request, id stri
 			writeError(w, 404, "situation not found")
 			return
 		}
-		incidents = append(incidents, s.incidentMap(r.Context(), incident))
+		mapped, mapErr := s.incidentMap(r.Context(), incident)
+		if mapErr != nil {
+			writeError(w, 500, "could not read incident details")
+			return
+		}
+		incidents = append(incidents, mapped)
 	}
 	writeJSON(w, 200, map[string]interface{}{"id": item.ID, "title": item.Title, "status": item.Status, "provider_id": nullableString(item.ProviderID), "district": nullableString(item.District), "violation_type": nullableString(item.ViolationType), "start_at": item.StartAt, "started_at": item.StartAt, "incident_ids": memberIDs, "affected_count": len(memberIDs), "incidents": incidents, "reason": decodeJSONBytes(item.Reason)})
 }

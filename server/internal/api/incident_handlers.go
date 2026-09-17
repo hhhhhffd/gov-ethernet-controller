@@ -39,7 +39,7 @@ func (s *Server) scanIncident(row interface{ Scan(...interface{}) error }) (inci
 	return item, err
 }
 
-func (s *Server) incidentMap(ctx context.Context, item incidentRecord) map[string]interface{} { // context import is supplied by the file below through alias helper
+func (s *Server) incidentMap(ctx context.Context, item incidentRecord) (map[string]interface{}, error) { // context import is supplied by the file below through alias helper
 	opening := decodeJSONBytes(item.Opening)
 	title := map[bool]string{true: "Подтверждённое отсутствие соединения", false: "Подтверждённое нарушение " + item.ViolationType}[item.ViolationType == "NO_INTERNET"]
 	description := title
@@ -65,17 +65,22 @@ func (s *Server) incidentMap(ctx context.Context, item incidentRecord) map[strin
 	result := map[string]interface{}{"id": item.ID, "incident_no": item.Number, "number": item.Number, "line_id": item.LineID, "organization_id": item.OrganizationID, "school_id": item.SchoolID, "organization_name": item.OrganizationName, "school_name": item.OrganizationName, "district": item.District, "provider_id": item.ProviderID, "provider_name": item.ProviderName, "provider": provider, "source": item.Source, "violation_type": item.ViolationType, "status": item.Status, "recovery_state": item.RecoveryState, "started_at": item.StartedAt, "confirmed_at": item.ConfirmedAt, "resolved_at": item.ResolvedAt, "closed_at": item.ClosedAt, "duration_minutes": duration, "assignee": item.Assignee, "recurrence_of": item.RecurrenceOf, "opening_snapshot": opening, "severity": map[bool]string{true: "CRITICAL", false: "ATTENTION"}[item.ViolationType == "NO_INTERNET"], "title": title, "description": description}
 	events := []map[string]interface{}{}
 	rows, err := s.DB.Pool.Query(ctx, `SELECT id,event_type,actor,payload_json,created_at FROM incident_events WHERE incident_id=$1 ORDER BY id`, item.ID)
-	if err == nil {
-		for rows.Next() {
-			var id int64
-			var typ, actor string
-			var payload []byte
-			var at time.Time
-			if rows.Scan(&id, &typ, &actor, &payload, &at) == nil {
-				events = append(events, map[string]interface{}{"id": id, "event_type": typ, "actor": actor, "payload": decodeJSONBytes(payload), "created_at": at, "at": at, "text": typ})
-			}
+	if err != nil {
+		return nil, fmt.Errorf("query incident events: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var typ, actor string
+		var payload []byte
+		var at time.Time
+		if err := rows.Scan(&id, &typ, &actor, &payload, &at); err != nil {
+			return nil, fmt.Errorf("scan incident event: %w", err)
 		}
-		rows.Close()
+		events = append(events, map[string]interface{}{"id": id, "event_type": typ, "actor": actor, "payload": decodeJSONBytes(payload), "created_at": at, "at": at, "text": typ})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate incident events: %w", err)
 	}
 	result["events"] = events
 	actions := []map[string]interface{}{}
@@ -83,8 +88,12 @@ func (s *Server) incidentMap(ctx context.Context, item incidentRecord) map[strin
 		actions = append(actions, map[string]interface{}{"at": event["at"], "text": event["text"], "actor": event["actor"], "payload": event["payload"]})
 	}
 	result["actions"] = actions
-	result["provider_cases"] = s.providerCases(ctx, item.ID)
-	return result
+	providerCases, err := s.providerCases(ctx, item.ID)
+	if err != nil {
+		return nil, err
+	}
+	result["provider_cases"] = providerCases
+	return result, nil
 }
 
 func (s *Server) incidentListForLine(ctx context.Context, lineID string) ([]map[string]interface{}, error) {
@@ -99,7 +108,11 @@ func (s *Server) incidentListForLine(ctx context.Context, lineID string) ([]map[
 		if scanErr != nil {
 			return nil, scanErr
 		}
-		result = append(result, s.incidentMap(ctx, item))
+		mapped, mapErr := s.incidentMap(ctx, item)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		result = append(result, mapped)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -136,7 +149,16 @@ func (s *Server) listIncidents(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "could not read incident")
 			return
 		}
-		result = append(result, s.incidentMap(r.Context(), item))
+		mapped, mapErr := s.incidentMap(r.Context(), item)
+		if mapErr != nil {
+			writeError(w, 500, "could not read incident details")
+			return
+		}
+		result = append(result, mapped)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read incidents")
+		return
 	}
 	writeJSON(w, 200, result)
 }
@@ -162,7 +184,12 @@ func (s *Server) incidentRoute(w http.ResponseWriter, r *http.Request, rest stri
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		writeJSON(w, 200, s.incidentMap(r.Context(), item))
+		mapped, mapErr := s.incidentMap(r.Context(), item)
+		if mapErr != nil {
+			writeError(w, 500, "could not read incident details")
+			return
+		}
+		writeJSON(w, 200, mapped)
 		return
 	}
 	if len(parts) >= 2 && parts[1] == "events" && r.Method == http.MethodPost {
@@ -234,13 +261,21 @@ func (s *Server) createManualIncident(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeAudit(r.Context(), s, p, "incident.created_manual", "incident", fmt.Sprint(id), nil, map[string]interface{}{"line_id": line.ID, "manual_description": payload.Description})
-	writeJSON(w, 201, s.incidentMap(r.Context(), mustIncident(s, id)))
+	fresh, freshErr := mustIncident(s, id)
+	if freshErr != nil {
+		writeError(w, 500, "could not read incident")
+		return
+	}
+	mapped, mapErr := s.incidentMap(r.Context(), fresh)
+	if mapErr != nil {
+		writeError(w, 500, "could not read incident details")
+		return
+	}
+	writeJSON(w, 201, mapped)
 }
 
-func mustIncident(s *Server, id int64) incidentRecord {
-	var item incidentRecord
-	item, _ = s.scanIncident(s.DB.Pool.QueryRow(context.Background(), `SELECT i.id,i.incident_no,i.line_id,i.source,i.violation_type,i.status,i.recovery_state,i.started_at,i.confirmed_at,i.resolved_at,i.closed_at,i.duration_minutes,i.assignee,i.recurrence_of,i.opening_snapshot_json,l.organization_id,l.provider_id,o.school_id,o.name,o.district,p.name FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE i.id=$1`, id))
-	return item
+func mustIncident(s *Server, id int64) (incidentRecord, error) {
+	return s.scanIncident(s.DB.Pool.QueryRow(context.Background(), `SELECT i.id,i.incident_no,i.line_id,i.source,i.violation_type,i.status,i.recovery_state,i.started_at,i.confirmed_at,i.resolved_at,i.closed_at,i.duration_minutes,i.assignee,i.recurrence_of,i.opening_snapshot_json,l.organization_id,l.provider_id,o.school_id,o.name,o.district,p.name FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE i.id=$1`, id))
 }
 
 func (s *Server) incidentEvent(w http.ResponseWriter, r *http.Request, item incidentRecord, p *auth.Principal) {
@@ -313,7 +348,12 @@ func (s *Server) incidentEvent(w http.ResponseWriter, r *http.Request, item inci
 		writeError(w, 404, "incident not found")
 		return
 	}
-	writeJSON(w, 200, s.incidentMap(r.Context(), fresh))
+	mapped, mapErr := s.incidentMap(r.Context(), fresh)
+	if mapErr != nil {
+		writeError(w, 500, "could not read incident details")
+		return
+	}
+	writeJSON(w, 200, mapped)
 }
 
 func (s *Server) providerDraft(w http.ResponseWriter, r *http.Request, item incidentRecord, p *auth.Principal) {
@@ -401,10 +441,10 @@ func mapValue(value interface{}, key string) interface{} {
 	return map[string]interface{}{}
 }
 
-func (s *Server) providerCases(ctx context.Context, incidentID int64) []map[string]interface{} {
+func (s *Server) providerCases(ctx context.Context, incidentID int64) ([]map[string]interface{}, error) {
 	rows, err := s.DB.Pool.Query(ctx, `SELECT id,incident_id,ticket_no,draft_text,final_text,status,delivery_channel,delivery_status,delivery_attempts,delivery_error,delivery_retryable,next_attempt_at,delivery_started_at,external_ticket_no,created_by,sent_by,sent_at,created_at FROM provider_cases WHERE incident_id=$1 ORDER BY id`, incidentID)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("query provider cases: %w", err)
 	}
 	defer rows.Close()
 	result := []map[string]interface{}{}
@@ -414,11 +454,15 @@ func (s *Server) providerCases(ctx context.Context, incidentID int64) []map[stri
 		var attempts int
 		var retryable bool
 		var nextAttempt, deliveryStarted, sent, created *time.Time
-		if rows.Scan(&id, &inc, &ticket, &draft, &final, &status, &channel, &delivery, &attempts, &errorText, &retryable, &nextAttempt, &deliveryStarted, &external, &createdBy, &sentBy, &sent, &created) == nil {
-			result = append(result, map[string]interface{}{"id": id, "incident_id": inc, "ticket_no": ticket, "draft_text": draft, "final_text": final, "status": status, "delivery_channel": channel, "delivery_status": delivery, "delivery_attempts": attempts, "delivery_error": errorText, "delivery_retryable": retryable, "next_attempt_at": nextAttempt, "delivery_started_at": deliveryStarted, "external_ticket_no": external, "created_by": createdBy, "sent_by": sentBy, "sent_at": sent, "created_at": created})
+		if err := rows.Scan(&id, &inc, &ticket, &draft, &final, &status, &channel, &delivery, &attempts, &errorText, &retryable, &nextAttempt, &deliveryStarted, &external, &createdBy, &sentBy, &sent, &created); err != nil {
+			return nil, fmt.Errorf("scan provider case: %w", err)
 		}
+		result = append(result, map[string]interface{}{"id": id, "incident_id": inc, "ticket_no": ticket, "draft_text": draft, "final_text": final, "status": status, "delivery_channel": channel, "delivery_status": delivery, "delivery_attempts": attempts, "delivery_error": errorText, "delivery_retryable": retryable, "next_attempt_at": nextAttempt, "delivery_started_at": deliveryStarted, "external_ticket_no": external, "created_by": createdBy, "sent_by": sentBy, "sent_at": sent, "created_at": created})
 	}
-	return result
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate provider cases: %w", err)
+	}
+	return result, nil
 }
 
 func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest string) {
@@ -470,7 +514,12 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		return
 	}
 	if currentStatus != nil && *currentStatus == "SENT" {
-		for _, item := range s.providerCases(r.Context(), incidentID) {
+		cases, casesErr := s.providerCases(r.Context(), incidentID)
+		if casesErr != nil {
+			writeError(w, 500, "could not read provider cases")
+			return
+		}
+		for _, item := range cases {
 			if fmt.Sprint(item["id"]) == strconv.FormatInt(id, 10) {
 				writeJSON(w, 200, item)
 				return
@@ -561,7 +610,11 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 	}
 	_, _ = s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_SENT',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"ticket_no":%q,"channel":%q}`, id, ticketNo, delivery.Channel), now)
 	writeAudit(r.Context(), s, p, "provider_case.sent", "provider_case", fmt.Sprint(id), nil, map[string]interface{}{"ticket_no": ticketNo, "external_ticket_no": delivery.ExternalID, "delivery_channel": delivery.Channel, "status": "SENT", "reviewed": true})
-	cases := s.providerCases(r.Context(), incidentID)
+	cases, casesErr := s.providerCases(r.Context(), incidentID)
+	if casesErr != nil {
+		writeError(w, 500, "could not read provider cases")
+		return
+	}
 	for _, item := range cases {
 		if fmt.Sprint(item["id"]) == strconv.FormatInt(id, 10) {
 			writeJSON(w, 200, item)
