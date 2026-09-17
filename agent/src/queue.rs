@@ -32,9 +32,7 @@ impl Queue {
             file.sync_all()?;
         }
         fs::rename(&temporary, &final_path)?;
-        if let Ok(directory) = fs::File::open(&self.dir) {
-            let _ = directory.sync_all();
-        }
+        sync_directory(&self.dir)?;
         Ok(final_path)
     }
 
@@ -47,19 +45,15 @@ impl Queue {
     }
 
     pub fn pending(&self, limit: usize) -> io::Result<Vec<(PathBuf, Value)>> {
-        let mut entries = fs::read_dir(&self.dir)?
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry.path().extension().and_then(|value| value.to_str()) == Some("json")
-            })
-            .map(|entry| {
-                let modified = entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .unwrap_or(UNIX_EPOCH);
-                (entry.path(), modified)
-            })
-            .collect::<Vec<_>>();
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(&self.dir)? {
+            let entry = entry?;
+            if entry.path().extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let modified = entry.metadata()?.modified()?;
+            entries.push((entry.path(), modified));
+        }
         // Filesystem mtime tracks enqueue order across restarts, while the
         // path tie-breaker keeps simultaneous writes deterministic.
         entries.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.0.cmp(&right.0)));
@@ -87,9 +81,7 @@ impl Queue {
     }
     pub fn remove(&self, path: &Path) -> io::Result<()> {
         fs::remove_file(path)?;
-        if let Ok(directory) = fs::File::open(&self.dir) {
-            let _ = directory.sync_all();
-        }
+        sync_directory(&self.dir)?;
         Ok(())
     }
 
@@ -132,12 +124,8 @@ impl Queue {
             file.sync_all()?;
         }
         fs::rename(&temporary, &metadata_path)?;
-        if let Ok(directory) = fs::File::open(&rejected) {
-            let _ = directory.sync_all();
-        }
-        if let Ok(directory) = fs::File::open(&self.dir) {
-            let _ = directory.sync_all();
-        }
+        sync_directory(&rejected)?;
+        sync_directory(&self.dir)?;
         Ok(target)
     }
     pub fn count(&self) -> io::Result<usize> {
@@ -167,12 +155,8 @@ impl Queue {
                 format!("quarantine malformed queue item ({error}): {rename_error}"),
             )
         })?;
-        if let Ok(directory) = fs::File::open(&quarantine) {
-            let _ = directory.sync_all();
-        }
-        if let Ok(directory) = fs::File::open(&self.dir) {
-            let _ = directory.sync_all();
-        }
+        sync_directory(&quarantine)?;
+        sync_directory(&self.dir)?;
         Ok(())
     }
 
@@ -190,6 +174,21 @@ impl Queue {
                         .as_nanos()
                 )
             })
+    }
+}
+
+/// Persist a directory entry update where the platform exposes directory
+/// handles. Windows has no equivalent of Unix directory fsync, so the file
+/// contents and atomic rename remain the durability boundary there.
+pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        let _ = path;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        fs::File::open(path)?.sync_all()
     }
 }
 

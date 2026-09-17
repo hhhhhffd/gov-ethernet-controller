@@ -7,6 +7,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::queue::sync_directory;
+
 pub const DAY_SECONDS: u64 = 24 * 60 * 60;
 const MISSED_SLOT_GRACE_SECONDS: u64 = 60;
 
@@ -39,9 +41,7 @@ impl State {
         }
         atomic_replace(&temporary, path)?;
         if let Some(parent) = path.parent() {
-            if let Ok(directory) = fs::File::open(parent) {
-                let _ = directory.sync_all();
-            }
+            sync_directory(parent)?;
         }
         Ok(())
     }
