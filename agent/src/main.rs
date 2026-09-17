@@ -1,17 +1,19 @@
 mod client;
 mod config;
 mod health;
+mod lifecycle;
 mod probe;
 mod queue;
 mod scheduler;
 
 use client::Client;
 use config::Config;
+use lifecycle::{install_signal_handler, InstanceLock, StopToken};
 use probe::Probe;
 use queue::Queue;
 use serde_json::{json, Value};
 use std::{
-    env, thread,
+    env,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
@@ -52,6 +54,24 @@ fn run() -> Result<(), String> {
             "unknown command {mode}; expected run, once, probe or version"
         ));
     }
+    let queue = Queue::open(&config.queue_dir).map_err(|error| format!("open queue: {error}"))?;
+    // Both long-running and one-shot modes write the durable spool. Keep
+    // them mutually exclusive so a one-shot upload cannot race the scheduler
+    // or remove an item while the run loop is processing the same batch.
+    let _instance_lock = if mode == "run" || mode == "once" {
+        let lock_path = queue.lock_path();
+        Some(
+            InstanceLock::acquire(&lock_path)
+                .map_err(|error| format!("acquire agent instance lock: {error}"))?,
+        )
+    } else {
+        None
+    };
+    let stop_token = if mode == "run" {
+        Some(install_signal_handler()?)
+    } else {
+        None
+    };
     let initial_client = Client::new(config.clone())?;
     if use_server_config() {
         if let Ok(remote) = initial_client.server_config() {
@@ -59,12 +79,17 @@ fn run() -> Result<(), String> {
         }
     }
     let mut probe = probe::build(&config)?;
-    let queue = Queue::open(&config.queue_dir).map_err(|error| format!("open queue: {error}"))?;
     let client = Client::new(config.clone())?;
     if mode == "once" {
         run_once(&config, &mut *probe, &queue, &client)
     } else {
-        run_loop(config, probe, queue, client)
+        run_loop(
+            config,
+            probe,
+            queue,
+            client,
+            stop_token.expect("run mode installs a stop token"),
+        )
     }
 }
 
@@ -98,6 +123,7 @@ fn run_loop(
     mut probe: Box<dyn Probe>,
     queue: Queue,
     mut client: Client,
+    stop: StopToken,
 ) -> Result<(), String> {
     let state_path = queue.state_path();
     let mut state = scheduler::State::load(&state_path)
@@ -106,6 +132,10 @@ fn run_loop(
     let mut light_due: Option<SystemTime> = None;
 
     loop {
+        if stop.is_requested() {
+            println!("shutdown requested; pending measurements remain queued");
+            return Ok(());
+        }
         let now = SystemTime::now();
 
         // Maintenance is independent of scheduled probes. It keeps the
@@ -191,7 +221,10 @@ fn run_loop(
                     }
                     Err(error) => {
                         eprintln!("linkwatch-agent: performance probe failed: {error}");
-                        thread::sleep(Duration::from_secs(30));
+                        if stop.wait(Duration::from_secs(30)) {
+                            println!("shutdown requested; pending measurements remain queued");
+                            return Ok(());
+                        }
                     }
                 }
                 if config.light_checks_between {
@@ -210,9 +243,15 @@ fn run_loop(
                 .min(until_light)
                 .min(MAINTENANCE_INTERVAL)
                 .min(Duration::from_secs(30));
-            thread::sleep(sleep_for.max(Duration::from_secs(1)));
+            if stop.wait(sleep_for.max(Duration::from_secs(1))) {
+                println!("shutdown requested; pending measurements remain queued");
+                return Ok(());
+            }
         } else {
-            thread::sleep(Duration::from_secs(30));
+            if stop.wait(Duration::from_secs(30)) {
+                println!("shutdown requested; pending measurements remain queued");
+                return Ok(());
+            }
         }
     }
 }

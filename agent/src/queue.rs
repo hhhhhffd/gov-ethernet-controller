@@ -42,6 +42,10 @@ impl Queue {
         self.dir.join(".schedule-state")
     }
 
+    pub fn lock_path(&self) -> PathBuf {
+        self.dir.join(".instance.lock")
+    }
+
     pub fn pending(&self, limit: usize) -> io::Result<Vec<(PathBuf, Value)>> {
         let mut entries = fs::read_dir(&self.dir)?
             .filter_map(Result::ok)
