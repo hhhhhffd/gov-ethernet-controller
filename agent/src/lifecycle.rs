@@ -89,7 +89,7 @@ impl InstanceLock {
             .open(path)?;
         match file.try_lock_exclusive() {
             Ok(()) => Ok(Self { _file: file }),
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => Err(io::Error::new(
+            Err(error) if lock_is_contended(&error) => Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 format!(
                     "another agent instance is already running ({})",
@@ -99,6 +99,14 @@ impl InstanceLock {
             Err(error) => Err(error),
         }
     }
+}
+
+fn lock_is_contended(error: &io::Error) -> bool {
+    if error.kind() == io::ErrorKind::WouldBlock {
+        return true;
+    }
+    let expected = fs2::lock_contended_error().raw_os_error();
+    expected.is_some() && error.raw_os_error() == expected
 }
 
 #[cfg(test)]
