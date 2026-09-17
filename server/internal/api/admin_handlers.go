@@ -901,8 +901,13 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		payload.ScopeType = "GLOBAL"
 	}
 	payload.ScopeType = strings.ToUpper(payload.ScopeType)
+	payload.ScopeID = strings.TrimSpace(payload.ScopeID)
 	if payload.ScopeType != "GLOBAL" && payload.ScopeType != "LINE" {
 		writeError(w, 422, "scope_type must be GLOBAL or LINE")
+		return
+	}
+	if payload.ScopeType == "GLOBAL" && payload.ScopeID != "" {
+		writeError(w, 422, "scope_id must be empty for GLOBAL policy")
 		return
 	}
 	if payload.ScopeType == "LINE" && strings.TrimSpace(payload.ScopeID) == "" {
@@ -957,6 +962,17 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	if err := lockVersionScope(r.Context(), tx, "policy:"+payload.ScopeType+":"+payload.ScopeID); err != nil {
 		writeError(w, 500, "could not lock policy scope")
 		return
+	}
+	if payload.ScopeType == "LINE" {
+		var lineExists bool
+		if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM lines WHERE id=$1)`, payload.ScopeID).Scan(&lineExists); err != nil {
+			writeError(w, 500, "could not validate policy line")
+			return
+		}
+		if !lineExists {
+			writeError(w, 422, "line not found")
+			return
+		}
 	}
 	if err := policyOverlap(r.Context(), tx, payload.ScopeType, payload.ScopeID, *payload.ValidFrom, payload.ValidTo, p.ID); err != nil {
 		writeError(w, 409, err.Error())
