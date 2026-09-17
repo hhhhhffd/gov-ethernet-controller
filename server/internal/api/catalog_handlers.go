@@ -24,7 +24,8 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	whereWithSince, paramsWithSince := scopeSQL(p, 2)
 	freshArgs := append([]interface{}{since}, paramsWithSince...)
 	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM measurements m JOIN lines l ON l.id=m.line_id JOIN organizations o ON o.id=l.organization_id WHERE m.observed_at >= $1 AND `+whereWithSince, freshArgs...).Scan(&fresh); err != nil {
-		fresh = 0
+		writeError(w, 500, "could not calculate fresh measurements")
+		return
 	}
 	var problemLines int
 	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM lines l JOIN organizations o ON o.id=l.organization_id LEFT JOIN line_states ls ON ls.line_id=l.id WHERE l.status <> 'DELETED' AND `+where+` AND (ls.connection_state IN ('DEGRADED','NO_INTERNET') OR ls.contract_state='DEVIATES')`, params...).Scan(&problemLines); err != nil {
@@ -32,10 +33,16 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var avgDownload, avgUpload, avgPing *float64
-	_ = s.DB.Pool.QueryRow(r.Context(), `SELECT AVG(m.download),AVG(m.upload),AVG(m.ping) FROM measurements m JOIN lines l ON l.id=m.line_id JOIN organizations o ON o.id=l.organization_id WHERE m.observed_at >= $1 AND `+whereWithSince, freshArgs...).Scan(&avgDownload, &avgUpload, &avgPing)
+	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT AVG(m.download),AVG(m.upload),AVG(m.ping) FROM measurements m JOIN lines l ON l.id=m.line_id JOIN organizations o ON o.id=l.organization_id WHERE m.observed_at >= $1 AND `+whereWithSince, freshArgs...).Scan(&avgDownload, &avgUpload, &avgPing); err != nil {
+		writeError(w, 500, "could not calculate overview averages")
+		return
+	}
 	complete := 0.0
 	var tests int
-	if s.DB.Pool.QueryRow(r.Context(), `SELECT tests_per_day FROM agent_schedules WHERE id=1`).Scan(&tests) != nil {
+	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT tests_per_day FROM agent_schedules WHERE id=1`).Scan(&tests); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 500, "could not load agent schedule")
+		return
+	} else if errors.Is(err, pgx.ErrNoRows) {
 		tests = 4
 	}
 	if linesCount > 0 {

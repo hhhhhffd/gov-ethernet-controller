@@ -2,9 +2,12 @@ package api
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"linkwatch/server/internal/measurements"
 )
@@ -99,7 +102,12 @@ func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var testsPerDay, jitter, light int
-	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT tests_per_day,jitter_minutes,light_checks_between FROM agent_schedules WHERE id=1`).Scan(&testsPerDay, &jitter, &light); err != nil {
+	scheduleErr := s.DB.Pool.QueryRow(r.Context(), `SELECT tests_per_day,jitter_minutes,light_checks_between FROM agent_schedules WHERE id=1`).Scan(&testsPerDay, &jitter, &light)
+	if scheduleErr != nil && !errors.Is(scheduleErr, pgx.ErrNoRows) {
+		writeError(w, 500, "could not load agent schedule")
+		return
+	}
+	if errors.Is(scheduleErr, pgx.ErrNoRows) {
 		testsPerDay, jitter, light = 4, 8, 0
 	}
 	var policyID, version, confirmCount, confirmMinutes, recoveryCount, recoveryMinutes, freshness int
@@ -108,8 +116,16 @@ func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {
 	var validFrom time.Time
 	var validTo *time.Time
 	policyErr := s.DB.Pool.QueryRow(r.Context(), `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds FROM threshold_policy_versions WHERE scope_type='LINE' AND scope_id=$1 AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now()) ORDER BY valid_from DESC LIMIT 1`, device.LineID).Scan(&policyID, &scopeType, &scopeID, &version, &validFrom, &validTo, &downloadMin, &uploadMin, &pingMax, &jitterMax, &lossMax, &availabilityMin, &confirmCount, &confirmMinutes, &recoveryCount, &recoveryMinutes, &freshness)
-	if policyErr != nil {
+	if policyErr != nil && !errors.Is(policyErr, pgx.ErrNoRows) {
+		writeError(w, 500, "could not load line policy")
+		return
+	}
+	if errors.Is(policyErr, pgx.ErrNoRows) {
 		policyErr = s.DB.Pool.QueryRow(r.Context(), `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds FROM threshold_policy_versions WHERE scope_type='GLOBAL' AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now()) ORDER BY valid_from DESC LIMIT 1`).Scan(&policyID, &scopeType, &scopeID, &version, &validFrom, &validTo, &downloadMin, &uploadMin, &pingMax, &jitterMax, &lossMax, &availabilityMin, &confirmCount, &confirmMinutes, &recoveryCount, &recoveryMinutes, &freshness)
+		if policyErr != nil && !errors.Is(policyErr, pgx.ErrNoRows) {
+			writeError(w, 500, "could not load global policy")
+			return
+		}
 	}
 	policy := map[string]interface{}{}
 	if policyErr == nil {

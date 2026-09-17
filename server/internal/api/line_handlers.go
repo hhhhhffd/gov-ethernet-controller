@@ -89,12 +89,15 @@ func itoa(value int) string {
 	return result
 }
 
-func (s *Server) lineVisible(ctx context.Context, p *auth.Principal, id string) (lineRecord, bool) {
+func (s *Server) lineVisible(ctx context.Context, p *auth.Principal, id string) (lineRecord, bool, error) {
 	line, err := s.queryLine(ctx, id)
 	if err != nil {
-		return lineRecord{}, false
+		if errors.Is(err, pgx.ErrNoRows) {
+			return lineRecord{}, false, nil
+		}
+		return lineRecord{}, false, err
 	}
-	return line, auth.HasLineScope(p, line.ID, line.OrganizationID, line.District, line.ProviderID)
+	return line, auth.HasLineScope(p, line.ID, line.OrganizationID, line.District, line.ProviderID), nil
 }
 
 type stateRecord struct {
@@ -131,13 +134,16 @@ type latestRecord struct {
 	Download, Upload, Ping, Jitter, PacketLoss, Availability *float64
 }
 
-func (s *Server) latest(ctx context.Context, lineID string) map[string]interface{} {
+func (s *Server) latest(ctx context.Context, lineID string) (map[string]interface{}, error) {
 	var row latestRecord
 	err := s.DB.Pool.QueryRow(ctx, `SELECT id,client_event_id,observed_at,device_id,mode,connection_status,download,upload,ping,jitter,packet_loss,availability FROM measurements WHERE line_id=$1 ORDER BY observed_at DESC,id DESC LIMIT 1`, lineID).Scan(&row.ID, &row.ClientEventID, &row.ObservedAt, &row.DeviceID, &row.Mode, &row.ConnectionStatus, &row.Download, &row.Upload, &row.Ping, &row.Jitter, &row.PacketLoss, &row.Availability)
-	if err != nil {
-		return map[string]interface{}{}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return map[string]interface{}{}, nil
 	}
-	return latestMap(row)
+	if err != nil {
+		return nil, err
+	}
+	return latestMap(row), nil
 }
 
 func latestMap(row latestRecord) map[string]interface{} {
@@ -167,7 +173,11 @@ func (s *Server) lineMap(ctx context.Context, line lineRecord) (map[string]inter
 		// none. Do not issue a per-line fallback query while rows are open.
 		latest = map[string]interface{}{}
 	} else {
-		latest = s.latest(ctx, line.ID)
+		loaded, err := s.latest(ctx, line.ID)
+		if err != nil {
+			return nil, err
+		}
+		latest = loaded
 	}
 	return map[string]interface{}{"id": line.ID, "line_id": line.ID, "organization_id": line.OrganizationID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "school_name": line.OrganizationName, "district": line.District, "address": line.Address, "contact_name": line.ContactName, "contact_phone": line.ContactPhone, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "provider": line.ProviderName, "support_contact": line.SupportContact, "role": line.Role, "technology": line.Technology, "line_status": line.Status, "status": status, "data_state": state.DataState, "quality_state": state.ConnectionState, "connection_state": state.ConnectionState, "contract_state": state.ContractState, "state": stateMap(state), "latest": latest}, nil
 }
@@ -268,7 +278,11 @@ func (s *Server) lineRoute(w http.ResponseWriter, r *http.Request, rest string) 
 	if !ok {
 		return
 	}
-	line, visible := s.lineVisible(r.Context(), p, parts[0])
+	line, visible, lineErr := s.lineVisible(r.Context(), p, parts[0])
+	if lineErr != nil {
+		writeError(w, 500, "could not query line")
+		return
+	}
 	if !visible {
 		writeError(w, 404, "line not found")
 		return
@@ -325,8 +339,11 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 	var validTo *time.Time
 	var d, u, ping, jit, loss, av float64
 	var cc, cm, rc, rm, fs int
-	if err := s.DB.Pool.QueryRow(ctx, `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds FROM threshold_policy_versions WHERE (scope_type='LINE' AND scope_id=$1 OR scope_type='GLOBAL') AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now()) ORDER BY CASE WHEN scope_type='LINE' THEN 0 ELSE 1 END,valid_from DESC LIMIT 1`, line.ID).Scan(&policyID, &scopeType, &scopeID, &version, &validFrom, &validTo, &d, &u, &ping, &jit, &loss, &av, &cc, &cm, &rc, &rm, &fs); err == nil {
+	policyErr := s.DB.Pool.QueryRow(ctx, `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds FROM threshold_policy_versions WHERE (scope_type='LINE' AND scope_id=$1 OR scope_type='GLOBAL') AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now()) ORDER BY CASE WHEN scope_type='LINE' THEN 0 ELSE 1 END,valid_from DESC LIMIT 1`, line.ID).Scan(&policyID, &scopeType, &scopeID, &version, &validFrom, &validTo, &d, &u, &ping, &jit, &loss, &av, &cc, &cm, &rc, &rm, &fs)
+	if policyErr == nil {
 		policy = map[string]interface{}{"id": policyID, "scope_type": scopeType, "scope_id": scopeID, "version": version, "valid_from": validFrom, "valid_to": validTo, "download_min": d, "upload_min": u, "ping_max": ping, "jitter_max": jit, "packet_loss_max": loss, "availability_min": av, "confirm_count": cc, "confirm_minutes": cm, "recovery_count": rc, "recovery_minutes": rm, "freshness_seconds": fs}
+	} else if !errors.Is(policyErr, pgx.ErrNoRows) {
+		return nil, policyErr
 	}
 	var contract map[string]interface{}
 	var cid int64
@@ -334,62 +351,88 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 	var cto *time.Time
 	var cno *string
 	var cd, cu, cp, cj, cl, ca *float64
-	if err := s.DB.Pool.QueryRow(ctx, `SELECT id,valid_from,valid_to,contract_no,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min FROM contract_versions WHERE line_id=$1 AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now()) ORDER BY valid_from DESC LIMIT 1`, line.ID).Scan(&cid, &cfrom, &cto, &cno, &cd, &cu, &cp, &cj, &cl, &ca); err == nil {
+	contractErr := s.DB.Pool.QueryRow(ctx, `SELECT id,valid_from,valid_to,contract_no,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min FROM contract_versions WHERE line_id=$1 AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now()) ORDER BY valid_from DESC LIMIT 1`, line.ID).Scan(&cid, &cfrom, &cto, &cno, &cd, &cu, &cp, &cj, &cl, &ca)
+	if contractErr == nil {
 		contract = map[string]interface{}{"id": cid, "line_id": line.ID, "valid_from": cfrom, "valid_to": cto, "contract_no": cno, "download_min": cd, "upload_min": cu, "ping_max": cp, "jitter_max": cj, "packet_loss_max": cl, "availability_min": ca}
+	} else if !errors.Is(contractErr, pgx.ErrNoRows) {
+		return nil, contractErr
 	}
 	result["policy"] = policy
 	result["contract"] = contract
 	contracts := []map[string]interface{}{}
 	contractRows, contractErr := s.DB.Pool.Query(ctx, `SELECT id,line_id,valid_from,valid_to,contract_no,contract_date,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,created_by,created_at FROM contract_versions WHERE line_id=$1 ORDER BY valid_from DESC`, line.ID)
-	if contractErr == nil {
-		for contractRows.Next() {
-			var id int64
-			var lineID string
-			var from, createdAt time.Time
-			var to, contractDate *time.Time
-			var number, createdBy *string
-			var download, upload, maxPing, maxJitter, maxLoss, minAvailability *float64
-			if contractRows.Scan(&id, &lineID, &from, &to, &number, &contractDate, &download, &upload, &maxPing, &maxJitter, &maxLoss, &minAvailability, &createdBy, &createdAt) == nil {
-				contracts = append(contracts, map[string]interface{}{"id": id, "line_id": lineID, "valid_from": from, "valid_to": to, "contract_no": number, "contract_date": contractDate, "download_min": download, "upload_min": upload, "ping_max": maxPing, "jitter_max": maxJitter, "packet_loss_max": maxLoss, "availability_min": minAvailability, "created_by": createdBy, "created_at": createdAt})
-			}
-		}
-		contractRows.Close()
+	if contractErr != nil {
+		return nil, contractErr
 	}
+	for contractRows.Next() {
+		var id int64
+		var lineID string
+		var from, createdAt time.Time
+		var to, contractDate *time.Time
+		var number, createdBy *string
+		var download, upload, maxPing, maxJitter, maxLoss, minAvailability *float64
+		if err := contractRows.Scan(&id, &lineID, &from, &to, &number, &contractDate, &download, &upload, &maxPing, &maxJitter, &maxLoss, &minAvailability, &createdBy, &createdAt); err != nil {
+			contractRows.Close()
+			return nil, err
+		}
+		contracts = append(contracts, map[string]interface{}{"id": id, "line_id": lineID, "valid_from": from, "valid_to": to, "contract_no": number, "contract_date": contractDate, "download_min": download, "upload_min": upload, "ping_max": maxPing, "jitter_max": maxJitter, "packet_loss_max": maxLoss, "availability_min": minAvailability, "created_by": createdBy, "created_at": createdAt})
+	}
+	if err := contractRows.Err(); err != nil {
+		contractRows.Close()
+		return nil, err
+	}
+	contractRows.Close()
 	result["contracts"] = contracts
 	var primaryDeviceID, primaryAgentVersion string
 	var primaryLastSeen *time.Time
-	if err := s.DB.Pool.QueryRow(ctx, `SELECT d.id,d.agent_version,d.last_seen FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id WHERE mp.line_id=$1 ORDER BY mp.is_primary DESC,d.id LIMIT 1`, line.ID).Scan(&primaryDeviceID, &primaryAgentVersion, &primaryLastSeen); err == nil {
+	deviceErr := s.DB.Pool.QueryRow(ctx, `SELECT d.id,d.agent_version,d.last_seen FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id WHERE mp.line_id=$1 ORDER BY mp.is_primary DESC,d.id LIMIT 1`, line.ID).Scan(&primaryDeviceID, &primaryAgentVersion, &primaryLastSeen)
+	if deviceErr == nil {
 		result["device_id"] = primaryDeviceID
 		result["agent_version"] = primaryAgentVersion
 		result["last_seen"] = primaryLastSeen
-	} else {
+	} else if errors.Is(deviceErr, pgx.ErrNoRows) {
 		result["device_id"] = nil
 		result["agent_version"] = nil
 		result["last_seen"] = nil
+	} else {
+		return nil, deviceErr
 	}
 	rows, err := s.DB.Pool.Query(ctx, `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE m.line_id=$1 ORDER BY m.observed_at DESC,m.id DESC LIMIT 50`, line.ID)
-	if err == nil {
-		defer rows.Close()
-		items := []map[string]interface{}{}
-		for rows.Next() {
-			item, e := scanMeasurement(rows)
-			if e == nil {
-				items = append(items, measurementMap(item))
-			}
-		}
-		result["measurements"] = items
-	} else {
-		result["measurements"] = []map[string]interface{}{}
+	if err != nil {
+		return nil, err
 	}
-	result["monitoring_points"] = s.monitoringPoints(ctx, line.ID)
-	result["incidents"] = s.incidentListForLine(ctx, line.ID)
+	items := []map[string]interface{}{}
+	for rows.Next() {
+		item, scanErr := scanMeasurement(rows)
+		if scanErr != nil {
+			rows.Close()
+			return nil, scanErr
+		}
+		items = append(items, measurementMap(item))
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	result["measurements"] = items
+	monitoring, err := s.monitoringPoints(ctx, line.ID)
+	if err != nil {
+		return nil, err
+	}
+	result["monitoring_points"] = monitoring
+	incidents, err := s.incidentListForLine(ctx, line.ID)
+	if err != nil {
+		return nil, err
+	}
+	result["incidents"] = incidents
 	return result, nil
 }
 
-func (s *Server) monitoringPoints(ctx context.Context, lineID string) []map[string]interface{} {
+func (s *Server) monitoringPoints(ctx context.Context, lineID string) ([]map[string]interface{}, error) {
 	rows, err := s.DB.Pool.Query(ctx, `SELECT id,line_id,location,is_primary,active,created_at FROM monitoring_points WHERE line_id=$1 ORDER BY is_primary DESC,id`, lineID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	points := []struct {
 		id, lineID, location string
@@ -400,8 +443,9 @@ func (s *Server) monitoringPoints(ctx context.Context, lineID string) []map[stri
 		var id, pointLineID, location string
 		var primary, active bool
 		var created time.Time
-		if rows.Scan(&id, &pointLineID, &location, &primary, &active, &created) != nil {
-			continue
+		if err := rows.Scan(&id, &pointLineID, &location, &primary, &active, &created); err != nil {
+			rows.Close()
+			return nil, err
 		}
 		points = append(points, struct {
 			id, lineID, location string
@@ -409,25 +453,36 @@ func (s *Server) monitoringPoints(ctx context.Context, lineID string) []map[stri
 			created              time.Time
 		}{id: id, lineID: pointLineID, location: location, primary: primary, active: active, created: created})
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	rows.Close()
 	result := []map[string]interface{}{}
 	for _, point := range points {
 		devices := []map[string]interface{}{}
 		drows, e := s.DB.Pool.Query(ctx, `SELECT id,agent_version,last_seen,blocked_at,created_at FROM devices WHERE monitoring_point_id=$1 ORDER BY id`, point.id)
-		if e == nil {
-			for drows.Next() {
-				var did, ver string
-				var seen, blocked *time.Time
-				var dc time.Time
-				if drows.Scan(&did, &ver, &seen, &blocked, &dc) == nil {
-					devices = append(devices, map[string]interface{}{"id": did, "agent_version": ver, "last_seen": seen, "blocked_at": blocked, "created_at": dc})
-				}
-			}
-			drows.Close()
+		if e != nil {
+			return nil, e
 		}
+		for drows.Next() {
+			var did, ver string
+			var seen, blocked *time.Time
+			var dc time.Time
+			if err := drows.Scan(&did, &ver, &seen, &blocked, &dc); err != nil {
+				drows.Close()
+				return nil, err
+			}
+			devices = append(devices, map[string]interface{}{"id": did, "agent_version": ver, "last_seen": seen, "blocked_at": blocked, "created_at": dc})
+		}
+		if err := drows.Err(); err != nil {
+			drows.Close()
+			return nil, err
+		}
+		drows.Close()
 		result = append(result, map[string]interface{}{"id": point.id, "line_id": point.lineID, "location": point.location, "is_primary": point.primary, "active": point.active, "created_at": point.created, "devices": devices})
 	}
-	return result
+	return result, nil
 }
 
 func (s *Server) lineMeasurements(w http.ResponseWriter, r *http.Request, lineID string) {

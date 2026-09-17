@@ -387,7 +387,11 @@ func (s *Server) demoReplay(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	line, visible := s.lineVisible(r.Context(), p, "line-42-primary")
+	line, visible, lineErr := s.lineVisible(r.Context(), p, "line-42-primary")
+	if lineErr != nil {
+		writeError(w, 500, "could not query demo line")
+		return
+	}
 	if !visible {
 		writeError(w, 404, "demo line not found")
 		return

@@ -87,20 +87,24 @@ func (s *Server) incidentMap(ctx context.Context, item incidentRecord) map[strin
 	return result
 }
 
-func (s *Server) incidentListForLine(ctx context.Context, lineID string) []map[string]interface{} {
+func (s *Server) incidentListForLine(ctx context.Context, lineID string) ([]map[string]interface{}, error) {
 	rows, err := s.DB.Pool.Query(ctx, `SELECT i.id,i.incident_no,i.line_id,i.source,i.violation_type,i.status,i.recovery_state,i.started_at,i.confirmed_at,i.resolved_at,i.closed_at,i.duration_minutes,i.assignee,i.recurrence_of,i.opening_snapshot_json,l.organization_id,l.provider_id,o.school_id,o.name,o.district,p.name FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE i.line_id=$1 ORDER BY i.id DESC`, lineID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	result := []map[string]interface{}{}
 	for rows.Next() {
 		item, scanErr := s.scanIncident(rows)
-		if scanErr == nil {
-			result = append(result, s.incidentMap(ctx, item))
+		if scanErr != nil {
+			return nil, scanErr
 		}
+		result = append(result, s.incidentMap(ctx, item))
 	}
-	return result
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (s *Server) listIncidents(w http.ResponseWriter, r *http.Request) {
@@ -197,7 +201,11 @@ func (s *Server) createManualIncident(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 422, "invalid incident payload")
 		return
 	}
-	line, visible := s.lineVisible(r.Context(), p, payload.LineID)
+	line, visible, lineErr := s.lineVisible(r.Context(), p, payload.LineID)
+	if lineErr != nil {
+		writeError(w, 500, "could not query line")
+		return
+	}
 	if !visible {
 		writeError(w, 404, "line not found")
 		return
