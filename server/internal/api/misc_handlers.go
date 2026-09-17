@@ -19,10 +19,6 @@ func (s *Server) listSituations(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.refreshSituations(r.Context()); err != nil {
-		writeError(w, 500, "could not refresh situations")
-		return
-	}
 	rows, err := s.DB.Pool.Query(r.Context(), `SELECT id,title,status,provider_id,district,violation_type,start_at,reason_json,created_at,updated_at FROM situations WHERE status='OPEN' ORDER BY start_at DESC,id DESC`)
 	if err != nil {
 		writeError(w, 500, "could not query situations")
@@ -118,6 +114,14 @@ func scanSituation(row interface{ Scan(...interface{}) error }) (situationRecord
 }
 
 func (s *Server) refreshSituations(ctx context.Context) error {
+	tx, err := s.DB.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(742033)`); err != nil {
+		return err
+	}
 	minimum := 2
 	for _, key := range []string{"LINKWATCH_SITUATION_MIN_MEMBERS", "VKO_SITUATION_MIN_MEMBERS"} {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
@@ -133,7 +137,7 @@ func (s *Server) refreshSituations(ctx context.Context) error {
 	if minimum > 100 {
 		minimum = 100
 	}
-	rows, err := s.DB.Pool.Query(ctx, `SELECT i.id,i.line_id,i.violation_type,i.started_at,COALESCE(l.provider_id,''),COALESCE(p.name,''),o.district FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE i.status <> 'CLOSED' ORDER BY i.started_at,i.id`)
+	rows, err := tx.Query(ctx, `SELECT i.id,i.line_id,i.violation_type,i.started_at,COALESCE(l.provider_id,''),COALESCE(p.name,''),o.district FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE i.status <> 'CLOSED' ORDER BY i.started_at,i.id`)
 	if err != nil {
 		return err
 	}
@@ -153,7 +157,7 @@ func (s *Server) refreshSituations(ctx context.Context) error {
 		return err
 	}
 	rows.Close()
-	existingRows, err := s.DB.Pool.Query(ctx, `SELECT id,provider_id,district,violation_type,start_at FROM situations WHERE status='OPEN'`)
+	existingRows, err := tx.Query(ctx, `SELECT id,provider_id,district,violation_type,start_at FROM situations WHERE status='OPEN'`)
 	if err != nil {
 		return err
 	}
@@ -198,32 +202,38 @@ func (s *Server) refreshSituations(ctx context.Context) error {
 		title := fmt.Sprintf("Возможная ситуация: %s / %s", firstNonEmpty(providerName, "неизвестный provider"), key.District)
 		id, found := existing[key]
 		if found {
-			if _, err := s.DB.Pool.Exec(ctx, `UPDATE situations SET title=$1,reason_json=$2::jsonb,updated_at=$3 WHERE id=$4`, title, string(reasonJSON), now, id); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE situations SET title=$1,reason_json=$2::jsonb,updated_at=$3 WHERE id=$4`, title, string(reasonJSON), now, id); err != nil {
 				return err
 			}
 		} else {
-			if err := s.DB.Pool.QueryRow(ctx, `INSERT INTO situations(title,status,provider_id,district,violation_type,start_at,reason_json,created_at,updated_at) VALUES ($1,'OPEN',$2,$3,$4,$5,$6::jsonb,$7,$7) RETURNING id`, title, nullableString(key.ProviderID), nullableString(key.District), nullableString(key.ViolationType), key.StartAt, string(reasonJSON), now).Scan(&id); err != nil {
+			if err := tx.QueryRow(ctx, `INSERT INTO situations(title,status,provider_id,district,violation_type,start_at,reason_json,created_at,updated_at) VALUES ($1,'OPEN',$2,$3,$4,$5,$6::jsonb,$7,$7) RETURNING id`, title, nullableString(key.ProviderID), nullableString(key.District), nullableString(key.ViolationType), key.StartAt, string(reasonJSON), now).Scan(&id); err != nil {
 				return err
 			}
 		}
 		active[id] = true
-		if _, err := s.DB.Pool.Exec(ctx, `DELETE FROM situation_members WHERE situation_id=$1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM situation_members WHERE situation_id=$1`, id); err != nil {
 			return err
 		}
 		for _, member := range members {
-			if _, err := s.DB.Pool.Exec(ctx, `INSERT INTO situation_members(situation_id,incident_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, member.IncidentID); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO situation_members(situation_id,incident_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, id, member.IncidentID); err != nil {
 				return err
 			}
 		}
 	}
 	for _, id := range existing {
 		if !active[id] {
-			if _, err := s.DB.Pool.Exec(ctx, `UPDATE situations SET status='CLOSED',updated_at=$1 WHERE id=$2`, now, id); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE situations SET status='CLOSED',updated_at=$1 WHERE id=$2`, now, id); err != nil {
 				return err
 			}
 		}
 	}
-	return nil
+	return tx.Commit(ctx)
+}
+
+// RefreshSituations reconciles materialized situations from current incidents.
+// Callers should use it from a worker rather than from read handlers.
+func (s *Server) RefreshSituations(ctx context.Context) error {
+	return s.refreshSituations(ctx)
 }
 
 func (s *Server) situationMembers(ctx context.Context, situationID int64) ([]int64, error) {
@@ -262,10 +272,6 @@ func firstNonEmpty(values ...string) string {
 func (s *Server) situationDetail(w http.ResponseWriter, r *http.Request, id string) {
 	p, ok := s.principal(w, r)
 	if !ok {
-		return
-	}
-	if err := s.refreshSituations(r.Context()); err != nil {
-		writeError(w, 500, "could not refresh situations")
 		return
 	}
 	situationID, err := strconv.ParseInt(id, 10, 64)

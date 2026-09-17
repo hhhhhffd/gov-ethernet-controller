@@ -51,7 +51,8 @@ curl http://127.0.0.1:8080/health/ready
 - `migrations/001_initial.sql`, `migrations/002_runtime_hardening.sql`,
   `migrations/003_provider_delivery_retry.sql`,
   `migrations/004_schema_invariants.sql`,
-  `migrations/005_policy_scope_integrity.sql` и embedded
+  `migrations/005_policy_scope_integrity.sql`,
+  `migrations/006_situation_integrity.sql` и embedded
   `server/internal/database/migrations/*.sql` — versioned schema.
 - `web/` — существующий frontend; API выдаёт совместимые поля `status`,
   `state`, `latest`, `policy`, `contract`, `incidents`, отчёты CSV/XLSX.
