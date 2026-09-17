@@ -49,6 +49,11 @@ func (s *Server) agentBatch(w http.ResponseWriter, r *http.Request) {
 			result.Error = err.Error()
 			result.ErrorCode = "clock_skew"
 			result.Retryable = true
+			var timeErr *deviceTimeError
+			if errors.As(err, &timeErr) {
+				result.ErrorCode = timeErr.code
+				result.Retryable = timeErr.retryable
+			}
 			results = append(results, result)
 			continue
 		}

@@ -224,13 +224,21 @@ func parseTime(value string, fallback time.Time) (time.Time, error) {
 	return parsed.UTC().Truncate(time.Second), nil
 }
 
+type deviceTimeError struct {
+	code      string
+	retryable bool
+	message   string
+}
+
+func (e *deviceTimeError) Error() string { return e.message }
+
 func validateDeviceTime(value time.Time) error {
 	now := time.Now().UTC()
 	if value.After(now.Add(10 * time.Minute)) {
-		return fmt.Errorf("timestamp is too far in the future")
+		return &deviceTimeError{code: "clock_skew_future", retryable: true, message: "timestamp is too far in the future"}
 	}
 	if max := measurements.MaxBackfillDays(); max >= 0 && value.Before(now.Add(-time.Duration(max)*24*time.Hour)) {
-		return fmt.Errorf("timestamp is older than allowed backfill window")
+		return &deviceTimeError{code: "backfill_window_exceeded", message: "timestamp is older than allowed backfill window"}
 	}
 	return nil
 }

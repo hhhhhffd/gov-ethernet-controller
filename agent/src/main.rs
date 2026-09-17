@@ -155,16 +155,30 @@ fn run_once(
     queue: &Queue,
     client: &Client,
 ) -> Result<(), String> {
-    let telemetry = RuntimeTelemetry::new();
+    let mut telemetry = RuntimeTelemetry::new();
     if let Err(error) = client.heartbeat(&telemetry.snapshot(queue)) {
         eprintln!("linkwatch-agent: heartbeat failed: {error}");
     }
-    let payload = event(config, probe.measure("performance")?);
+    let value = match probe.measure("performance") {
+        Ok(value) => value,
+        Err(error) => {
+            telemetry.record_error();
+            if let Err(heartbeat_error) = client.heartbeat(&telemetry.snapshot(queue)) {
+                eprintln!("linkwatch-agent: heartbeat failed: {heartbeat_error}");
+            }
+            return Err(error);
+        }
+    };
+    let payload = event(config, value);
+    telemetry.record_success(&payload);
     let event_id = queue::Queue::event_id(&payload);
     queue
         .enqueue(&event_id, &payload)
         .map_err(|error| format!("enqueue measurement: {error}"))?;
     let (uploaded, remaining) = client.upload_pending(queue)?;
+    if let Err(error) = client.heartbeat(&telemetry.snapshot(queue)) {
+        eprintln!("linkwatch-agent: heartbeat failed: {error}");
+    }
     println!("measurement collected: {}", event_id);
     println!("queued: {}", remaining);
     println!("uploaded: {}", uploaded);
@@ -227,11 +241,19 @@ fn run_loop(
             }
             last_maintenance = Some(now);
         }
+        if stop.is_requested() {
+            println!("shutdown requested; pending measurements remain queued");
+            return Ok(());
+        }
 
         if let Some(deadline) = light_due {
             if now >= deadline {
                 light_due = None;
                 if config.light_checks_between {
+                    if stop.is_requested() {
+                        println!("shutdown requested; pending measurements remain queued");
+                        return Ok(());
+                    }
                     match probe.measure("light") {
                         Ok(value) => {
                             let light = event(&config, value);
@@ -262,6 +284,10 @@ fn run_loop(
         );
         if let Some((deadline, slot)) = scheduler::next_deadline(epoch_seconds, &schedule, &state) {
             if deadline <= epoch_seconds {
+                if stop.is_requested() {
+                    println!("shutdown requested; pending measurements remain queued");
+                    return Ok(());
+                }
                 let day = deadline / scheduler::DAY_SECONDS;
                 match probe.measure("performance") {
                     Ok(value) => {
