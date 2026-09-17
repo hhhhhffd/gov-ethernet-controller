@@ -68,20 +68,22 @@ func (s *Server) incidentMap(ctx context.Context, item incidentRecord) (map[stri
 	if err != nil {
 		return nil, fmt.Errorf("query incident events: %w", err)
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var id int64
 		var typ, actor string
 		var payload []byte
 		var at time.Time
 		if err := rows.Scan(&id, &typ, &actor, &payload, &at); err != nil {
+			rows.Close()
 			return nil, fmt.Errorf("scan incident event: %w", err)
 		}
 		events = append(events, map[string]interface{}{"id": id, "event_type": typ, "actor": actor, "payload": decodeJSONBytes(payload), "created_at": at, "at": at, "text": typ})
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, fmt.Errorf("iterate incident events: %w", err)
 	}
+	rows.Close()
 	result["events"] = events
 	actions := []map[string]interface{}{}
 	for _, event := range events {
