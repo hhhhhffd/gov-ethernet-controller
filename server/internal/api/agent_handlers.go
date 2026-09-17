@@ -137,7 +137,7 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		payload.LastProbeAt = &value
 	}
 	if payload.BootStartedAt != nil {
-		value := payload.BootStartedAt.UTC().Truncate(time.Second)
+		value := payload.BootStartedAt.UTC()
 		payload.BootStartedAt = &value
 	}
 	// seen_at is accepted for wire compatibility, but last_seen is

@@ -105,7 +105,7 @@ impl RuntimeTelemetry {
     fn new() -> Self {
         Self {
             boot_id: Uuid::new_v4().to_string(),
-            boot_started_at: chrono_like_now(),
+            boot_started_at: boot_started_at_now(),
             started_at: Instant::now(),
             last_probe_at: None,
             last_probe_status: None,
@@ -383,6 +383,15 @@ fn chrono_like_now() -> String {
     let nanos = now.subsec_nanos();
     format!("{}", time_format(seconds, nanos))
 }
+
+fn boot_started_at_now() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let base = time_format(now.as_secs(), now.subsec_nanos());
+    format!("{}.{:09}Z", base.trim_end_matches('Z'), now.subsec_nanos())
+}
+
 fn time_format(seconds: u64, nanos: u32) -> String {
     // UTC RFC3339 without an extra time crate
     const DAYS: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
