@@ -774,9 +774,15 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 			var seen, blocked, created, bootStartedAt, probeAt, telemetryReceived *time.Time
 			var bootID, probeStatus *string
 			var uptime, queueDepth *int64
-			if rows.Scan(&id, &point, &line, &organizationID, &schoolID, &organizationName, &version, &seen, &blocked, &created, &bootID, &bootStartedAt, &uptime, &queueDepth, &probeAt, &probeStatus, &telemetryReceived) == nil {
-				result = append(result, map[string]interface{}{"id": id, "monitoring_point_id": point, "line_id": line, "organization_id": organizationID, "school_id": schoolID, "organization_name": organizationName, "agent_version": version, "last_seen": seen, "blocked_at": blocked, "blocked": blocked != nil, "created_at": created, "agent_boot_id": bootID, "agent_boot_started_at": bootStartedAt, "agent_uptime_seconds": uptime, "agent_queue_depth": queueDepth, "agent_last_probe_at": probeAt, "agent_last_probe_status": probeStatus, "agent_telemetry_received_at": telemetryReceived})
+			if err := rows.Scan(&id, &point, &line, &organizationID, &schoolID, &organizationName, &version, &seen, &blocked, &created, &bootID, &bootStartedAt, &uptime, &queueDepth, &probeAt, &probeStatus, &telemetryReceived); err != nil {
+				writeError(w, 500, "could not read devices")
+				return
 			}
+			result = append(result, map[string]interface{}{"id": id, "monitoring_point_id": point, "line_id": line, "organization_id": organizationID, "school_id": schoolID, "organization_name": organizationName, "agent_version": version, "last_seen": seen, "blocked_at": blocked, "blocked": blocked != nil, "created_at": created, "agent_boot_id": bootID, "agent_boot_started_at": bootStartedAt, "agent_uptime_seconds": uptime, "agent_queue_depth": queueDepth, "agent_last_probe_at": probeAt, "agent_last_probe_status": probeStatus, "agent_telemetry_received_at": telemetryReceived})
+		}
+		if err := rows.Err(); err != nil {
+			writeError(w, 500, "could not read devices")
+			return
 		}
 		writeJSON(w, 200, result)
 		return
