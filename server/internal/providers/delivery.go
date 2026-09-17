@@ -166,7 +166,10 @@ func postJSON(ctx context.Context, endpoint string, payload interface{}, tokenEn
 		return nil, &DeliveryError{Message: "webhook request failed: " + err.Error(), Retryable: true}
 	}
 	defer response.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	if err != nil {
+		return nil, &DeliveryError{Message: "read webhook response: " + err.Error(), Retryable: true}
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, &DeliveryError{Message: fmt.Sprintf("webhook returned HTTP %d", response.StatusCode), Retryable: response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500}
 	}
@@ -174,8 +177,8 @@ func postJSON(ctx context.Context, endpoint string, payload interface{}, tokenEn
 		return map[string]interface{}{}, nil
 	}
 	var decoded map[string]interface{}
-	if json.Unmarshal(raw, &decoded) != nil {
-		return map[string]interface{}{}, nil
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, &DeliveryError{Message: "decode webhook response: " + err.Error(), Retryable: true}
 	}
 	return decoded, nil
 }
