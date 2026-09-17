@@ -129,12 +129,14 @@ impl Queue {
         Ok(target)
     }
     pub fn count(&self) -> io::Result<usize> {
-        Ok(fs::read_dir(&self.dir)?
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry.path().extension().and_then(|value| value.to_str()) == Some("json")
-            })
-            .count())
+        let mut count = 0;
+        for entry in fs::read_dir(&self.dir)? {
+            let entry = entry?;
+            if entry.path().extension().and_then(|value| value.to_str()) == Some("json") {
+                count += 1;
+            }
+        }
+        Ok(count)
     }
 
     fn quarantine(&self, path: &Path, error: impl std::fmt::Display) -> io::Result<()> {
