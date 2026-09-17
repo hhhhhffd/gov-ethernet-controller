@@ -8,6 +8,7 @@ const UPLOAD_BATCH_SIZE: usize = 50;
 #[derive(Debug, Clone, Default)]
 pub struct HeartbeatTelemetry {
     pub boot_id: Option<String>,
+    pub boot_started_at: Option<String>,
     pub uptime_seconds: Option<u64>,
     pub queue_depth: Option<usize>,
     pub last_probe_at: Option<String>,
@@ -154,6 +155,7 @@ fn heartbeat_payload(agent_version: &str, telemetry: &HeartbeatTelemetry) -> Val
     json!({
         "agent_version": agent_version,
         "boot_id": telemetry.boot_id,
+        "boot_started_at": telemetry.boot_started_at,
         "uptime_seconds": telemetry.uptime_seconds,
         "queue_depth": telemetry.queue_depth,
         "last_probe_at": telemetry.last_probe_at,
@@ -257,6 +259,7 @@ mod tests {
         let payload = heartbeat_payload("0.1.0", &HeartbeatTelemetry::default());
         assert_eq!(payload["agent_version"], "0.1.0");
         assert!(payload["boot_id"].is_null());
+        assert!(payload["boot_started_at"].is_null());
         assert!(payload["uptime_seconds"].is_null());
         assert!(payload["queue_depth"].is_null());
         assert!(payload["last_probe_at"].is_null());
@@ -266,6 +269,7 @@ mod tests {
             "0.1.0",
             &HeartbeatTelemetry {
                 boot_id: Some("boot-1".into()),
+                boot_started_at: Some("2026-09-17T00:00:00Z".into()),
                 uptime_seconds: Some(7),
                 queue_depth: Some(3),
                 last_probe_at: Some("2026-09-17T00:00:00Z".into()),
@@ -273,6 +277,7 @@ mod tests {
             },
         );
         assert_eq!(payload["boot_id"], "boot-1");
+        assert_eq!(payload["boot_started_at"], "2026-09-17T00:00:00Z");
         assert_eq!(payload["uptime_seconds"], 7);
         assert_eq!(payload["queue_depth"], 3);
         assert_eq!(payload["last_probe_status"], "ok");

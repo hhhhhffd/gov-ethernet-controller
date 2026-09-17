@@ -53,7 +53,7 @@ curl http://127.0.0.1:8080/health/ready
   `migrations/004_schema_invariants.sql`,
   `migrations/005_policy_scope_integrity.sql`,
   `migrations/006_situation_integrity.sql`,
-  `migrations/007_agent_telemetry.sql` и embedded
+  `migrations/007_agent_telemetry.sql`, `migrations/008_agent_boot_order.sql` и embedded
   `server/internal/database/migrations/*.sql` — versioned schema.
 - `web/` — существующий frontend; API выдаёт совместимые поля `status`,
   `state`, `latest`, `policy`, `contract`, `incidents`, отчёты CSV/XLSX.
@@ -79,11 +79,12 @@ retryable-флаг и backoff; notification доставляется через 
 возвращается только в ответе этой операции и должен быть сразу сохранён в
 секретном хранилище агента.
 
-Heartbeat агента сохраняет на устройстве текущий session `boot_id`, monotonic
-uptime, глубину локальной очереди и статус последней пробы. Эти поля
+Heartbeat агента сохраняет на устройстве текущий session `boot_id`, время
+старта сессии, monotonic uptime, глубину локальной очереди и статус последней
+пробы. Эти поля
 диагностические: authoritative `last_seen` по-прежнему вычисляется временем
 получения запроса сервером. При rollout сначала применяйте migration 007 и
-обновляйте server handler: строгий JSON-декодер старой версии сервера не
+008 и обновляйте server handler: строгий JSON-декодер старой версии сервера не
 принимает новые поля heartbeat.
 
 Локальные параметры находятся в `.env.example`; production-шаблон —

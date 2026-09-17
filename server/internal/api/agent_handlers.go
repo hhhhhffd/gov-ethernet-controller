@@ -101,6 +101,7 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AgentVersion    string     `json:"agent_version"`
 		SeenAt          *time.Time `json:"seen_at"`
 		BootID          string     `json:"boot_id"`
+		BootStartedAt   *time.Time `json:"boot_started_at"`
 		UptimeSeconds   *int64     `json:"uptime_seconds"`
 		QueueDepth      *int64     `json:"queue_depth"`
 		LastProbeAt     *time.Time `json:"last_probe_at"`
@@ -135,6 +136,10 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		value := payload.LastProbeAt.UTC().Truncate(time.Second)
 		payload.LastProbeAt = &value
 	}
+	if payload.BootStartedAt != nil {
+		value := payload.BootStartedAt.UTC().Truncate(time.Second)
+		payload.BootStartedAt = &value
+	}
 	// seen_at is accepted for wire compatibility, but last_seen is
 	// authoritative server receipt time. Agent clocks must not be able to move
 	// fleet state into the future or make a stale retry look fresh.
@@ -142,48 +147,76 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if payload.AgentVersion == "" {
 		payload.AgentVersion = device.AgentVersion
 	}
-	var lastSeen time.Time
-	if err := s.DB.Pool.QueryRow(r.Context(), `
-WITH heartbeat_state AS (
-    SELECT id,
-           ($3::text <> '' AND (
-               agent_boot_id IS NULL
-               OR agent_boot_id <> $3
-               OR $4::bigint IS NULL
-               OR agent_uptime_seconds IS NULL
-               OR $4::bigint > agent_uptime_seconds
-           )) AS accept_telemetry,
-           ($3::text <> '' AND (agent_boot_id IS NULL OR agent_boot_id <> $3)) AS boot_changed
-    FROM devices
-    WHERE id=$8
-)
-UPDATE devices AS d
-SET last_seen=GREATEST(COALESCE(d.last_seen,$1),$1),
+	tx, err := s.DB.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "could not store heartbeat")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	var currentLastSeen, currentBootStartedAt *time.Time
+	var currentBootID *string
+	var currentUptime *int64
+	if err := tx.QueryRow(r.Context(), `SELECT last_seen,agent_boot_id,agent_boot_started_at,agent_uptime_seconds FROM devices WHERE id=$1 FOR UPDATE`, device.ID).Scan(&currentLastSeen, &currentBootID, &currentBootStartedAt, &currentUptime); err != nil {
+		writeError(w, 500, "could not store heartbeat")
+		return
+	}
+	acceptTelemetry, bootChanged := heartbeatTelemetryOrder(currentBootID, currentBootStartedAt, currentUptime, payload.BootID, payload.BootStartedAt, payload.UptimeSeconds)
+	lastSeen := receivedAt
+	if currentLastSeen != nil && currentLastSeen.After(lastSeen) {
+		lastSeen = *currentLastSeen
+	}
+	if _, err := tx.Exec(r.Context(), `
+UPDATE devices
+SET last_seen=$1,
     agent_version=$2,
-    agent_boot_id=CASE WHEN heartbeat_state.accept_telemetry THEN NULLIF($3::text,'') ELSE d.agent_boot_id END,
-    agent_uptime_seconds=CASE WHEN heartbeat_state.accept_telemetry THEN $4::bigint ELSE d.agent_uptime_seconds END,
-    agent_queue_depth=CASE WHEN heartbeat_state.accept_telemetry THEN $5::bigint ELSE d.agent_queue_depth END,
+    agent_boot_id=CASE WHEN $3 THEN NULLIF($4::text,'') ELSE agent_boot_id END,
+    agent_boot_started_at=CASE WHEN $3 THEN $5::timestamptz ELSE agent_boot_started_at END,
+    agent_uptime_seconds=CASE WHEN $3 THEN $6::bigint ELSE agent_uptime_seconds END,
+    agent_queue_depth=CASE WHEN $3 THEN $7::bigint ELSE agent_queue_depth END,
     agent_last_probe_at=CASE
-        WHEN heartbeat_state.accept_telemetry AND heartbeat_state.boot_changed THEN $6::timestamptz
-        WHEN heartbeat_state.accept_telemetry AND $6::timestamptz IS NOT NULL THEN $6::timestamptz
-        ELSE d.agent_last_probe_at
+        WHEN NOT $3 THEN agent_last_probe_at
+        WHEN $8 THEN $9::timestamptz
+        WHEN $9::timestamptz IS NOT NULL THEN $9::timestamptz
+        ELSE agent_last_probe_at
     END,
     agent_last_probe_status=CASE
-        WHEN heartbeat_state.accept_telemetry AND heartbeat_state.boot_changed THEN $7::text
-        WHEN heartbeat_state.accept_telemetry AND $7::text IS NOT NULL THEN $7::text
-        ELSE d.agent_last_probe_status
+        WHEN NOT $3 THEN agent_last_probe_status
+        WHEN $8 THEN $10::text
+        WHEN $10::text IS NOT NULL THEN $10::text
+        ELSE agent_last_probe_status
     END,
-    agent_telemetry_received_at=CASE
-        WHEN heartbeat_state.accept_telemetry THEN $1
-        ELSE d.agent_telemetry_received_at
-    END
-FROM heartbeat_state
-WHERE d.id=heartbeat_state.id
-RETURNING d.last_seen`, receivedAt, payload.AgentVersion, payload.BootID, payload.UptimeSeconds, payload.QueueDepth, payload.LastProbeAt, payload.LastProbeStatus, device.ID).Scan(&lastSeen); err != nil {
+    agent_telemetry_received_at=CASE WHEN $3 THEN $1 ELSE agent_telemetry_received_at END
+WHERE id=$11`, lastSeen, payload.AgentVersion, acceptTelemetry, payload.BootID, payload.BootStartedAt, payload.UptimeSeconds, payload.QueueDepth, bootChanged, payload.LastProbeAt, payload.LastProbeStatus, device.ID); err != nil {
+		writeError(w, 500, "could not store heartbeat")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "could not store heartbeat")
 		return
 	}
 	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "last_seen": lastSeen, "agent_version": payload.AgentVersion})
+}
+
+func heartbeatTelemetryOrder(currentBootID *string, currentBootStartedAt *time.Time, currentUptime *int64, incomingBootID string, incomingBootStartedAt *time.Time, incomingUptime *int64) (accept, bootChanged bool) {
+	if incomingBootID == "" {
+		return false, false
+	}
+	if currentBootID == nil {
+		return true, false
+	}
+	if *currentBootID == incomingBootID {
+		if incomingUptime == nil {
+			return currentUptime == nil, false
+		}
+		if currentUptime == nil {
+			return true, false
+		}
+		return *incomingUptime > *currentUptime, false
+	}
+	if currentBootStartedAt == nil || incomingBootStartedAt == nil {
+		return currentBootStartedAt == nil, true
+	}
+	return incomingBootStartedAt.After(*currentBootStartedAt), true
 }
 
 func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {

@@ -95,6 +95,7 @@ fn run() -> Result<(), String> {
 
 struct RuntimeTelemetry {
     boot_id: String,
+    boot_started_at: String,
     started_at: Instant,
     last_probe_at: Option<String>,
     last_probe_status: Option<String>,
@@ -104,6 +105,7 @@ impl RuntimeTelemetry {
     fn new() -> Self {
         Self {
             boot_id: Uuid::new_v4().to_string(),
+            boot_started_at: chrono_like_now(),
             started_at: Instant::now(),
             last_probe_at: None,
             last_probe_status: None,
@@ -120,6 +122,7 @@ impl RuntimeTelemetry {
         };
         HeartbeatTelemetry {
             boot_id: Some(self.boot_id.clone()),
+            boot_started_at: Some(self.boot_started_at.clone()),
             uptime_seconds: Some(self.started_at.elapsed().as_secs()),
             queue_depth,
             last_probe_at: self.last_probe_at.clone(),
