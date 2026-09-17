@@ -104,18 +104,18 @@ type stateRecord struct {
 	PolicyID                                                         *int64
 }
 
-func (s *Server) state(ctx context.Context, lineID string) stateRecord {
+func (s *Server) state(ctx context.Context, lineID string) (stateRecord, error) {
 	var result stateRecord
 	var evidence []byte
 	err := s.DB.Pool.QueryRow(ctx, `SELECT data_state,connection_state,contract_state,recovery_state,reason,effective_since,updated_at,evidence_ids_json,policy_id FROM line_states WHERE line_id=$1`, lineID).Scan(&result.DataState, &result.ConnectionState, &result.ContractState, &result.RecoveryState, &result.Reason, &result.EffectiveSince, &result.UpdatedAt, &evidence, &result.PolicyID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return stateRecord{DataState: "NO_DATA", ConnectionState: "UNKNOWN", ContractState: "UNKNOWN", RecoveryState: "NONE", Reason: "No observations yet", Evidence: []int64{}}
+		return stateRecord{DataState: "NO_DATA", ConnectionState: "UNKNOWN", ContractState: "UNKNOWN", RecoveryState: "NONE", Reason: "No observations yet", Evidence: []int64{}}, nil
 	}
 	if err != nil {
-		return stateRecord{DataState: "NO_DATA", ConnectionState: "UNKNOWN", ContractState: "UNKNOWN", RecoveryState: "NONE", Reason: "No observations yet", Evidence: []int64{}}
+		return stateRecord{}, err
 	}
 	_ = jsonUnmarshal(evidence, &result.Evidence)
-	return result
+	return result, nil
 }
 
 func stateMap(value stateRecord) map[string]interface{} {
@@ -144,12 +144,16 @@ func latestMap(row latestRecord) map[string]interface{} {
 	return map[string]interface{}{"id": row.ID, "client_event_id": row.ClientEventID, "observed_at": row.ObservedAt, "device_id": row.DeviceID, "mode": row.Mode, "connection_status": row.ConnectionStatus, "download": row.Download, "upload": row.Upload, "ping": row.Ping, "jitter": row.Jitter, "packet_loss": row.PacketLoss, "loss": row.PacketLoss, "availability": row.Availability, "at": row.ObservedAt}
 }
 
-func (s *Server) lineMap(ctx context.Context, line lineRecord) map[string]interface{} {
+func (s *Server) lineMap(ctx context.Context, line lineRecord) (map[string]interface{}, error) {
 	state := stateRecord{}
 	if line.State != nil {
 		state = *line.State
 	} else {
-		state = s.state(ctx, line.ID)
+		loaded, err := s.state(ctx, line.ID)
+		if err != nil {
+			return nil, err
+		}
+		state = loaded
 	}
 	status := state.ConnectionState
 	if state.DataState == "NO_DATA" {
@@ -165,7 +169,7 @@ func (s *Server) lineMap(ctx context.Context, line lineRecord) map[string]interf
 	} else {
 		latest = s.latest(ctx, line.ID)
 	}
-	return map[string]interface{}{"id": line.ID, "line_id": line.ID, "organization_id": line.OrganizationID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "school_name": line.OrganizationName, "district": line.District, "address": line.Address, "contact_name": line.ContactName, "contact_phone": line.ContactPhone, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "provider": line.ProviderName, "support_contact": line.SupportContact, "role": line.Role, "technology": line.Technology, "line_status": line.Status, "status": status, "data_state": state.DataState, "quality_state": state.ConnectionState, "connection_state": state.ConnectionState, "contract_state": state.ContractState, "state": stateMap(state), "latest": latest}
+	return map[string]interface{}{"id": line.ID, "line_id": line.ID, "organization_id": line.OrganizationID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "school_name": line.OrganizationName, "district": line.District, "address": line.Address, "contact_name": line.ContactName, "contact_phone": line.ContactPhone, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "provider": line.ProviderName, "support_contact": line.SupportContact, "role": line.Role, "technology": line.Technology, "line_status": line.Status, "status": status, "data_state": state.DataState, "quality_state": state.ConnectionState, "connection_state": state.ConnectionState, "contract_state": state.ContractState, "state": stateMap(state), "latest": latest}, nil
 }
 
 func (s *Server) listLines(w http.ResponseWriter, r *http.Request) {
@@ -240,7 +244,12 @@ func (s *Server) listLines(w http.ResponseWriter, r *http.Request) {
 			line.Latest = &latestRecord{ID: *latestID, ClientEventID: *latestClientEventID, ObservedAt: *latestObservedAt, DeviceID: *latestDeviceID, Mode: *latestMode, ConnectionStatus: *latestConnectionStatus, Download: latestDownload, Upload: latestUpload, Ping: latestPing, Jitter: latestJitter, PacketLoss: latestPacketLoss, Availability: latestAvailability}
 		}
 		line.LatestLoaded = true
-		result = append(result, s.lineMap(r.Context(), line))
+		mapped, mapErr := s.lineMap(r.Context(), line)
+		if mapErr != nil {
+			writeError(w, 500, "could not load line state")
+			return
+		}
+		result = append(result, mapped)
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, 500, "could not read lines")
@@ -265,7 +274,12 @@ func (s *Server) lineRoute(w http.ResponseWriter, r *http.Request, rest string) 
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		writeJSON(w, 200, s.lineDetailMap(r.Context(), line))
+		result, err := s.lineDetailMap(r.Context(), line)
+		if err != nil {
+			writeError(w, 500, "could not load line state")
+			return
+		}
+		writeJSON(w, 200, result)
 		return
 	}
 	if len(parts) == 2 && r.Method == http.MethodGet && parts[1] == "measurements" {
@@ -299,8 +313,11 @@ func measurementMap(item measurementRecord) map[string]interface{} {
 	return map[string]interface{}{"id": item.ID, "device_id": item.DeviceID, "line_id": item.LineID, "monitoring_point_id": item.PointID, "client_event_id": item.ClientEventID, "observed_at": item.ObservedAt, "received_at": item.ReceivedAt, "mode": item.Mode, "download": item.Download, "upload": item.Upload, "ping": item.Ping, "jitter": item.Jitter, "packet_loss": item.PacketLoss, "loss": item.PacketLoss, "availability": item.Availability, "connection_status": item.ConnectionStatus, "quality": item.Quality, "raw": decodeJSONBytes(item.Raw), "baseline_state": item.BaselineState, "contract_state": item.ContractState, "violations": decodeJSONBytes(item.Violations), "valid": item.Valid, "reason": item.Reason, "policy_snapshot": decodeJSONBytes(item.PolicySnapshot), "contract_snapshot": decodeJSONBytes(item.ContractSnapshot)}
 }
 
-func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) map[string]interface{} {
-	result := s.lineMap(ctx, line)
+func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string]interface{}, error) {
+	result, err := s.lineMap(ctx, line)
+	if err != nil {
+		return nil, err
+	}
 	var policy map[string]interface{}
 	var policyID, version int
 	var scopeType, scopeID string
@@ -366,7 +383,7 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) map[string]
 	}
 	result["monitoring_points"] = s.monitoringPoints(ctx, line.ID)
 	result["incidents"] = s.incidentListForLine(ctx, line.ID)
-	return result
+	return result, nil
 }
 
 func (s *Server) monitoringPoints(ctx context.Context, lineID string) []map[string]interface{} {
@@ -486,7 +503,12 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request, deviceID s
 		}
 		rows.Close()
 	}
-	writeJSON(w, 200, map[string]interface{}{"id": deviceID, "line_id": lineID, "organization_id": orgID, "school_id": school, "organization_name": name, "district": district, "address": address, "contact_name": contactName, "contact_phone": contactPhone, "provider_id": providerID, "provider_name": providerName, "role": role, "technology": technology, "line_status": lineStatus, "monitoring_point_id": pointID, "monitoring_point_location": location, "agent_version": agent, "blocked": blocked != nil, "blocked_at": blocked, "last_seen": lastSeen, "created_at": created, "monitoring_point_primary": primary, "monitoring_point_active": active, "state": stateMap(s.state(r.Context(), lineID)), "measurements": items})
+	lineState, stateErr := s.state(r.Context(), lineID)
+	if stateErr != nil {
+		writeError(w, 500, "could not load line state")
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{"id": deviceID, "line_id": lineID, "organization_id": orgID, "school_id": school, "organization_name": name, "district": district, "address": address, "contact_name": contactName, "contact_phone": contactPhone, "provider_id": providerID, "provider_name": providerName, "role": role, "technology": technology, "line_status": lineStatus, "monitoring_point_id": pointID, "monitoring_point_location": location, "agent_version": agent, "blocked": blocked != nil, "blocked_at": blocked, "last_seen": lastSeen, "created_at": created, "monitoring_point_primary": primary, "monitoring_point_active": active, "state": stateMap(lineState), "measurements": items})
 }
 
 func stringValue(value *string) string {
