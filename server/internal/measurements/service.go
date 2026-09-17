@@ -109,7 +109,7 @@ type execer interface {
 	Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error)
 }
 
-func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, agentVersion string, input Input) (Result, error) {
+func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agentVersion string, input Input) (Result, error) {
 	if input.ClientEventID == "" {
 		return Result{}, &InputError{Code: "client_event_id_required", Err: fmt.Errorf("client_event_id is required")}
 	}
@@ -279,14 +279,6 @@ func nullableContractID(c *evaluation.Contract) interface{} {
 		return nil
 	}
 	return c.ID
-}
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return "0.1.0"
 }
 
 func loadPolicy(ctx context.Context, q interface {
