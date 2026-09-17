@@ -201,9 +201,18 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, agentV
 		}
 		return Result{}, err
 	}
-	violations, _ := json.Marshal(evaluated.Violations)
-	policySnapshot, _ := json.Marshal(evaluated.PolicySnapshot)
-	contractSnapshot, _ := json.Marshal(evaluated.ContractSnapshot)
+	violations, err := json.Marshal(evaluated.Violations)
+	if err != nil {
+		return Result{}, fmt.Errorf("marshal violations: %w", err)
+	}
+	policySnapshot, err := json.Marshal(evaluated.PolicySnapshot)
+	if err != nil {
+		return Result{}, fmt.Errorf("marshal policy snapshot: %w", err)
+	}
+	contractSnapshot, err := json.Marshal(evaluated.ContractSnapshot)
+	if err != nil {
+		return Result{}, fmt.Errorf("marshal contract snapshot: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO measurement_evaluations(measurement_id,baseline_state,contract_state,violations_json,valid,reason,policy_snapshot_json,contract_snapshot_json,created_at)
         VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8::jsonb,$9)`, measurementID, evaluated.BaselineState, evaluated.ContractState, string(violations), evaluated.Valid, evaluated.Reason, string(policySnapshot), string(contractSnapshot), now); err != nil {
 		return Result{}, err
@@ -840,7 +849,9 @@ func updateRecovery(ctx context.Context, tx pgx.Tx, lineID string, at time.Time,
 			if _, err := tx.Exec(ctx, `UPDATE incidents SET status='IN_PROGRESS',recovery_state='NONE',resolved_at=NULL WHERE id=$1`, item.ID); err != nil {
 				return err
 			}
-			_, _ = tx.Exec(ctx, `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'REOPENED','system','{"reason":"violation returned during recovery verification"}'::jsonb,$2)`, item.ID, at)
+			if _, err := tx.Exec(ctx, `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'REOPENED','system','{"reason":"violation returned during recovery verification"}'::jsonb,$2)`, item.ID, at); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -874,16 +885,20 @@ func updateRecovery(ctx context.Context, tx pgx.Tx, lineID string, at time.Time,
 		if _, err := tx.Exec(ctx, `UPDATE incidents SET status=CASE WHEN status IN ('NEW','SENT_TO_PROVIDER','IN_PROGRESS','WAITING_INFO') THEN 'RESOLVED' ELSE status END,recovery_state='OBSERVED',resolved_at=COALESCE(resolved_at,$2) WHERE id=$1`, item.ID, at); err != nil {
 			return err
 		}
-		_, _ = tx.Exec(ctx, `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'RECOVERY_OBSERVED','system',$2::jsonb,$3)`, item.ID, fmt.Sprintf(`{"measurement_id":%d,"status":"RESOLVED"}`, good[0].ID), at)
+		if _, err := tx.Exec(ctx, `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'RECOVERY_OBSERVED','system',$2::jsonb,$3)`, item.ID, fmt.Sprintf(`{"measurement_id":%d,"status":"RESOLVED"}`, good[0].ID), at); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.Exec(ctx, `UPDATE incidents SET recovery_state='CONFIRMED',status='CLOSED',closed_at=COALESCE(closed_at,$2),duration_minutes=EXTRACT(EPOCH FROM ($2-started_at))/60 WHERE id=$1`, item.ID, at); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'RECOVERY_CONFIRMED','system',$2::jsonb,$3)`, item.ID, fmt.Sprintf(`{"evidence_measurement_ids":%v}`, mustJSON(ids(good))), at)
+	evidenceJSON, err := json.Marshal(ids(good))
+	if err != nil {
+		return fmt.Errorf("marshal recovery evidence: %w", err)
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'RECOVERY_CONFIRMED','system',$2::jsonb,$3)`, item.ID, fmt.Sprintf(`{"evidence_measurement_ids":%s}`, evidenceJSON), at)
 	return err
 }
-
-func mustJSON(value interface{}) string { data, _ := json.Marshal(value); return string(data) }
 
 // Freshness is intentionally evaluated from observed_at.  A replayed backlog
 // can be accepted as evidence while it still leaves the current data axis

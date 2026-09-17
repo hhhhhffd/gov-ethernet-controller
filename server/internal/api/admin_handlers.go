@@ -631,9 +631,19 @@ func (s *Server) adminMonitoringPoints(w http.ResponseWriter, r *http.Request, p
 }
 
 func writeAudit(ctx context.Context, s *Server, p *auth.Principal, action, objectType, objectID string, before, after interface{}) {
-	beforeJSON, _ := json.Marshal(before)
-	afterJSON, _ := json.Marshal(after)
-	_, _ = s.DB.Pool.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,request_id,created_at) VALUES ('USER',$1,$2,$3,$4,NULLIF($5,'')::jsonb,NULLIF($6,'')::jsonb,NULL,now())`, p.ID, action, objectType, objectID, string(beforeJSON), string(afterJSON))
+	beforeJSON, err := json.Marshal(before)
+	if err != nil {
+		s.Logger.Error("could not encode audit before snapshot", "action", action, "object_type", objectType, "object_id", objectID, "error", err)
+		return
+	}
+	afterJSON, err := json.Marshal(after)
+	if err != nil {
+		s.Logger.Error("could not encode audit after snapshot", "action", action, "object_type", objectType, "object_id", objectID, "error", err)
+		return
+	}
+	if _, err := s.DB.Pool.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,request_id,created_at) VALUES ('USER',$1,$2,$3,$4,NULLIF($5,'')::jsonb,NULLIF($6,'')::jsonb,NULL,now())`, p.ID, action, objectType, objectID, string(beforeJSON), string(afterJSON)); err != nil {
+		s.Logger.Error("could not persist audit event", "action", action, "object_type", objectType, "object_id", objectID, "error", err)
+	}
 }
 
 func (s *Server) adminPoints(w http.ResponseWriter, r *http.Request, p *auth.Principal) {

@@ -256,9 +256,13 @@ func (s *Server) createManualIncident(w http.ResponseWriter, r *http.Request) {
 		payload.Source = "MANUAL"
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	snapshot, _ := json.Marshal(map[string]interface{}{"manual_description": payload.Description, "line_id": line.ID, "reason": payload.Description, "evidence_measurement_ids": []int64{}, "manual": true})
+	snapshot, err := json.Marshal(map[string]interface{}{"manual_description": payload.Description, "line_id": line.ID, "reason": payload.Description, "evidence_measurement_ids": []int64{}, "manual": true})
+	if err != nil {
+		writeError(w, 500, "could not encode incident snapshot")
+		return
+	}
 	var id int64
-	err := s.DB.Pool.QueryRow(r.Context(), `INSERT INTO incidents(incident_no,line_id,source,violation_type,status,recovery_state,started_at,opening_snapshot_json,created_at,assignee) VALUES ($1,$2,'MANUAL',$3,'NEW','NONE',$4,$5::jsonb,$4,$6) RETURNING id`, "PENDING-"+measurements.RandomEventID(), line.ID, payload.ViolationType, now, string(snapshot), payload.Assignee).Scan(&id)
+	err = s.DB.Pool.QueryRow(r.Context(), `INSERT INTO incidents(incident_no,line_id,source,violation_type,status,recovery_state,started_at,opening_snapshot_json,created_at,assignee) VALUES ($1,$2,'MANUAL',$3,'NEW','NONE',$4,$5::jsonb,$4,$6) RETURNING id`, "PENDING-"+measurements.RandomEventID(), line.ID, payload.ViolationType, now, string(snapshot), payload.Assignee).Scan(&id)
 	if err != nil {
 		writeError(w, 500, "could not create incident")
 		return
@@ -267,7 +271,11 @@ func (s *Server) createManualIncident(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "could not number incident")
 		return
 	}
-	eventPayload, _ := json.Marshal(map[string]interface{}{"description": payload.Description})
+	eventPayload, err := json.Marshal(map[string]interface{}{"description": payload.Description})
+	if err != nil {
+		writeError(w, 500, "could not encode incident event")
+		return
+	}
 	if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'MANUAL_CREATED',$2,$3::jsonb,$4)`, id, p.ID, string(eventPayload), now); err != nil {
 		writeError(w, 500, "could not record incident event")
 		return
@@ -349,7 +357,11 @@ func (s *Server) incidentEvent(w http.ResponseWriter, r *http.Request, item inci
 		}
 	}
 	eventType := map[string]string{"provider_fixed": "PROVIDER_REPORTED_FIXED", "send_to_provider": "SENT_TO_PROVIDER", "assign": "ASSIGNED", "status": "STATUS_CHANGED", "comment": "COMMENT"}[payload.EventType]
-	data, _ := json.Marshal(map[string]interface{}{"note": payload.Note, "status": payload.Status})
+	data, err := json.Marshal(map[string]interface{}{"note": payload.Note, "status": payload.Status})
+	if err != nil {
+		writeError(w, 500, "could not encode incident event")
+		return
+	}
 	if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,$2,$3,$4::jsonb,$5)`, item.ID, eventType, p.ID, string(data), now); err != nil {
 		writeError(w, 500, "could not record incident event")
 		return
@@ -382,31 +394,56 @@ func (s *Server) providerDraft(w http.ResponseWriter, r *http.Request, item inci
 	evidenceIDs := incidentEvidenceIDs(opening)
 	evidenceJSON := "[]"
 	if len(evidenceIDs) > 0 {
-		if encoded, err := json.Marshal(evidenceIDs); err == nil {
-			evidenceJSON = string(encoded)
+		encoded, err := json.Marshal(evidenceIDs)
+		if err != nil {
+			writeError(w, 500, "could not encode provider evidence")
+			return
 		}
+		evidenceJSON = string(encoded)
 	}
 	observations := []map[string]interface{}{}
 	if len(evidenceIDs) > 0 {
 		rows, err := s.DB.Pool.Query(r.Context(), `SELECT id,observed_at,download,upload,ping,jitter,packet_loss,availability FROM measurements WHERE id = ANY($1) ORDER BY observed_at`, evidenceIDs)
-		if err == nil {
-			for rows.Next() {
-				var id int64
-				var at time.Time
-				var download, upload, ping, jitter, loss, availability *float64
-				if rows.Scan(&id, &at, &download, &upload, &ping, &jitter, &loss, &availability) == nil {
-					observations = append(observations, map[string]interface{}{"id": id, "observed_at": at, "download": download, "upload": upload, "ping": ping, "jitter": jitter, "packet_loss": loss, "availability": availability})
-				}
-			}
-			rows.Close()
+		if err != nil {
+			writeError(w, 500, "could not query provider evidence")
+			return
 		}
+		for rows.Next() {
+			var id int64
+			var at time.Time
+			var download, upload, ping, jitter, loss, availability *float64
+			if err := rows.Scan(&id, &at, &download, &upload, &ping, &jitter, &loss, &availability); err != nil {
+				rows.Close()
+				writeError(w, 500, "could not read provider evidence")
+				return
+			}
+			observations = append(observations, map[string]interface{}{"id": id, "observed_at": at, "download": download, "upload": upload, "ping": ping, "jitter": jitter, "packet_loss": loss, "availability": availability})
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			writeError(w, 500, "could not read provider evidence")
+			return
+		}
+		rows.Close()
 	}
-	observationsJSON, _ := json.Marshal(observations)
-	policyJSON, _ := json.Marshal(mapValue(opening, "policy"))
-	contractJSON, _ := json.Marshal(mapValue(opening, "contract"))
+	observationsJSON, err := json.Marshal(observations)
+	if err != nil {
+		writeError(w, 500, "could not encode provider observations")
+		return
+	}
+	policyJSON, err := json.Marshal(mapValue(opening, "policy"))
+	if err != nil {
+		writeError(w, 500, "could not encode provider policy")
+		return
+	}
+	contractJSON, err := json.Marshal(mapValue(opening, "contract"))
+	if err != nil {
+		writeError(w, 500, "could not encode provider contract")
+		return
+	}
 	draft := fmt.Sprintf("Здравствуйте! Просим проверить качество услуги на линии %s (школа %s, %s).\n\nСистема мониторинга подтвердила нарушение %s с %s.\n\nПрименённые пороги: %s.\nДоговорный ориентир и его срок действия на момент наблюдений: %s.\nНаблюдения: %s.\nПакет доказательств: measurement IDs %s; значения и effective policy/contract сохранены в системе без перезаписи истории.\n\nКомментарий заказчика: %s\n\nФормулировка описывает технически наблюдаемое отклонение и требует проверки оператором.", item.LineID, item.SchoolID, item.OrganizationName, item.ViolationType, item.StartedAt.UTC().Format(time.RFC3339), string(policyJSON), string(contractJSON), string(observationsJSON), evidenceJSON, payload.Comment)
 	var id int64
-	err := s.DB.Pool.QueryRow(r.Context(), `INSERT INTO provider_cases(incident_id,draft_text,status,delivery_status,created_by,created_at) VALUES ($1,$2,'DRAFT','PENDING',$3,$4) RETURNING id`, item.ID, draft, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
+	err = s.DB.Pool.QueryRow(r.Context(), `INSERT INTO provider_cases(incident_id,draft_text,status,delivery_status,created_by,created_at) VALUES ($1,$2,'DRAFT','PENDING',$3,$4) RETURNING id`, item.ID, draft, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
 	if err != nil {
 		writeError(w, 500, "could not create provider case")
 		return
@@ -570,7 +607,10 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 	}
 	var providerName, providerContact string
 	if providerID != nil {
-		_ = s.DB.Pool.QueryRow(r.Context(), `SELECT COALESCE(name,''),COALESCE(support_contact,'') FROM providers WHERE id=$1`, *providerID).Scan(&providerName, &providerContact)
+		if err := s.DB.Pool.QueryRow(r.Context(), `SELECT COALESCE(name,''),COALESCE(support_contact,'') FROM providers WHERE id=$1`, *providerID).Scan(&providerName, &providerContact); err != nil {
+			writeError(w, 500, "could not read provider")
+			return
+		}
 	}
 	opening := decodeJSONBytes(incident.Opening)
 	provider := &providers.Provider{Name: providerName, Contact: providerContact}
@@ -596,7 +636,9 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 			writeError(w, 500, "could not persist provider delivery failure")
 			return
 		}
-		_, _ = s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_DELIVERY_FAILED',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"error":%q,"retryable":%t}`, id, deliveryErr.Error(), retryable), now)
+		if _, eventErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_DELIVERY_FAILED',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"error":%q,"retryable":%t}`, id, deliveryErr.Error(), retryable), now); eventErr != nil {
+			s.Logger.Error("could not record provider case delivery failure event", "case_id", id, "error", eventErr)
+		}
 		writeAudit(r.Context(), s, p, "provider_case.delivery_failed", "provider_case", fmt.Sprint(id), nil, map[string]interface{}{"status": "FAILED", "attempts": attempt, "retryable": retryable, "error": deliveryErr.Error()})
 		writeError(w, http.StatusBadGateway, "provider delivery failed; delivery state was persisted")
 		return
@@ -620,7 +662,9 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		writeError(w, 500, "could not update incident")
 		return
 	}
-	_, _ = s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_SENT',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"ticket_no":%q,"channel":%q}`, id, ticketNo, delivery.Channel), now)
+	if _, eventErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_SENT',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"ticket_no":%q,"channel":%q}`, id, ticketNo, delivery.Channel), now); eventErr != nil {
+		s.Logger.Error("could not record provider case sent event", "case_id", id, "error", eventErr)
+	}
 	writeAudit(r.Context(), s, p, "provider_case.sent", "provider_case", fmt.Sprint(id), nil, map[string]interface{}{"ticket_no": ticketNo, "external_ticket_no": delivery.ExternalID, "delivery_channel": delivery.Channel, "status": "SENT", "reviewed": true})
 	cases, casesErr := s.providerCases(r.Context(), incidentID)
 	if casesErr != nil {

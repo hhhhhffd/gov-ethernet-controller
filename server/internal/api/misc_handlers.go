@@ -198,7 +198,10 @@ func (s *Server) refreshSituations(ctx context.Context) error {
 			providerName = members[0].ProviderName
 		}
 		reason := map[string]interface{}{"provider": providerName, "provider_id": nullableString(key.ProviderID), "district": key.District, "violation_type": key.ViolationType, "time_window_minutes": 15, "minimum_members": minimum, "member_count": len(members)}
-		reasonJSON, _ := json.Marshal(reason)
+		reasonJSON, err := json.Marshal(reason)
+		if err != nil {
+			return fmt.Errorf("marshal situation reason: %w", err)
+		}
 		title := fmt.Sprintf("Возможная ситуация: %s / %s", firstNonEmpty(providerName, "неизвестный provider"), key.District)
 		id, found := existing[key]
 		if found {
