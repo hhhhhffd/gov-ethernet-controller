@@ -17,8 +17,6 @@
     currentCaseId: null,
     apiOnline: false,
     usingDemoData: false,
-    holdBindActive: false,
-    rickrollPreviousFocus: null,
     // Demo data is opt-in per URL, never persisted across environments.
     demoMode: new URLSearchParams(window.location.search).get("demo") === "1",
     lineLimit: 30,
@@ -281,42 +279,6 @@
     closeCaseModal();
   }
   function closeCaseModal() { $("#caseModalBackdrop").classList.add("hidden"); state.currentIncident = null; }
-  function isKeyX(event) { return event.code === "KeyX" || String(event.key || "").toLowerCase() === "x"; }
-  function openRickrollModal() {
-    const backdrop = $("#rickrollBackdrop");
-    if (!backdrop) return;
-    state.rickrollPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    backdrop.classList.remove("hidden");
-    backdrop.setAttribute("aria-hidden", "false");
-    $("#rickrollModalClose").focus();
-  }
-  function closeRickrollModal() {
-    const backdrop = $("#rickrollBackdrop");
-    if (!backdrop) return;
-    backdrop.classList.add("hidden");
-    backdrop.setAttribute("aria-hidden", "true");
-    if (state.rickrollPreviousFocus && document.contains(state.rickrollPreviousFocus)) state.rickrollPreviousFocus.focus();
-    state.rickrollPreviousFocus = null;
-  }
-  function interceptHoldBindButton(event) {
-    if (!state.holdBindActive) return;
-    const target = event.target;
-    const button = target && typeof target.closest === "function" ? target.closest("button") : null;
-    if (!button || button.disabled || button.closest("#rickrollBackdrop")) return;
-    event.preventDefault();
-    event.stopPropagation();
-    openRickrollModal();
-  }
-  function bindHoldShortcut() {
-    document.addEventListener("keydown", (event) => {
-      if (isKeyX(event)) state.holdBindActive = true;
-      if (event.key === "Escape") closeRickrollModal();
-    });
-    document.addEventListener("keyup", (event) => { if (isKeyX(event)) state.holdBindActive = false; });
-    window.addEventListener("blur", () => { state.holdBindActive = false; });
-    document.addEventListener("visibilitychange", () => { if (document.hidden) state.holdBindActive = false; });
-    document.addEventListener("click", interceptHoldBindButton, true);
-  }
   async function createReplay() { try { await apiTry(["/api/demo/replay", "/api/v1/demo/replay"], { method: "POST", body: JSON.stringify({ scenario: "school-42" }) }); await loadData(); toast("Replay запущен: новые observations проходят тот же state engine"); } catch (_) { if (!state.usingDemoData) { toast("Сервер replay недоступен — новые данные не добавлены", "warn"); return; } const line = state.lines.find((item) => item.id === "L-001"); if (line) { line.status = "UNSTABLE"; line.contract_state = "DEVIATES"; line.latest.download = 41; line.latest.at = new Date().toISOString(); } renderAll(); toast("Replay запущен в демонстрационном режиме", "warn"); } }
   function currentReportParams() { const params = new URLSearchParams({ period: state.filters.period }); ["district", "provider", "technology", "status"].forEach((key) => { if (state.filters[key]) params.set(key, state.filters[key]); }); if (state.filters.period === "custom") { ensureCustomDates(); if (state.filters.from) params.set("from", `${state.filters.from}T00:00:00Z`); if (state.filters.to) { const end = new Date(`${state.filters.to}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 1); params.set("to", end.toISOString()); } } return params.toString(); }
   async function downloadExport(kind = "raw-csv") { if (!validCustomPeriod()) return; const [type, format] = kind.split("-"); const params = new URLSearchParams({ type: type === "aggregate" ? "aggregate" : "raw", kind: type === "aggregate" ? "aggregate" : "raw", format: format === "xlsx" ? "xlsx" : "csv", period: state.filters.period }); ["district", "provider", "technology", "status"].forEach((key) => { if (state.filters[key]) params.set(key, state.filters[key]); }); if (state.filters.period === "custom") { const report = new URLSearchParams(currentReportParams()); ["from", "to"].forEach((key) => { if (report.get(key)) params.set(key, report.get(key)); }); } try { const response = await fetch(`/api/exports?${params.toString()}`, { headers: state.token ? { Authorization: `Bearer ${state.token}` } : {}, method: "GET" }); if (!response.ok) { const fallback = await fetch(`/api/v1/exports?${params.toString()}`, { headers: state.token ? { Authorization: `Bearer ${state.token}` } : {} }); if (!fallback.ok) throw new Error("export"); return consumeDownload(fallback, type, format); } return consumeDownload(response, type, format); } catch (_) { toast("Серверная выгрузка недоступна — файл не создан", "warn"); } }
@@ -340,7 +302,6 @@
     $("#refreshButton").addEventListener("click", () => loadData()); $("#demoButton").addEventListener("click", createReplay); $("#exportButton").addEventListener("click", () => downloadExport("raw-csv")); $("#noticeDismiss").addEventListener("click", () => $("#noticeBar").classList.add("hidden"));
     $("#passportButton").addEventListener("click", () => showView("reports"));
     $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer); $("#caseModalClose").addEventListener("click", closeCaseModal); $("#caseCancel").addEventListener("click", closeCaseModal); $("#caseSend").addEventListener("click", sendCase);
-    $("#rickrollModalClose").addEventListener("click", closeRickrollModal); $("#rickrollBackdrop").addEventListener("click", (event) => { if (event.target === event.currentTarget) closeRickrollModal(); });
     $("#reviewConfirm").addEventListener("change", (event) => { $("#caseSend").disabled = !event.target.checked; }); $("#draftText").addEventListener("input", () => { $("#reviewConfirm").checked = false; $("#caseSend").disabled = true; });
     $("#manualIncidentButton").addEventListener("click", () => { const line = state.lines[0]; if (line) createManualIncident(line); });
     $("#searchInput").addEventListener("input", (event) => { state.filters.search = event.target.value; renderMap(); renderLines(); }); $("#districtFilter").addEventListener("change", (event) => { state.filters.district = event.target.value; renderMap(); renderLines(); loadPassport(); }); $("#providerFilter").addEventListener("change", (event) => { state.filters.provider = event.target.value; renderMap(); renderLines(); loadPassport(); }); $("#technologyFilter").addEventListener("change", (event) => { state.filters.technology = event.target.value; renderMap(); renderLines(); loadPassport(); }); $("#statusFilter").addEventListener("change", (event) => { state.filters.status = event.target.value; renderMap(); renderLines(); loadPassport(); }); $("#periodFilter").addEventListener("change", (event) => { state.filters.period = event.target.value; if (state.filters.period === "custom") ensureCustomDates(); toggleCustomPeriod(); renderLines(); loadPassport(); }); ["fromDateFilter", "toDateFilter"].forEach((id) => $("#" + id).addEventListener("change", (event) => { state.filters[id === "fromDateFilter" ? "from" : "to"] = event.target.value; loadPassport(); })); $("#resetFilters").addEventListener("click", () => { state.filters = { ...state.filters, search: "", district: "", provider: "", technology: "", status: "", period: "week", from: "", to: "", view: "lines" }; $("#searchInput").value = ""; populateFilters(); renderMap(); renderLines(); loadPassport(); });
@@ -350,6 +311,6 @@
     const loginForm = $("#loginForm"); if (loginForm) loginForm.addEventListener("submit", async (event) => { event.preventDefault(); const submit = $("#loginSubmit"); submit.disabled = true; try { await login(false, { username: $("#loginUsername").value.trim(), password: $("#loginPassword").value }); if (state.apiOnline) { await loadData(); await loadPassport(); } } finally { submit.disabled = false; } });
     ["mapZoomIn", "mapZoomOut", "mapReset"].forEach((id) => { const button = $(`#${id}`); if (button) button.addEventListener("click", () => { const svg = $(".vko-map"); const current = Number(svg.dataset.zoom || 1); const next = id === "mapZoomIn" ? Math.min(1.45, current + .1) : id === "mapZoomOut" ? Math.max(.8, current - .1) : 1; svg.dataset.zoom = next; svg.style.transform = `scale(${next})`; }); });
   }
-  async function boot() { bindEvents(); bindHoldShortcut(); if (!state.token && !state.demoMode) showLogin(); await loadData(); await loadPassport(); }
+  async function boot() { bindEvents(); if (!state.token && !state.demoMode) showLogin(); await loadData(); await loadPassport(); }
   document.addEventListener("DOMContentLoaded", boot);
 })();
