@@ -503,14 +503,24 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if format == "xlsx" {
+		payload, err := xlsx(headers, data)
+		if err != nil {
+			writeError(w, 500, "could not build xlsx export")
+			return
+		}
 		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 		w.Header().Set("Content-Disposition", "attachment; filename=linkwatch-export.xlsx")
-		_, _ = w.Write(xlsx(headers, data))
+		if _, err := w.Write(payload); err != nil {
+			s.Logger.Error("could not write xlsx export", "error", err)
+		}
 		return
 	}
 	var buffer bytes.Buffer
 	writer := csv.NewWriter(&buffer)
-	_ = writer.Write(headers)
+	if err := writer.Write(headers); err != nil {
+		writeError(w, 500, "could not build csv export")
+		return
+	}
 	for _, row := range data {
 		values := make([]string, len(row))
 		for i, value := range row {
@@ -520,15 +530,24 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 				values[i] = csvCell(value)
 			}
 		}
-		_ = writer.Write(values)
+		if err := writer.Write(values); err != nil {
+			writeError(w, 500, "could not build csv export")
+			return
+		}
 	}
 	writer.Flush()
+	if err := writer.Error(); err != nil {
+		writeError(w, 500, "could not build csv export")
+		return
+	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=linkwatch-export.csv")
-	_, _ = w.Write(buffer.Bytes())
+	if _, err := w.Write(buffer.Bytes()); err != nil {
+		s.Logger.Error("could not write csv export", "error", err)
+	}
 }
 
-func xlsx(headers []string, rows [][]interface{}) []byte {
+func xlsx(headers []string, rows [][]interface{}) ([]byte, error) {
 	sheet := `<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>`
 	all := append([][]interface{}{make([]interface{}, len(headers))}, rows...)
 	for i, h := range headers {
@@ -555,15 +574,25 @@ func xlsx(headers []string, rows [][]interface{}) []byte {
 	archive := zip.NewWriter(&result)
 	files := map[string]string{"[Content_Types].xml": `<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`, `_rels/.rels`: `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`, `xl/workbook.xml`: `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="LINKWATCH" sheetId="1" r:id="rId1"/></sheets></workbook>`, `xl/_rels/workbook.xml.rels`: `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`}
 	for name, content := range files {
-		if file, e := archive.Create(name); e == nil {
-			_, _ = file.Write([]byte(content))
+		file, err := archive.Create(name)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := file.Write([]byte(content)); err != nil {
+			return nil, err
 		}
 	}
-	if file, e := archive.Create("xl/worksheets/sheet1.xml"); e == nil {
-		_, _ = file.Write([]byte(sheet))
+	file, err := archive.Create("xl/worksheets/sheet1.xml")
+	if err != nil {
+		return nil, err
 	}
-	_ = archive.Close()
-	return result.Bytes()
+	if _, err := file.Write([]byte(sheet)); err != nil {
+		return nil, err
+	}
+	if err := archive.Close(); err != nil {
+		return nil, err
+	}
+	return result.Bytes(), nil
 }
 
 func csvCell(value interface{}) string {
