@@ -53,7 +53,13 @@ func (s *Server) mapPoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	where, params := scopeSQL(p, 1)
-	rows, err := s.DB.Pool.Query(r.Context(), `SELECT l.id,l.organization_id,l.provider_id,l.role,l.technology,l.status,o.school_id,o.name,o.district,o.address,o.contact_name,o.contact_phone,o.latitude,o.longitude,p.name,p.support_contact FROM lines l JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE l.status <> 'DELETED' AND `+where, params...)
+	rows, err := s.DB.Pool.Query(r.Context(), `SELECT l.id,l.organization_id,l.provider_id,l.role,l.technology,l.status,o.school_id,o.name,o.district,o.address,o.contact_name,o.contact_phone,o.latitude,o.longitude,p.name,p.support_contact,
+		COALESCE(ls.data_state,'NO_DATA'),COALESCE(ls.connection_state,'UNKNOWN'),COALESCE(ls.contract_state,'UNKNOWN'),COALESCE(ls.recovery_state,'NONE'),COALESCE(ls.reason,'No observations yet'),ls.effective_since,ls.updated_at,ls.evidence_ids_json,ls.policy_id
+		FROM lines l
+		JOIN organizations o ON o.id=l.organization_id
+		LEFT JOIN providers p ON p.id=l.provider_id
+		LEFT JOIN line_states ls ON ls.line_id=l.id
+		WHERE l.status <> 'DELETED' AND `+where, params...)
 	if err != nil {
 		writeError(w, 500, "could not query map")
 		return
@@ -63,12 +69,21 @@ func (s *Server) mapPoints(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var line lineRecord
 		var providerID, providerName, supportContact *string
-		if rows.Scan(&line.ID, &line.OrganizationID, &providerID, &line.Role, &line.Technology, &line.Status, &line.SchoolID, &line.OrganizationName, &line.District, &line.Address, &line.ContactName, &line.ContactPhone, &line.Latitude, &line.Longitude, &providerName, &supportContact) == nil {
-			line.ProviderID = stringValue(providerID)
-			line.ProviderName = stringValue(providerName)
-			line.SupportContact = stringValue(supportContact)
-			result = append(result, map[string]interface{}{"line_id": line.ID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "district": line.District, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "role": line.Role, "technology": line.Technology, "state": stateMap(s.state(r.Context(), line.ID))})
+		var dataState, connectionState, contractState, recoveryState, reason string
+		var effectiveSince, updatedAt *time.Time
+		var evidence []byte
+		var policyID *int64
+		if rows.Scan(&line.ID, &line.OrganizationID, &providerID, &line.Role, &line.Technology, &line.Status, &line.SchoolID, &line.OrganizationName, &line.District, &line.Address, &line.ContactName, &line.ContactPhone, &line.Latitude, &line.Longitude, &providerName, &supportContact, &dataState, &connectionState, &contractState, &recoveryState, &reason, &effectiveSince, &updatedAt, &evidence, &policyID) != nil {
+			continue
 		}
+		line.ProviderID = stringValue(providerID)
+		line.ProviderName = stringValue(providerName)
+		line.SupportContact = stringValue(supportContact)
+		line.State = &stateRecord{DataState: dataState, ConnectionState: connectionState, ContractState: contractState, RecoveryState: recoveryState, Reason: reason, EffectiveSince: effectiveSince, UpdatedAt: updatedAt, Evidence: []int64{}, PolicyID: policyID}
+		if len(evidence) > 0 {
+			_ = jsonUnmarshal(evidence, &line.State.Evidence)
+		}
+		result = append(result, map[string]interface{}{"line_id": line.ID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "district": line.District, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "role": line.Role, "technology": line.Technology, "state": stateMap(*line.State)})
 	}
 	writeJSON(w, 200, result)
 }
