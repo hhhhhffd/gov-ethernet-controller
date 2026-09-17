@@ -19,6 +19,7 @@ type lineRecord struct {
 	Latitude, Longitude                                                                          *float64
 	State                                                                                        *stateRecord
 	Latest                                                                                       *latestRecord
+	LatestLoaded                                                                                 bool
 }
 
 func scanLine(row pgx.Row) (lineRecord, error) {
@@ -157,6 +158,10 @@ func (s *Server) lineMap(ctx context.Context, line lineRecord) map[string]interf
 	latest := map[string]interface{}{}
 	if line.Latest != nil {
 		latest = latestMap(*line.Latest)
+	} else if line.LatestLoaded {
+		// The list query already checked for a latest measurement and found
+		// none. Do not issue a per-line fallback query while rows are open.
+		latest = map[string]interface{}{}
 	} else {
 		latest = s.latest(ctx, line.ID)
 	}
@@ -234,6 +239,7 @@ func (s *Server) listLines(w http.ResponseWriter, r *http.Request) {
 		if latestID != nil && latestObservedAt != nil && latestClientEventID != nil && latestDeviceID != nil && latestMode != nil && latestConnectionStatus != nil {
 			line.Latest = &latestRecord{ID: *latestID, ClientEventID: *latestClientEventID, ObservedAt: *latestObservedAt, DeviceID: *latestDeviceID, Mode: *latestMode, ConnectionStatus: *latestConnectionStatus, Download: latestDownload, Upload: latestUpload, Ping: latestPing, Jitter: latestJitter, PacketLoss: latestPacketLoss, Availability: latestAvailability}
 		}
+		line.LatestLoaded = true
 		result = append(result, s.lineMap(r.Context(), line))
 	}
 	if err := rows.Err(); err != nil {
