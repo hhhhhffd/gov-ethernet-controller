@@ -8,7 +8,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-const PING_SAMPLES: usize = 3;
+// Ten samples make packet-loss percentages useful for low single-digit
+// thresholds while keeping one probe bounded by the configured timeout.
+const PING_SAMPLES: usize = 10;
 // The transfer is primarily time-bounded. Keep a large streaming ceiling as
 // a last-resort guard for a broken endpoint without cutting off fast links
 // before the configured 3–5 second measurement window elapses.
@@ -119,7 +121,7 @@ impl Probe for NetworkProbe {
         };
         let mut raw = Map::new();
         raw.insert("probe".into(), Value::String("network".into()));
-        raw.insert("method_version".into(), Value::String("network-v4".into()));
+        raw.insert("method_version".into(), Value::String("network-v5".into()));
         raw.insert("reachability".into(), Value::Array(reachability));
         raw.insert("ping_samples_ms".into(), json!(ping_samples));
         // Keep the historical successful-sample fields for compatibility, but
