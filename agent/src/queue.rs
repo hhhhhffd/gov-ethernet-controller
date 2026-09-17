@@ -103,6 +103,19 @@ impl Queue {
             .and_then(|value| value.to_str())
             .unwrap_or("queue-item.json");
         let target = rejected.join(name);
+        let target = if target.exists() {
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            rejected.join(format!("{name}.{stamp}.rejected.json"))
+        } else {
+            target
+        };
+        let target_name = target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(name);
         fs::rename(path, &target)?;
 
         let metadata = json!({
@@ -110,8 +123,8 @@ impl Queue {
             "error": bounded_text(error, 1024),
             "rejected_at": super::chrono_like_now(),
         });
-        let metadata_path = rejected.join(format!("{name}.error.json"));
-        let temporary = rejected.join(format!(".{name}.{}.tmp", std::process::id()));
+        let metadata_path = rejected.join(format!("{target_name}.error.json"));
+        let temporary = rejected.join(format!(".{target_name}.{}.tmp", std::process::id()));
         let data = serde_json::to_vec(&metadata).map_err(io::Error::other)?;
         {
             let mut file = fs::File::create(&temporary)?;
@@ -268,5 +281,18 @@ mod tests {
         .unwrap();
         assert!(metadata.contains("error_code"));
         assert!(metadata.len() < 1_300);
+
+        let second_path = queue
+            .enqueue(
+                "bad-event",
+                &serde_json::json!({"client_event_id":"bad-event","retry":true}),
+            )
+            .unwrap();
+        let second_target = queue
+            .reject(&second_path, "again", "second rejection")
+            .unwrap();
+        assert_ne!(target, second_target);
+        assert!(target.exists());
+        assert!(second_target.exists());
     }
 }
