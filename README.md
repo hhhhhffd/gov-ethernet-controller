@@ -49,7 +49,8 @@ curl http://127.0.0.1:8080/health/ready
   filesystem spool: файл удаляется только после подтверждения сервера; run
   хранит cursor расписания и регулярно flush-ит backlog/heartbeat/config.
 - `migrations/001_initial.sql`, `migrations/002_runtime_hardening.sql`,
-  `migrations/003_provider_delivery_retry.sql` и embedded
+  `migrations/003_provider_delivery_retry.sql`,
+  `migrations/004_schema_invariants.sql` и embedded
   `server/internal/database/migrations/*.sql` — versioned schema.
 - `web/` — существующий frontend; API выдаёт совместимые поля `status`,
   `state`, `latest`, `policy`, `contract`, `incidents`, отчёты CSV/XLSX.

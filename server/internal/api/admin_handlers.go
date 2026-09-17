@@ -5,12 +5,14 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"linkwatch/server/internal/admin"
 	"linkwatch/server/internal/auth"
@@ -878,17 +880,38 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		writeError(w, 422, "valid_to must be after valid_from")
 		return
 	}
-	if err := s.policyOverlap(r.Context(), payload.ScopeType, payload.ScopeID, *payload.ValidFrom, payload.ValidTo, p.ID); err != nil {
+	tx, err := s.DB.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "could not begin policy transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	if err := lockVersionScope(r.Context(), tx, "policy:"+payload.ScopeType+":"+payload.ScopeID); err != nil {
+		writeError(w, 500, "could not lock policy scope")
+		return
+	}
+	if err := policyOverlap(r.Context(), tx, payload.ScopeType, payload.ScopeID, *payload.ValidFrom, payload.ValidTo, p.ID); err != nil {
 		writeError(w, 409, err.Error())
 		return
 	}
 	if payload.Version == 0 {
-		_ = s.DB.Pool.QueryRow(r.Context(), `SELECT COALESCE(MAX(version),0)+1 FROM threshold_policy_versions WHERE scope_type=$1 AND scope_id IS NOT DISTINCT FROM $2`, payload.ScopeType, nullableString(payload.ScopeID)).Scan(&payload.Version)
+		if err := tx.QueryRow(r.Context(), `SELECT COALESCE(MAX(version),0)+1 FROM threshold_policy_versions WHERE scope_type=$1 AND scope_id IS NOT DISTINCT FROM $2`, payload.ScopeType, nullableString(payload.ScopeID)).Scan(&payload.Version); err != nil {
+			writeError(w, 500, "could not allocate policy version")
+			return
+		}
 	}
 	var id int64
-	err := s.DB.Pool.QueryRow(r.Context(), `INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,valid_to,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, payload.ScopeType, nullableString(payload.ScopeID), *payload.ValidFrom, payload.ValidTo, payload.Version, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, payload.ConfirmCount, payload.ConfirmMinutes, payload.RecoveryCount, payload.RecoveryMinutes, payload.FreshnessSeconds, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
+	err = tx.QueryRow(r.Context(), `INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,valid_to,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, payload.ScopeType, nullableString(payload.ScopeID), *payload.ValidFrom, payload.ValidTo, payload.Version, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, payload.ConfirmCount, payload.ConfirmMinutes, payload.RecoveryCount, payload.RecoveryMinutes, payload.FreshnessSeconds, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
 	if err != nil {
+		if isVersionConstraintConflict(err) {
+			writeError(w, http.StatusConflict, "policy version or effective interval conflicts with an existing version")
+			return
+		}
 		writeError(w, 500, "could not create policy")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "could not commit policy")
 		return
 	}
 	writeJSON(w, 201, map[string]interface{}{"id": id, "version": payload.Version, "scope_type": payload.ScopeType, "scope_id": payload.ScopeID, "valid_from": payload.ValidFrom, "valid_to": payload.ValidTo, "confirm_count": payload.ConfirmCount, "confirm_minutes": payload.ConfirmMinutes, "recovery_count": payload.RecoveryCount, "recovery_minutes": payload.RecoveryMinutes})
@@ -900,28 +923,57 @@ func nullableString(value string) *string {
 	}
 	return &value
 }
-func (s *Server) policyOverlap(ctx context.Context, typ, scope string, from time.Time, to *time.Time, actor string) error {
-	rows, err := s.DB.Pool.Query(ctx, `SELECT id,valid_from,valid_to FROM threshold_policy_versions WHERE scope_type=$1 AND scope_id IS NOT DISTINCT FROM $2 ORDER BY valid_from`, typ, nullableString(scope))
+
+type versionInterval struct {
+	id   int64
+	from time.Time
+	to   *time.Time
+}
+
+func lockVersionScope(ctx context.Context, tx pgx.Tx, key string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 742031))`, key)
+	return err
+}
+
+func isVersionConstraintConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == "23P01" || pgErr.Code == "23505"
+}
+
+func policyOverlap(ctx context.Context, tx pgx.Tx, typ, scope string, from time.Time, to *time.Time, actor string) error {
+	rows, err := tx.Query(ctx, `SELECT id,valid_from,valid_to FROM threshold_policy_versions WHERE scope_type=$1 AND scope_id IS NOT DISTINCT FROM $2 ORDER BY valid_from FOR UPDATE`, typ, nullableString(scope))
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	intervals := []versionInterval{}
 	for rows.Next() {
-		var id int64
-		var existingFrom time.Time
-		var existingTo *time.Time
-		if rows.Scan(&id, &existingFrom, &existingTo) != nil {
-			continue
+		var item versionInterval
+		if err := rows.Scan(&item.id, &item.from, &item.to); err != nil {
+			rows.Close()
+			return err
 		}
-		if (to == nil || existingFrom.Before(*to)) && (existingTo == nil || from.Before(*existingTo)) {
+		intervals = append(intervals, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, existing := range intervals {
+		if (to == nil || existing.from.Before(*to)) && (existing.to == nil || from.Before(*existing.to)) {
 			// A new version supersedes an open-ended predecessor. Closing that
 			// predecessor preserves non-overlapping effective intervals while
 			// retaining its historical snapshot.
-			if existingTo == nil && from.After(existingFrom) {
-				if _, err := s.DB.Pool.Exec(ctx, `UPDATE threshold_policy_versions SET valid_to=$1 WHERE id=$2`, from, id); err != nil {
+			if existing.to == nil && from.After(existing.from) {
+				if _, err := tx.Exec(ctx, `UPDATE threshold_policy_versions SET valid_to=$1 WHERE id=$2`, from, existing.id); err != nil {
 					return err
 				}
-				_, _ = s.DB.Pool.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,created_at) VALUES ('USER',$1,'policy.version_closed','threshold_policy',$2,$3::jsonb,$4::jsonb,now())`, actor, fmt.Sprint(id), fmt.Sprintf(`{"valid_to":null}`), fmt.Sprintf(`{"valid_to":%q}`, from.UTC().Format(time.RFC3339)))
+				if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,created_at) VALUES ('USER',$1,'policy.version_closed','threshold_policy',$2,$3::jsonb,$4::jsonb,now())`, actor, fmt.Sprint(existing.id), fmt.Sprintf(`{"valid_to":null}`), fmt.Sprintf(`{"valid_to":%q}`, from.UTC().Format(time.RFC3339))); err != nil {
+					return err
+				}
 				continue
 			}
 			return fmt.Errorf("policy effective interval overlaps an existing version")
@@ -1009,45 +1061,71 @@ func (s *Server) adminContract(w http.ResponseWriter, r *http.Request, p *auth.P
 			return
 		}
 	}
-	if err := s.contractOverlap(r.Context(), payload.LineID, payload.ValidFrom, payload.ValidTo, p.ID); err != nil {
+	tx, err := s.DB.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "could not begin contract transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	if err := lockVersionScope(r.Context(), tx, "contract:"+payload.LineID); err != nil {
+		writeError(w, 500, "could not lock contract scope")
+		return
+	}
+	if err := contractOverlap(r.Context(), tx, payload.LineID, payload.ValidFrom, payload.ValidTo, p.ID); err != nil {
 		writeError(w, 409, err.Error())
 		return
 	}
 	var id int64
-	err := s.DB.Pool.QueryRow(r.Context(), `INSERT INTO contract_versions(line_id,valid_from,valid_to,contract_no,contract_date,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, payload.LineID, payload.ValidFrom, payload.ValidTo, payload.ContractNo, payload.ContractDate, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
+	err = tx.QueryRow(r.Context(), `INSERT INTO contract_versions(line_id,valid_from,valid_to,contract_no,contract_date,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, payload.LineID, payload.ValidFrom, payload.ValidTo, payload.ContractNo, payload.ContractDate, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
 	if err != nil {
+		if isVersionConstraintConflict(err) {
+			writeError(w, http.StatusConflict, "contract version or effective interval conflicts with an existing version")
+			return
+		}
 		writeError(w, 500, "could not create contract")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "could not commit contract")
 		return
 	}
 	writeJSON(w, 201, map[string]interface{}{"id": id, "line_id": payload.LineID, "valid_from": payload.ValidFrom, "valid_to": payload.ValidTo})
 }
 
-func (s *Server) contractOverlap(ctx context.Context, lineID string, from time.Time, to *time.Time, actor string) error {
-	rows, err := s.DB.Pool.Query(ctx, `SELECT id,valid_from,valid_to FROM contract_versions WHERE line_id=$1 ORDER BY valid_from`, lineID)
+func contractOverlap(ctx context.Context, tx pgx.Tx, lineID string, from time.Time, to *time.Time, actor string) error {
+	rows, err := tx.Query(ctx, `SELECT id,valid_from,valid_to FROM contract_versions WHERE line_id=$1 ORDER BY valid_from FOR UPDATE`, lineID)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	intervals := []versionInterval{}
 	for rows.Next() {
-		var id int64
-		var existingFrom time.Time
-		var existingTo *time.Time
-		if rows.Scan(&id, &existingFrom, &existingTo) != nil {
-			continue
+		var item versionInterval
+		if err := rows.Scan(&item.id, &item.from, &item.to); err != nil {
+			rows.Close()
+			return err
 		}
-		if (to == nil || existingFrom.Before(*to)) && (existingTo == nil || from.Before(*existingTo)) {
-			if existingTo == nil && from.After(existingFrom) {
-				if _, err := s.DB.Pool.Exec(ctx, `UPDATE contract_versions SET valid_to=$1 WHERE id=$2`, from, id); err != nil {
+		intervals = append(intervals, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, existing := range intervals {
+		if (to == nil || existing.from.Before(*to)) && (existing.to == nil || from.Before(*existing.to)) {
+			if existing.to == nil && from.After(existing.from) {
+				if _, err := tx.Exec(ctx, `UPDATE contract_versions SET valid_to=$1 WHERE id=$2`, from, existing.id); err != nil {
 					return err
 				}
-				_, _ = s.DB.Pool.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,created_at) VALUES ('USER',$1,'contract.version_closed','contract_version',$2,$3::jsonb,$4::jsonb,now())`, actor, fmt.Sprint(id), `{"valid_to":null}`, fmt.Sprintf(`{"valid_to":%q}`, from.UTC().Format(time.RFC3339)))
+				if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,created_at) VALUES ('USER',$1,'contract.version_closed','contract_version',$2,$3::jsonb,$4::jsonb,now())`, actor, fmt.Sprint(existing.id), `{"valid_to":null}`, fmt.Sprintf(`{"valid_to":%q}`, from.UTC().Format(time.RFC3339))); err != nil {
+					return err
+				}
 				continue
 			}
 			return fmt.Errorf("contract effective interval overlaps an existing version")
 		}
 	}
-	return rows.Err()
+	return nil
 }
 
 var _ = json.Marshal
-var _ = pgx.ErrNoRows
