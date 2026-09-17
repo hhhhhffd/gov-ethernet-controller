@@ -74,7 +74,7 @@ func (s *Server) agentBatch(w http.ResponseWriter, r *http.Request) {
 			duplicates++
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "results": results, "accepted": accepted, "duplicates": duplicates, "rejected": len(results) - accepted})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"device_id": device.ID, "hostname": device.Hostname, "line_id": device.LineID, "results": results, "accepted": accepted, "duplicates": duplicates, "rejected": len(results) - accepted})
 }
 
 func measurementErrorResult(clientEventID string, err error) measurements.Result {
@@ -99,6 +99,7 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	var payload struct {
 		AgentVersion    string     `json:"agent_version"`
+		Hostname        string     `json:"hostname"`
 		SeenAt          *time.Time `json:"seen_at"`
 		BootID          string     `json:"boot_id"`
 		BootStartedAt   *time.Time `json:"boot_started_at"`
@@ -112,6 +113,11 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload.BootID = strings.TrimSpace(payload.BootID)
+	payload.Hostname = strings.TrimSpace(payload.Hostname)
+	if len(payload.Hostname) > 255 {
+		writeError(w, 422, "hostname must contain at most 255 characters")
+		return
+	}
 	if len(payload.BootID) > 128 {
 		writeError(w, 422, "boot_id must contain at most 128 characters")
 		return
@@ -179,6 +185,7 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if _, err := tx.Exec(r.Context(), `
 UPDATE devices
 SET last_seen=$1,
+    hostname=COALESCE(NULLIF($12::text,''),hostname),
     agent_version=CASE WHEN $3 OR agent_boot_id IS NULL THEN $2 ELSE agent_version END,
     agent_boot_id=CASE WHEN $3 THEN NULLIF($4::text,'') ELSE agent_boot_id END,
     agent_boot_started_at=CASE WHEN $3 THEN $5::timestamptz ELSE agent_boot_started_at END,
@@ -197,7 +204,7 @@ SET last_seen=$1,
         ELSE agent_last_probe_status
     END,
     agent_telemetry_received_at=CASE WHEN $3 THEN $1 ELSE agent_telemetry_received_at END
-WHERE id=$11`, lastSeen, payload.AgentVersion, acceptTelemetry, payload.BootID, payload.BootStartedAt, payload.UptimeSeconds, payload.QueueDepth, bootChanged, payload.LastProbeAt, payload.LastProbeStatus, device.ID); err != nil {
+WHERE id=$11`, lastSeen, payload.AgentVersion, acceptTelemetry, payload.BootID, payload.BootStartedAt, payload.UptimeSeconds, payload.QueueDepth, bootChanged, payload.LastProbeAt, payload.LastProbeStatus, device.ID, payload.Hostname); err != nil {
 		writeError(w, 500, "could not store heartbeat")
 		return
 	}
@@ -205,7 +212,17 @@ WHERE id=$11`, lastSeen, payload.AgentVersion, acceptTelemetry, payload.BootID, 
 		writeError(w, 500, "could not store heartbeat")
 		return
 	}
-	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "last_seen": lastSeen, "agent_version": payload.AgentVersion})
+	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "hostname": heartbeatHostname(payload.Hostname, device.Hostname), "last_seen": lastSeen, "agent_version": payload.AgentVersion})
+}
+
+func heartbeatHostname(value string, fallback *string) interface{} {
+	if value != "" {
+		return value
+	}
+	if fallback == nil {
+		return nil
+	}
+	return *fallback
 }
 
 func heartbeatTelemetryOrder(currentBootID *string, currentBootStartedAt *time.Time, currentUptime *int64, currentHasProbe bool, incomingBootID string, incomingBootStartedAt *time.Time, incomingUptime *int64, incomingHasProbe bool) (accept, bootChanged bool) {
@@ -272,7 +289,7 @@ func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {
 	if policyErr == nil {
 		policy = map[string]interface{}{"id": policyID, "scope_type": scopeType, "scope_id": scopeID, "version": version, "valid_from": validFrom, "valid_to": validTo, "download_min": downloadMin, "upload_min": uploadMin, "ping_max": pingMax, "jitter_max": jitterMax, "packet_loss_max": lossMax, "availability_min": availabilityMin, "confirm_count": confirmCount, "confirm_minutes": confirmMinutes, "recovery_count": recoveryCount, "recovery_minutes": recoveryMinutes, "freshness_seconds": freshness}
 	}
-	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "monitoring_point_id": device.PointID, "schedule": map[string]interface{}{"tests_per_day": testsPerDay, "performance_tests_per_day": testsPerDay, "jitter_minutes": jitter, "light_checks_between": light > 0}, "policy": policy})
+	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "hostname": device.Hostname, "line_id": device.LineID, "monitoring_point_id": device.PointID, "schedule": map[string]interface{}{"tests_per_day": testsPerDay, "performance_tests_per_day": testsPerDay, "jitter_minutes": jitter, "light_checks_between": light > 0}, "policy": policy})
 }
 
 // agentProbeDownload and agentProbeUpload provide an optional controlled

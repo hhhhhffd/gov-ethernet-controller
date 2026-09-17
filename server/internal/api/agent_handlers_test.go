@@ -38,4 +38,17 @@ func TestHeartbeatTelemetryOrderAcceptsEqualUptimeProbeSnapshot(t *testing.T) {
 	}
 }
 
+func TestHeartbeatHostnamePrefersIncomingValueAndKeepsStoredValueForOldAgents(t *testing.T) {
+	stored := "DESKTOP-OLD"
+	if got := heartbeatHostname("DESKTOP-NEW", &stored); got != "DESKTOP-NEW" {
+		t.Fatalf("incoming hostname was not returned: %#v", got)
+	}
+	if got := heartbeatHostname("", &stored); got != stored {
+		t.Fatalf("stored hostname was not retained: %#v", got)
+	}
+	if got := heartbeatHostname("", nil); got != nil {
+		t.Fatalf("legacy device should keep a nullable hostname: %#v", got)
+	}
+}
+
 func ptrInt64(value int64) *int64 { return &value }

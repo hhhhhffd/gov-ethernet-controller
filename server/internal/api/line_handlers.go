@@ -390,14 +390,17 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 	contractRows.Close()
 	result["contracts"] = contracts
 	var primaryDeviceID, primaryAgentVersion string
+	var primaryHostname *string
 	var primaryLastSeen *time.Time
-	deviceErr := s.DB.Pool.QueryRow(ctx, `SELECT d.id,d.agent_version,d.last_seen FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id WHERE mp.line_id=$1 ORDER BY mp.is_primary DESC,d.id LIMIT 1`, line.ID).Scan(&primaryDeviceID, &primaryAgentVersion, &primaryLastSeen)
+	deviceErr := s.DB.Pool.QueryRow(ctx, `SELECT d.id,d.hostname,d.agent_version,d.last_seen FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id WHERE mp.line_id=$1 ORDER BY mp.is_primary DESC,d.id LIMIT 1`, line.ID).Scan(&primaryDeviceID, &primaryHostname, &primaryAgentVersion, &primaryLastSeen)
 	if deviceErr == nil {
 		result["device_id"] = primaryDeviceID
+		result["hostname"] = primaryHostname
 		result["agent_version"] = primaryAgentVersion
 		result["last_seen"] = primaryLastSeen
 	} else if errors.Is(deviceErr, pgx.ErrNoRows) {
 		result["device_id"] = nil
+		result["hostname"] = nil
 		result["agent_version"] = nil
 		result["last_seen"] = nil
 	} else {
@@ -467,19 +470,20 @@ func (s *Server) monitoringPoints(ctx context.Context, lineID string) ([]map[str
 	result := []map[string]interface{}{}
 	for _, point := range points {
 		devices := []map[string]interface{}{}
-		drows, e := s.DB.Pool.Query(ctx, `SELECT id,agent_version,last_seen,blocked_at,created_at FROM devices WHERE monitoring_point_id=$1 ORDER BY id`, point.id)
+		drows, e := s.DB.Pool.Query(ctx, `SELECT id,hostname,agent_version,last_seen,blocked_at,created_at FROM devices WHERE monitoring_point_id=$1 ORDER BY id`, point.id)
 		if e != nil {
 			return nil, e
 		}
 		for drows.Next() {
 			var did, ver string
+			var hostname *string
 			var seen, blocked *time.Time
 			var dc time.Time
-			if err := drows.Scan(&did, &ver, &seen, &blocked, &dc); err != nil {
+			if err := drows.Scan(&did, &hostname, &ver, &seen, &blocked, &dc); err != nil {
 				drows.Close()
 				return nil, err
 			}
-			devices = append(devices, map[string]interface{}{"id": did, "agent_version": ver, "last_seen": seen, "blocked_at": blocked, "created_at": dc})
+			devices = append(devices, map[string]interface{}{"id": did, "hostname": hostname, "agent_version": ver, "last_seen": seen, "blocked_at": blocked, "created_at": dc})
 		}
 		if err := drows.Err(); err != nil {
 			drows.Close()
@@ -572,10 +576,11 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request, deviceID s
 		return
 	}
 	var lineID, orgID, school, name, district, pointID, location, agent, role, technology, lineStatus, address, contactName, contactPhone string
+	var hostname *string
 	var providerID, providerName *string
 	var blocked, lastSeen, created *time.Time
 	var primary, active bool
-	err := s.DB.Pool.QueryRow(r.Context(), `SELECT mp.line_id,l.organization_id,o.school_id,o.name,o.district,l.provider_id,p.name,mp.id,mp.location,d.agent_version,d.blocked_at,d.last_seen,d.created_at,mp.is_primary,mp.active,l.role,l.technology,l.status,o.address,o.contact_name,o.contact_phone FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id JOIN lines l ON l.id=mp.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE d.id=$1`, deviceID).Scan(&lineID, &orgID, &school, &name, &district, &providerID, &providerName, &pointID, &location, &agent, &blocked, &lastSeen, &created, &primary, &active, &role, &technology, &lineStatus, &address, &contactName, &contactPhone)
+	err := s.DB.Pool.QueryRow(r.Context(), `SELECT mp.line_id,l.organization_id,o.school_id,o.name,o.district,l.provider_id,p.name,mp.id,mp.location,d.hostname,d.agent_version,d.blocked_at,d.last_seen,d.created_at,mp.is_primary,mp.active,l.role,l.technology,l.status,o.address,o.contact_name,o.contact_phone FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id JOIN lines l ON l.id=mp.line_id JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE d.id=$1`, deviceID).Scan(&lineID, &orgID, &school, &name, &district, &providerID, &providerName, &pointID, &location, &hostname, &agent, &blocked, &lastSeen, &created, &primary, &active, &role, &technology, &lineStatus, &address, &contactName, &contactPhone)
 	if err != nil || !auth.HasLineScope(p, lineID, orgID, district, stringValue(providerID)) {
 		writeError(w, 404, "device not found")
 		return
@@ -595,7 +600,7 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request, deviceID s
 		writeError(w, 500, "could not load line state")
 		return
 	}
-	writeJSON(w, 200, map[string]interface{}{"id": deviceID, "line_id": lineID, "organization_id": orgID, "school_id": school, "organization_name": name, "district": district, "address": address, "contact_name": contactName, "contact_phone": contactPhone, "provider_id": providerID, "provider_name": providerName, "role": role, "technology": technology, "line_status": lineStatus, "monitoring_point_id": pointID, "monitoring_point_location": location, "agent_version": agent, "blocked": blocked != nil, "blocked_at": blocked, "last_seen": lastSeen, "created_at": created, "monitoring_point_primary": primary, "monitoring_point_active": active, "state": stateMap(lineState), "measurements": items})
+	writeJSON(w, 200, map[string]interface{}{"id": deviceID, "hostname": hostname, "line_id": lineID, "organization_id": orgID, "school_id": school, "organization_name": name, "district": district, "address": address, "contact_name": contactName, "contact_phone": contactPhone, "provider_id": providerID, "provider_name": providerName, "role": role, "technology": technology, "line_status": lineStatus, "monitoring_point_id": pointID, "monitoring_point_location": location, "agent_version": agent, "blocked": blocked != nil, "blocked_at": blocked, "last_seen": lastSeen, "created_at": created, "monitoring_point_primary": primary, "monitoring_point_active": active, "state": stateMap(lineState), "measurements": items})
 }
 
 func stringValue(value *string) string {

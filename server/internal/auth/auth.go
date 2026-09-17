@@ -180,6 +180,7 @@ type Device struct {
 	MonitoringPoint string
 	LineID          string
 	PointID         string
+	Hostname        *string
 	AgentVersion    string
 	LastSeen        *time.Time
 }
@@ -189,10 +190,10 @@ func AuthenticateDevice(ctx context.Context, db *database.DB, deviceID, token st
 		return nil, fmt.Errorf("device credentials required")
 	}
 	device := &Device{}
-	err := db.Pool.QueryRow(ctx, `SELECT d.id,d.monitoring_point_id,mp.line_id,mp.id,d.agent_version,d.last_seen
+	err := db.Pool.QueryRow(ctx, `SELECT d.id,d.monitoring_point_id,mp.line_id,mp.id,d.hostname,d.agent_version,d.last_seen
         FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id
         WHERE d.id=$1 AND d.auth_token_hash=$2 AND d.blocked_at IS NULL AND mp.active`, deviceID, TokenHash(token)).Scan(
-		&device.ID, &device.MonitoringPoint, &device.LineID, &device.PointID, &device.AgentVersion, &device.LastSeen)
+		&device.ID, &device.MonitoringPoint, &device.LineID, &device.PointID, &device.Hostname, &device.AgentVersion, &device.LastSeen)
 	if err != nil {
 		return nil, fmt.Errorf("invalid or blocked device")
 	}

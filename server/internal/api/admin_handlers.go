@@ -695,7 +695,8 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		}
 		defer func() { _ = tx.Rollback(r.Context()) }()
 		var pointID, lineID string
-		if err := tx.QueryRow(r.Context(), `SELECT d.monitoring_point_id,mp.line_id FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id WHERE d.id=$1`, parts[0]).Scan(&pointID, &lineID); err != nil {
+		var hostname *string
+		if err := tx.QueryRow(r.Context(), `SELECT d.monitoring_point_id,mp.line_id,d.hostname FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id WHERE d.id=$1`, parts[0]).Scan(&pointID, &lineID, &hostname); err != nil {
 			writeError(w, 404, "device not found")
 			return
 		}
@@ -722,7 +723,7 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 			writeError(w, 500, "could not commit device token rotation")
 			return
 		}
-		writeJSON(w, 200, map[string]interface{}{"device_id": parts[0], "monitoring_point_id": pointID, "line_id": lineID, "device_token": token, "rotated_at": now})
+		writeJSON(w, 200, map[string]interface{}{"device_id": parts[0], "hostname": hostname, "monitoring_point_id": pointID, "line_id": lineID, "device_token": token, "rotated_at": now})
 		return
 	}
 	if len(parts) > 0 && parts[0] == "register" && r.Method == http.MethodPost {
@@ -758,7 +759,7 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 			return
 		}
 		writeAudit(r.Context(), s, p, "device.registered", "device", payload.DeviceID, nil, map[string]interface{}{"monitoring_point_id": payload.MonitoringPointID, "line_id": lineID, "agent_version": payload.AgentVersion})
-		writeJSON(w, 201, map[string]interface{}{"device_id": payload.DeviceID, "monitoring_point_id": payload.MonitoringPointID, "line_id": lineID, "agent_version": payload.AgentVersion, "device_token": token})
+		writeJSON(w, 201, map[string]interface{}{"device_id": payload.DeviceID, "hostname": nil, "monitoring_point_id": payload.MonitoringPointID, "line_id": lineID, "agent_version": payload.AgentVersion, "device_token": token})
 		return
 	}
 	if len(parts) > 1 && parts[1] == "block" && r.Method == http.MethodPost {
@@ -791,7 +792,7 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		return
 	}
 	if r.Method == http.MethodGet {
-		rows, err := s.DB.Pool.Query(r.Context(), `SELECT d.id,d.monitoring_point_id,mp.line_id,l.organization_id,o.school_id,o.name,d.agent_version,d.last_seen,d.blocked_at,d.created_at,d.agent_boot_id,d.agent_boot_started_at,d.agent_uptime_seconds,d.agent_queue_depth,d.agent_last_probe_at,d.agent_last_probe_status,d.agent_telemetry_received_at FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id JOIN lines l ON l.id=mp.line_id JOIN organizations o ON o.id=l.organization_id ORDER BY o.district,o.name,d.id`)
+		rows, err := s.DB.Pool.Query(r.Context(), `SELECT d.id,d.monitoring_point_id,mp.line_id,l.organization_id,o.school_id,o.name,d.hostname,d.agent_version,d.last_seen,d.blocked_at,d.created_at,d.agent_boot_id,d.agent_boot_started_at,d.agent_uptime_seconds,d.agent_queue_depth,d.agent_last_probe_at,d.agent_last_probe_status,d.agent_telemetry_received_at FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id JOIN lines l ON l.id=mp.line_id JOIN organizations o ON o.id=l.organization_id ORDER BY o.district,o.name,d.id`)
 		if err != nil {
 			writeError(w, 500, "could not query devices")
 			return
@@ -800,14 +801,15 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		result := []map[string]interface{}{}
 		for rows.Next() {
 			var id, point, line, organizationID, schoolID, organizationName, version string
+			var hostname *string
 			var seen, blocked, created, bootStartedAt, probeAt, telemetryReceived *time.Time
 			var bootID, probeStatus *string
 			var uptime, queueDepth *int64
-			if err := rows.Scan(&id, &point, &line, &organizationID, &schoolID, &organizationName, &version, &seen, &blocked, &created, &bootID, &bootStartedAt, &uptime, &queueDepth, &probeAt, &probeStatus, &telemetryReceived); err != nil {
+			if err := rows.Scan(&id, &point, &line, &organizationID, &schoolID, &organizationName, &hostname, &version, &seen, &blocked, &created, &bootID, &bootStartedAt, &uptime, &queueDepth, &probeAt, &probeStatus, &telemetryReceived); err != nil {
 				writeError(w, 500, "could not read devices")
 				return
 			}
-			result = append(result, map[string]interface{}{"id": id, "monitoring_point_id": point, "line_id": line, "organization_id": organizationID, "school_id": schoolID, "organization_name": organizationName, "agent_version": version, "last_seen": seen, "blocked_at": blocked, "blocked": blocked != nil, "created_at": created, "agent_boot_id": bootID, "agent_boot_started_at": bootStartedAt, "agent_uptime_seconds": uptime, "agent_queue_depth": queueDepth, "agent_last_probe_at": probeAt, "agent_last_probe_status": probeStatus, "agent_telemetry_received_at": telemetryReceived})
+			result = append(result, map[string]interface{}{"id": id, "hostname": hostname, "monitoring_point_id": point, "line_id": line, "organization_id": organizationID, "school_id": schoolID, "organization_name": organizationName, "agent_version": version, "last_seen": seen, "blocked_at": blocked, "blocked": blocked != nil, "created_at": created, "agent_boot_id": bootID, "agent_boot_started_at": bootStartedAt, "agent_uptime_seconds": uptime, "agent_queue_depth": queueDepth, "agent_last_probe_at": probeAt, "agent_last_probe_status": probeStatus, "agent_telemetry_received_at": telemetryReceived})
 		}
 		if err := rows.Err(); err != nil {
 			writeError(w, 500, "could not read devices")
