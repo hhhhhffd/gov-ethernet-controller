@@ -104,6 +104,7 @@ impl Probe for NetworkProbe {
         } else {
             (ping_attempts - ping_successes) as f64 / ping_attempts as f64 * 100.0
         };
+        let ping_failures = ping_attempts.saturating_sub(ping_successes);
         let ping = average(&ping_samples);
         let jitter = if ping_samples.len() < 2 {
             None
@@ -118,10 +119,15 @@ impl Probe for NetworkProbe {
         };
         let mut raw = Map::new();
         raw.insert("probe".into(), Value::String("network".into()));
-        raw.insert("method_version".into(), Value::String("network-v3".into()));
+        raw.insert("method_version".into(), Value::String("network-v4".into()));
         raw.insert("reachability".into(), Value::Array(reachability));
         raw.insert("ping_samples_ms".into(), json!(ping_samples));
+        // Keep the historical successful-sample fields for compatibility, but
+        // expose the denominator explicitly so packet loss is auditable.
         raw.insert("ping_sample_count".into(), json!(ping_samples.len()));
+        raw.insert("ping_attempt_count".into(), json!(ping_attempts));
+        raw.insert("ping_success_count".into(), json!(ping_successes));
+        raw.insert("ping_failure_count".into(), json!(ping_failures));
         raw.insert("ping_methods".into(), json!(ping_methods));
         let latency_method = latency_method(&ping_methods);
         raw.insert(
@@ -132,6 +138,16 @@ impl Probe for NetworkProbe {
         raw.insert(
             "sample_count".into(),
             json!({"ping": ping_samples.len(), "download": 0, "upload": 0}),
+        );
+        raw.insert(
+            "sample_attempt_count".into(),
+            json!({"ping": ping_attempts, "availability": attempts}),
+        );
+        raw.insert("availability_attempt_count".into(), json!(attempts));
+        raw.insert("availability_success_count".into(), json!(successes));
+        raw.insert(
+            "availability_scope".into(),
+            Value::String("reachability_targets_and_ping".into()),
         );
         raw.insert("warmup".into(), json!({"download": false, "upload": false}));
         let availability = if attempts == 0 {
@@ -278,6 +294,32 @@ fn latency_method(methods: &[&str]) -> &'static str {
         "tcp_connect"
     } else {
         "mixed"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NetworkProbe, ProbeConfig};
+    use crate::probe::Probe;
+
+    #[test]
+    fn raw_counts_expose_ping_and_availability_denominators() {
+        let mut config = ProbeConfig::default();
+        config.targets.clear();
+        config.ping_host = None;
+        let mut probe = NetworkProbe::new(config);
+
+        let value = probe.measure("light").expect("empty probe should be valid");
+        assert_eq!(value["raw"]["ping_sample_count"], 0);
+        assert_eq!(value["raw"]["ping_attempt_count"], 0);
+        assert_eq!(value["raw"]["ping_success_count"], 0);
+        assert_eq!(value["raw"]["ping_failure_count"], 0);
+        assert_eq!(value["raw"]["availability_attempt_count"], 0);
+        assert_eq!(value["raw"]["availability_success_count"], 0);
+        assert_eq!(
+            value["raw"]["availability_scope"],
+            "reachability_targets_and_ping"
+        );
     }
 }
 

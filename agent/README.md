@@ -45,6 +45,10 @@ cargo run --release --manifest-path agent/Cargo.toml -- once
 jitter, packet loss, availability и адаптивные 3–5-секундные download/upload
 метрики. Метод и версия замера сохраняются в `raw`; по умолчанию используются
 Cloudflare download и upload endpoints, которые можно заменить оператором.
+В `raw` сохраняются отдельные числители и знаменатели ping/availability;
+историческое `ping_sample_count` означает только успешные samples. При трёх
+выборках `packet_loss` дискретен (0/33/66/100%), поэтому порог вроде 2% нельзя
+интерпретировать как SLA по одной пробе — для этого нужна агрегация наблюдений.
 Для контролируемого замера через сам LINKWATCH задайте
 `LINKWATCH_USE_SERVER_PROBE=1`: агент использует аутентифицированные
 `/api/v1/agent/probe/download` и `/api/v1/agent/probe/upload`.
