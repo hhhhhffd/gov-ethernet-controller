@@ -267,7 +267,10 @@ func (s *Server) adminUserRoute(w http.ResponseWriter, r *http.Request, p *auth.
 		return
 	}
 	if payload.Disabled || payload.Password != "" {
-		_, _ = s.DB.Pool.Exec(r.Context(), `UPDATE auth_sessions SET revoked_at=$1 WHERE user_id=$2 AND revoked_at IS NULL`, now, payload.ID)
+		if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE auth_sessions SET revoked_at=$1 WHERE user_id=$2 AND revoked_at IS NULL`, now, payload.ID); err != nil {
+			writeError(w, 500, "could not revoke user sessions")
+			return
+		}
 	}
 	if err := replaceUserScopes(r.Context(), s, payload.ID, payload.Scopes); err != nil {
 		writeError(w, 422, err.Error())
@@ -599,7 +602,10 @@ func (s *Server) adminMonitoringPoints(w http.ResponseWriter, r *http.Request, p
 	now := time.Now().UTC().Truncate(time.Second)
 	if r.Method == http.MethodPost {
 		if payload.Primary {
-			_, _ = s.DB.Pool.Exec(r.Context(), `UPDATE monitoring_points SET is_primary=FALSE WHERE line_id=$1`, payload.LineID)
+			if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE monitoring_points SET is_primary=FALSE WHERE line_id=$1`, payload.LineID); err != nil {
+				writeError(w, 500, "could not update monitoring point primary state")
+				return
+			}
 		}
 		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO monitoring_points(id,line_id,location,is_primary,active,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, payload.ID, payload.LineID, payload.Location, payload.Primary, payload.Active, now); err != nil {
 			writeError(w, 409, "monitoring point already exists or line is invalid")
@@ -620,7 +626,10 @@ func (s *Server) adminMonitoringPoints(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	if payload.Primary {
-		_, _ = s.DB.Pool.Exec(r.Context(), `UPDATE monitoring_points SET is_primary=FALSE WHERE line_id=$1 AND id<>$2`, payload.LineID, parts[0])
+		if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE monitoring_points SET is_primary=FALSE WHERE line_id=$1 AND id<>$2`, payload.LineID, parts[0]); err != nil {
+			writeError(w, 500, "could not update monitoring point primary state")
+			return
+		}
 	}
 	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE monitoring_points SET line_id=$1,location=$2,is_primary=$3,active=$4 WHERE id=$5`, payload.LineID, payload.Location, payload.Primary, payload.Active, parts[0]); err != nil {
 		writeError(w, 409, "monitoring point update failed")
@@ -700,7 +709,11 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 			writeError(w, 500, "could not rotate device token")
 			return
 		}
-		after, _ := json.Marshal(map[string]interface{}{"rotated_at": now, "monitoring_point_id": pointID, "line_id": lineID})
+		after, err := json.Marshal(map[string]interface{}{"rotated_at": now, "monitoring_point_id": pointID, "line_id": lineID})
+		if err != nil {
+			writeError(w, 500, "could not encode device token audit")
+			return
+		}
 		if _, err := tx.Exec(r.Context(), `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,created_at) VALUES ('USER',$1,'device.token_rotated','device',$2,NULL,$3::jsonb,$4)`, p.ID, parts[0], string(after), now); err != nil {
 			writeError(w, 500, "could not audit device token rotation")
 			return
