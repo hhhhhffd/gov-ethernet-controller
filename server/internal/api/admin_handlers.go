@@ -187,7 +187,11 @@ func (s *Server) adminUserRoute(w http.ResponseWriter, r *http.Request, p *auth.
 			writeError(w, 422, "a 12+ character password is required in production")
 			return
 		}
-		token := randomSecret()
+		token, err := randomSecret()
+		if err != nil {
+			writeError(w, 500, "could not generate user token")
+			return
+		}
 		passwordHash := interface{}(nil)
 		if payload.Password != "" {
 			hash, err := auth.HashPassword(payload.Password)
@@ -231,6 +235,15 @@ func (s *Server) adminUserRoute(w http.ResponseWriter, r *http.Request, p *auth.
 	current.Disabled = disabledAt != nil
 	setPassword := ""
 	args := []interface{}{payload.Username, payload.Role, nullableNow(payload.Disabled, now)}
+	var replacementToken string
+	if payload.Password != "" || payload.Disabled {
+		var err error
+		replacementToken, err = randomSecret()
+		if err != nil {
+			writeError(w, 500, "could not generate user token")
+			return
+		}
+	}
 	if payload.Password != "" {
 		if strings.EqualFold(getenv("LINKWATCH_ENV", "development"), "production") && len(payload.Password) < 12 {
 			writeError(w, 422, "a 12+ character password is required in production")
@@ -242,11 +255,11 @@ func (s *Server) adminUserRoute(w http.ResponseWriter, r *http.Request, p *auth.
 			return
 		}
 		setPassword = ",password_hash=$4,token_hash=$5"
-		args = append(args, hash, auth.TokenHash(randomSecret()))
+		args = append(args, hash, auth.TokenHash(replacementToken))
 	}
 	if payload.Disabled && payload.Password == "" {
 		setPassword = ",token_hash=$4"
-		args = append(args, auth.TokenHash(randomSecret()))
+		args = append(args, auth.TokenHash(replacementToken))
 	}
 	args = append(args, payload.ID)
 	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE users SET username=$1,role=$2,disabled_at=$3`+setPassword+` WHERE id=$`+itoa(len(args)), args...); err != nil {
@@ -661,7 +674,11 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 			writeError(w, 404, "device not found")
 			return
 		}
-		token := randomSecret()
+		token, err := randomSecret()
+		if err != nil {
+			writeError(w, 500, "could not generate device token")
+			return
+		}
 		now := time.Now().UTC().Truncate(time.Second)
 		if _, err := tx.Exec(r.Context(), `UPDATE devices SET auth_token_hash=$1 WHERE id=$2`, auth.TokenHash(token), parts[0]); err != nil {
 			writeError(w, 500, "could not rotate device token")
@@ -701,7 +718,11 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		if payload.AgentVersion == "" {
 			payload.AgentVersion = "0.1.0"
 		}
-		token := randomSecret()
+		token, err := randomSecret()
+		if err != nil {
+			writeError(w, 500, "could not generate device token")
+			return
+		}
 		now := time.Now().UTC().Truncate(time.Second)
 		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO devices(id,monitoring_point_id,auth_token_hash,agent_version,created_at) VALUES ($1,$2,$3,$4,$5)`, payload.DeviceID, payload.MonitoringPointID, auth.TokenHash(token), payload.AgentVersion, now); err != nil {
 			writeError(w, 409, "device id already registered")
@@ -761,12 +782,12 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 	writeError(w, 404, "not found")
 }
 
-func randomSecret() string {
+func randomSecret() (string, error) {
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
-		return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprint(time.Now().UnixNano())))
+		return "", fmt.Errorf("read secure random bytes: %w", err)
 	}
-	return base64.RawURLEncoding.EncodeToString(buf)
+	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
 func (s *Server) adminSchedule(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
