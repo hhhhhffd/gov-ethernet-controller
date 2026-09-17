@@ -168,7 +168,7 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	if _, err := tx.Exec(r.Context(), `
 UPDATE devices
 SET last_seen=$1,
-    agent_version=$2,
+    agent_version=CASE WHEN $3 OR agent_boot_id IS NULL THEN $2 ELSE agent_version END,
     agent_boot_id=CASE WHEN $3 THEN NULLIF($4::text,'') ELSE agent_boot_id END,
     agent_boot_started_at=CASE WHEN $3 THEN $5::timestamptz ELSE agent_boot_started_at END,
     agent_uptime_seconds=CASE WHEN $3 THEN $6::bigint ELSE agent_uptime_seconds END,
