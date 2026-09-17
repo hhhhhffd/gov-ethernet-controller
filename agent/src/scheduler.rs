@@ -211,6 +211,14 @@ mod tests {
     }
 
     #[test]
+    fn daily_seed_changes_schedule_without_affecting_slot_count() {
+        let first = schedule_for_day("device-42:100", 4, 30);
+        let second = schedule_for_day("device-42:101", 4, 30);
+        assert_eq!(first.len(), second.len());
+        assert_ne!(first, second);
+    }
+
+    #[test]
     fn next_sleep_is_relative_and_due_at_exact_slot() {
         let schedule = vec![Duration::from_secs(3 * 60 * 60)];
         assert_eq!(

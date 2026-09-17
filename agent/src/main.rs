@@ -52,7 +52,7 @@ fn run() -> Result<(), String> {
             "unknown command {mode}; expected run, once, probe or version"
         ));
     }
-    let initial_client = Client::new(config.clone());
+    let initial_client = Client::new(config.clone())?;
     if use_server_config() {
         if let Ok(remote) = initial_client.server_config() {
             config.apply_server_config(&remote);
@@ -60,7 +60,7 @@ fn run() -> Result<(), String> {
     }
     let mut probe = probe::build(&config)?;
     let queue = Queue::open(&config.queue_dir).map_err(|error| format!("open queue: {error}"))?;
-    let client = Client::new(config.clone());
+    let client = Client::new(config.clone())?;
     if mode == "once" {
         run_once(&config, &mut *probe, &queue, &client)
     } else {
@@ -156,12 +156,14 @@ fn run_loop(
             }
         }
 
+        let epoch_seconds = scheduler::unix_seconds(now);
+        let current_day = epoch_seconds / scheduler::DAY_SECONDS;
+        let schedule_seed = format!("{}:{current_day}", config.device_id);
         let schedule = scheduler::schedule_for_day(
-            &config.device_id,
+            &schedule_seed,
             config.performance_tests_per_day,
             config.jitter_minutes,
         );
-        let epoch_seconds = scheduler::unix_seconds(now);
         if let Some((deadline, slot)) = scheduler::next_deadline(epoch_seconds, &schedule, &state) {
             if deadline <= epoch_seconds {
                 let day = deadline / scheduler::DAY_SECONDS;

@@ -78,22 +78,19 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 422, "invalid heartbeat payload")
 		return
 	}
-	seenAt := time.Now().UTC().Truncate(time.Second)
-	if payload.SeenAt != nil {
-		if err := validateDeviceTime(*payload.SeenAt); err != nil {
-			writeError(w, 422, err.Error())
-			return
-		}
-		seenAt = payload.SeenAt.UTC().Truncate(time.Second)
-	}
+	// seen_at is accepted for wire compatibility, but last_seen is
+	// authoritative server receipt time. Agent clocks must not be able to move
+	// fleet state into the future or make a stale retry look fresh.
+	receivedAt := time.Now().UTC().Truncate(time.Second)
 	if payload.AgentVersion == "" {
 		payload.AgentVersion = device.AgentVersion
 	}
-	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE devices SET last_seen=$1,agent_version=$2 WHERE id=$3`, seenAt, payload.AgentVersion, device.ID); err != nil {
+	var lastSeen time.Time
+	if err := s.DB.Pool.QueryRow(r.Context(), `UPDATE devices SET last_seen=GREATEST(COALESCE(last_seen,$1),$1),agent_version=$2 WHERE id=$3 RETURNING last_seen`, receivedAt, payload.AgentVersion, device.ID).Scan(&lastSeen); err != nil {
 		writeError(w, 500, "could not store heartbeat")
 		return
 	}
-	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "last_seen": seenAt, "agent_version": payload.AgentVersion})
+	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "last_seen": lastSeen, "agent_version": payload.AgentVersion})
 }
 
 func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {
