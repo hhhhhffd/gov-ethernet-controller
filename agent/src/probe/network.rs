@@ -100,9 +100,9 @@ impl Probe for NetworkProbe {
         // reachability targets used for availability. Mixing those counts
         // would report loss whenever a target list contains an HTTP failure.
         let packet_loss = if ping_attempts == 0 {
-            100.0
+            None
         } else {
-            (ping_attempts - ping_successes) as f64 / ping_attempts as f64 * 100.0
+            Some((ping_attempts - ping_successes) as f64 / ping_attempts as f64 * 100.0)
         };
         let ping_failures = ping_attempts.saturating_sub(ping_successes);
         let ping = average(&ping_samples);
@@ -128,6 +128,10 @@ impl Probe for NetworkProbe {
         raw.insert("ping_attempt_count".into(), json!(ping_attempts));
         raw.insert("ping_success_count".into(), json!(ping_successes));
         raw.insert("ping_failure_count".into(), json!(ping_failures));
+        raw.insert(
+            "ping_enabled".into(),
+            json!(self.config.ping_host.is_some()),
+        );
         raw.insert("ping_methods".into(), json!(ping_methods));
         let latency_method = latency_method(&ping_methods);
         raw.insert(
@@ -314,6 +318,8 @@ mod tests {
         assert_eq!(value["raw"]["ping_attempt_count"], 0);
         assert_eq!(value["raw"]["ping_success_count"], 0);
         assert_eq!(value["raw"]["ping_failure_count"], 0);
+        assert!(value["packet_loss"].is_null());
+        assert!(!value["raw"]["ping_enabled"].as_bool().unwrap());
         assert_eq!(value["raw"]["availability_attempt_count"], 0);
         assert_eq!(value["raw"]["availability_success_count"], 0);
         assert_eq!(

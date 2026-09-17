@@ -49,6 +49,8 @@ Cloudflare download и upload endpoints, которые можно замени�
 историческое `ping_sample_count` означает только успешные samples. При трёх
 выборках `packet_loss` дискретен (0/33/66/100%), поэтому порог вроде 2% нельзя
 интерпретировать как SLA по одной пробе — для этого нужна агрегация наблюдений.
+Если `ping_host` отключён, `packet_loss` равен `null`, а `raw.ping_enabled` —
+`false`: отсутствие ping-метрики не считается потерей пакетов.
 Для контролируемого замера через сам LINKWATCH задайте
 `LINKWATCH_USE_SERVER_PROBE=1`: агент использует аутентифицированные
 `/api/v1/agent/probe/download` и `/api/v1/agent/probe/upload`.
