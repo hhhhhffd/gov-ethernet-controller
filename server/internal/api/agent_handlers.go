@@ -156,11 +156,22 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 	var currentLastSeen, currentBootStartedAt *time.Time
 	var currentBootID *string
 	var currentUptime *int64
-	if err := tx.QueryRow(r.Context(), `SELECT last_seen,agent_boot_id,agent_boot_started_at,agent_uptime_seconds FROM devices WHERE id=$1 FOR UPDATE`, device.ID).Scan(&currentLastSeen, &currentBootID, &currentBootStartedAt, &currentUptime); err != nil {
+	var currentLastProbeAt *time.Time
+	var currentLastProbeStatus *string
+	if err := tx.QueryRow(r.Context(), `SELECT last_seen,agent_boot_id,agent_boot_started_at,agent_uptime_seconds,agent_last_probe_at,agent_last_probe_status FROM devices WHERE id=$1 FOR UPDATE`, device.ID).Scan(&currentLastSeen, &currentBootID, &currentBootStartedAt, &currentUptime, &currentLastProbeAt, &currentLastProbeStatus); err != nil {
 		writeError(w, 500, "could not store heartbeat")
 		return
 	}
-	acceptTelemetry, bootChanged := heartbeatTelemetryOrder(currentBootID, currentBootStartedAt, currentUptime, payload.BootID, payload.BootStartedAt, payload.UptimeSeconds)
+	acceptTelemetry, bootChanged := heartbeatTelemetryOrder(
+		currentBootID,
+		currentBootStartedAt,
+		currentUptime,
+		currentLastProbeAt != nil || currentLastProbeStatus != nil,
+		payload.BootID,
+		payload.BootStartedAt,
+		payload.UptimeSeconds,
+		payload.LastProbeAt != nil || payload.LastProbeStatus != nil,
+	)
 	lastSeen := receivedAt
 	if currentLastSeen != nil && currentLastSeen.After(lastSeen) {
 		lastSeen = *currentLastSeen
@@ -197,7 +208,7 @@ WHERE id=$11`, lastSeen, payload.AgentVersion, acceptTelemetry, payload.BootID, 
 	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "last_seen": lastSeen, "agent_version": payload.AgentVersion})
 }
 
-func heartbeatTelemetryOrder(currentBootID *string, currentBootStartedAt *time.Time, currentUptime *int64, incomingBootID string, incomingBootStartedAt *time.Time, incomingUptime *int64) (accept, bootChanged bool) {
+func heartbeatTelemetryOrder(currentBootID *string, currentBootStartedAt *time.Time, currentUptime *int64, currentHasProbe bool, incomingBootID string, incomingBootStartedAt *time.Time, incomingUptime *int64, incomingHasProbe bool) (accept, bootChanged bool) {
 	if incomingBootID == "" {
 		return false, false
 	}
@@ -211,7 +222,14 @@ func heartbeatTelemetryOrder(currentBootID *string, currentBootStartedAt *time.T
 		if currentUptime == nil {
 			return true, false
 		}
-		return *incomingUptime > *currentUptime, false
+		if *incomingUptime > *currentUptime {
+			return true, false
+		}
+		// A fast `once` run can emit its initial and final heartbeat within the
+		// same second. Accept the equal-uptime final snapshot only when it adds
+		// probe telemetry to an otherwise empty snapshot; equal stale snapshots
+		// must not overwrite a known probe result.
+		return *incomingUptime == *currentUptime && !currentHasProbe && incomingHasProbe, false
 	}
 	if currentBootStartedAt == nil || incomingBootStartedAt == nil {
 		return currentBootStartedAt == nil, true

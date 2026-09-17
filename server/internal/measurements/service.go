@@ -215,7 +215,10 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, agentV
 			return Result{}, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE devices SET last_seen=GREATEST(COALESCE(last_seen,$1),$1),agent_version=$2 WHERE id=$3`, now, firstNonEmpty(input.AgentVersion, agentVersion), deviceID); err != nil {
+	// Heartbeat is authoritative for fleet version. Measurement uploads may be
+	// delayed in the agent spool, so accepting their embedded version here
+	// could roll a device back from a newer heartbeat to an older queued item.
+	if _, err := tx.Exec(ctx, `UPDATE devices SET last_seen=GREATEST(COALESCE(last_seen,$1),$1) WHERE id=$2`, now, deviceID); err != nil {
 		return Result{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {

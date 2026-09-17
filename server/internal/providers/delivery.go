@@ -180,6 +180,9 @@ func postJSON(ctx context.Context, endpoint string, payload interface{}, tokenEn
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		return nil, &DeliveryError{Message: "decode webhook response: " + err.Error(), Retryable: true}
 	}
+	if decoded == nil {
+		return nil, &DeliveryError{Message: "webhook response must be a JSON object", Retryable: true}
+	}
 	return decoded, nil
 }
 

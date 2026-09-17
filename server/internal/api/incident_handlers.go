@@ -104,20 +104,25 @@ func (s *Server) incidentListForLine(ctx context.Context, lineID string) ([]map[
 		return nil, err
 	}
 	defer rows.Close()
-	result := []map[string]interface{}{}
+	items := []incidentRecord{}
 	for rows.Next() {
 		item, scanErr := s.scanIncident(rows)
 		if scanErr != nil {
 			return nil, scanErr
 		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	result := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
 		mapped, mapErr := s.incidentMap(ctx, item)
 		if mapErr != nil {
 			return nil, mapErr
 		}
 		result = append(result, mapped)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	return result, nil
 }
@@ -144,23 +149,28 @@ func (s *Server) listIncidents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
-	result := []map[string]interface{}{}
+	items := []incidentRecord{}
 	for rows.Next() {
 		item, scanErr := s.scanIncident(rows)
 		if scanErr != nil {
 			writeError(w, 500, "could not read incident")
 			return
 		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "could not read incidents")
+		return
+	}
+	rows.Close()
+	result := make([]map[string]interface{}, 0, len(items))
+	for _, item := range items {
 		mapped, mapErr := s.incidentMap(r.Context(), item)
 		if mapErr != nil {
 			writeError(w, 500, "could not read incident details")
 			return
 		}
 		result = append(result, mapped)
-	}
-	if err := rows.Err(); err != nil {
-		writeError(w, 500, "could not read incidents")
-		return
 	}
 	writeJSON(w, 200, result)
 }
