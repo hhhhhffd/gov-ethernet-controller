@@ -118,7 +118,7 @@ fn run_loop(
             if let Err(error) = client.heartbeat() {
                 eprintln!("linkwatch-agent: heartbeat failed: {error}");
             }
-            let _ = client.upload_pending(&queue);
+            flush_pending(&client, &queue);
             if use_server_config() {
                 if let Ok(remote) = client.server_config() {
                     let before = (
@@ -151,7 +151,7 @@ fn run_loop(
                             queue
                                 .enqueue(&id, &light)
                                 .map_err(|error| format!("enqueue light measurement: {error}"))?;
-                            let _ = client.upload_pending(&queue);
+                            flush_pending(&client, &queue);
                         }
                         Err(error) => eprintln!("linkwatch-agent: light probe failed: {error}"),
                     }
@@ -186,7 +186,7 @@ fn run_loop(
                         state
                             .save(&state_path)
                             .map_err(|error| format!("save scheduler state: {error}"))?;
-                        let _ = client.upload_pending(&queue);
+                        flush_pending(&client, &queue);
                         println!("measurement collected: {event_id}");
                     }
                     Err(error) => {
@@ -214,6 +214,12 @@ fn run_loop(
         } else {
             thread::sleep(Duration::from_secs(30));
         }
+    }
+}
+
+fn flush_pending(client: &Client, queue: &Queue) {
+    if let Err(error) = client.upload_pending(queue) {
+        eprintln!("linkwatch-agent: upload queue flush failed: {error}");
     }
 }
 
