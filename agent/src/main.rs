@@ -1,10 +1,22 @@
 mod client;
 mod config;
 mod health;
+mod hostname;
 mod lifecycle;
+mod logging;
 mod probe;
 mod queue;
 mod scheduler;
+#[cfg(windows)]
+mod windows_install;
+#[cfg(windows)]
+mod windows_ipc;
+#[cfg(windows)]
+mod windows_service;
+#[cfg(windows)]
+mod windows_tray {
+    include!("bin/linkwatch-tray.rs");
+}
 
 use client::{Client, HeartbeatTelemetry};
 use config::Config;
@@ -14,12 +26,17 @@ use queue::Queue;
 use serde_json::{json, Value};
 use std::{
     env,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use uuid::Uuid;
 
 fn main() {
     if let Err(error) = run() {
+        logging::event(format!("fatal runtime error: {error}"));
         eprintln!("linkwatch-agent: {error}");
         std::process::exit(1);
     }
@@ -37,9 +54,46 @@ fn run() -> Result<(), String> {
     let mode = if args.iter().any(|arg| arg == "--once") {
         "once".to_string()
     } else {
-        args.first().cloned().unwrap_or_else(|| "run".into())
+        args.first().cloned().unwrap_or_else(|| {
+            #[cfg(windows)]
+            {
+                return "install".into();
+            }
+            #[cfg(not(windows))]
+            {
+                "run".into()
+            }
+        })
     };
+    #[cfg(windows)]
+    if mode == "install" {
+        return windows_install::install();
+    }
+    #[cfg(windows)]
+    if mode == "uninstall" {
+        return windows_install::uninstall(args.iter().any(|arg| arg == "--purge-data"));
+    }
+    #[cfg(windows)]
+    if mode == "tray" {
+        windows_tray::run();
+        return Ok(());
+    }
+    #[cfg(windows)]
+    if mode == "run" && windows_service::try_dispatch()? {
+        return Ok(());
+    }
+    run_mode(mode, None)
+}
+
+#[cfg(windows)]
+pub(crate) fn run_service_mode(stop: StopToken) -> Result<(), String> {
+    run_mode("run".into(), Some(stop))
+}
+
+fn run_mode(mode: String, service_stop: Option<StopToken>) -> Result<(), String> {
     let mut config = Config::load()?;
+    let log_path = logging::init(&config.queue_dir)?;
+    logging::event(format!("startup mode={mode} log={}", log_path.display()));
     if mode == "probe" {
         let mut probe = probe::build(&config)?;
         let value = probe.measure("performance")?;
@@ -68,7 +122,10 @@ fn run() -> Result<(), String> {
         None
     };
     let stop_token = if mode == "run" {
-        Some(install_signal_handler()?)
+        Some(match service_stop {
+            Some(stop) => stop,
+            None => install_signal_handler()?,
+        })
     } else {
         None
     };
@@ -83,32 +140,54 @@ fn run() -> Result<(), String> {
     if mode == "once" {
         run_once(&config, &mut *probe, &queue, &client)
     } else {
+        let manual_probe = Arc::new(ManualProbeControl::default());
+        #[cfg(windows)]
+        let _ipc = if service_stop.is_some() {
+            Some(windows_ipc::start(queue.dir_path(), manual_probe.clone()))
+        } else {
+            None
+        };
         run_loop(
             config,
             probe,
             queue,
             client,
             stop_token.expect("run mode installs a stop token"),
+            manual_probe,
         )
     }
 }
 
+#[derive(Default)]
+pub(crate) struct ManualProbeControl {
+    pub(crate) requested: AtomicBool,
+    pub(crate) running: AtomicBool,
+}
+
 struct RuntimeTelemetry {
+    hostname: Option<String>,
     boot_id: String,
     boot_started_at: String,
     started_at: Instant,
     last_probe_at: Option<String>,
     last_probe_status: Option<String>,
+    last_heartbeat_at: Option<String>,
+    heartbeat_attempted: bool,
+    server_connected: bool,
 }
 
 impl RuntimeTelemetry {
     fn new() -> Self {
         Self {
+            hostname: hostname::detect(),
             boot_id: Uuid::new_v4().to_string(),
             boot_started_at: boot_started_at_now(),
             started_at: Instant::now(),
             last_probe_at: None,
             last_probe_status: None,
+            last_heartbeat_at: None,
+            heartbeat_attempted: false,
+            server_connected: false,
         }
     }
 
@@ -121,6 +200,7 @@ impl RuntimeTelemetry {
             }
         };
         HeartbeatTelemetry {
+            hostname: self.hostname.clone(),
             boot_id: Some(self.boot_id.clone()),
             boot_started_at: Some(self.boot_started_at.clone()),
             uptime_seconds: Some(self.started_at.elapsed().as_secs()),
@@ -150,6 +230,14 @@ impl RuntimeTelemetry {
         self.last_probe_at = Some(chrono_like_now());
         self.last_probe_status = Some("error".into());
     }
+
+    fn record_heartbeat(&mut self, success: bool) {
+        self.heartbeat_attempted = true;
+        self.server_connected = success;
+        if success {
+            self.last_heartbeat_at = Some(chrono_like_now());
+        }
+    }
 }
 
 fn run_once(
@@ -159,15 +247,24 @@ fn run_once(
     client: &Client,
 ) -> Result<(), String> {
     let mut telemetry = RuntimeTelemetry::new();
-    if let Err(error) = client.heartbeat(&telemetry.snapshot(queue)) {
-        eprintln!("linkwatch-agent: heartbeat failed: {error}");
+    match client.heartbeat(&telemetry.snapshot(queue)) {
+        Ok(_) => telemetry.record_heartbeat(true),
+        Err(error) => {
+            telemetry.record_heartbeat(false);
+            logging::event(format!("heartbeat failure: {error}"));
+            eprintln!("linkwatch-agent: heartbeat failed: {error}");
+        }
     }
     let value = match probe.measure("performance") {
         Ok(value) => value,
         Err(error) => {
+            logging::event(format!("measurement failure: {error}"));
             telemetry.record_error();
             if let Err(heartbeat_error) = client.heartbeat(&telemetry.snapshot(queue)) {
+                telemetry.record_heartbeat(false);
                 eprintln!("linkwatch-agent: heartbeat failed: {heartbeat_error}");
+            } else {
+                telemetry.record_heartbeat(true);
             }
             return Err(error);
         }
@@ -178,9 +275,21 @@ fn run_once(
     queue
         .enqueue(&event_id, &payload)
         .map_err(|error| format!("enqueue measurement: {error}"))?;
-    let (uploaded, remaining) = client.upload_pending(queue)?;
+    let (uploaded, remaining) = match client.upload_pending(queue) {
+        Ok(result) => result,
+        Err(error) => {
+            logging::event(format!("server unavailable/upload failure: {error}"));
+            return Err(error);
+        }
+    };
+    logging::event(format!(
+        "measurement complete event={event_id} uploaded={uploaded} queue={remaining}"
+    ));
     if let Err(error) = client.heartbeat(&telemetry.snapshot(queue)) {
+        telemetry.record_heartbeat(false);
         eprintln!("linkwatch-agent: heartbeat failed: {error}");
+    } else {
+        telemetry.record_heartbeat(true);
     }
     println!("measurement collected: {}", event_id);
     println!("queued: {}", remaining);
@@ -198,6 +307,7 @@ fn run_loop(
     queue: Queue,
     mut client: Client,
     stop: StopToken,
+    manual_probe: Arc<ManualProbeControl>,
 ) -> Result<(), String> {
     let state_path = queue.state_path();
     let mut state = scheduler::State::load(&state_path)
@@ -205,13 +315,46 @@ fn run_loop(
     let mut last_maintenance: Option<SystemTime> = None;
     let mut light_due: Option<SystemTime> = None;
     let mut telemetry = RuntimeTelemetry::new();
+    persist_runtime_state(&config, &telemetry, &queue);
 
     loop {
         if stop.is_requested() {
+            logging::event("shutdown requested; pending measurements remain queued");
             println!("shutdown requested; pending measurements remain queued");
             return Ok(());
         }
         let now = SystemTime::now();
+        persist_runtime_state(&config, &telemetry, &queue);
+
+        if manual_probe.requested.swap(false, Ordering::SeqCst) {
+            if manual_probe.running.swap(true, Ordering::SeqCst) {
+                logging::event("manual probe request ignored: probe already running");
+            } else {
+                logging::event("manual probe started");
+                match probe.measure("performance") {
+                    Ok(value) => {
+                        let payload = event(&config, value);
+                        telemetry.record_success(&payload);
+                        let id = queue::Queue::event_id(&payload);
+                        match queue.enqueue(&id, &payload) {
+                            Ok(_) => {
+                                flush_pending(&client, &queue);
+                                logging::event(format!("manual probe complete event={id}"));
+                            }
+                            Err(error) => {
+                                logging::event(format!("manual probe enqueue failure: {error}"))
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        telemetry.record_error();
+                        logging::event(format!("manual probe failure: {error}"));
+                    }
+                }
+                manual_probe.running.store(false, Ordering::SeqCst);
+            }
+            continue;
+        }
 
         // Maintenance is independent of scheduled probes. It keeps the
         // durable spool moving after an outage and applies operator changes
@@ -221,7 +364,11 @@ fn run_loop(
             .unwrap_or(true);
         if maintenance_due {
             if let Err(error) = client.heartbeat(&telemetry.snapshot(&queue)) {
+                telemetry.record_heartbeat(false);
+                logging::event(format!("heartbeat failure: {error}"));
                 eprintln!("linkwatch-agent: heartbeat failed: {error}");
+            } else {
+                telemetry.record_heartbeat(true);
             }
             flush_pending(&client, &queue);
             if use_server_config() {
@@ -239,12 +386,14 @@ fn run_loop(
                     );
                     if before != after {
                         client.update_config(config.clone());
+                        logging::event("received new server config");
                     }
                 }
             }
             last_maintenance = Some(now);
         }
         if stop.is_requested() {
+            logging::event("shutdown requested; pending measurements remain queued");
             println!("shutdown requested; pending measurements remain queued");
             return Ok(());
         }
@@ -259,6 +408,7 @@ fn run_loop(
                     }
                     match probe.measure("light") {
                         Ok(value) => {
+                            logging::event("measurement started mode=light");
                             let light = event(&config, value);
                             telemetry.record_success(&light);
                             let id = queue::Queue::event_id(&light);
@@ -268,6 +418,7 @@ fn run_loop(
                             flush_pending(&client, &queue);
                         }
                         Err(error) => {
+                            logging::event(format!("measurement failure mode=light: {error}"));
                             telemetry.record_error();
                             eprintln!("linkwatch-agent: light probe failed: {error}");
                         }
@@ -294,6 +445,7 @@ fn run_loop(
                 let day = deadline / scheduler::DAY_SECONDS;
                 match probe.measure("performance") {
                     Ok(value) => {
+                        logging::event("measurement started mode=performance");
                         // A deterministic slot id makes the enqueue + cursor
                         // update recoverable if the process crashes between
                         // those two filesystem operations.
@@ -310,11 +462,13 @@ fn run_loop(
                             .map_err(|error| format!("save scheduler state: {error}"))?;
                         flush_pending(&client, &queue);
                         println!("measurement collected: {event_id}");
+                        logging::event(format!("measurement complete event={event_id}"));
                     }
                     Err(error) => {
                         telemetry.record_error();
                         eprintln!("linkwatch-agent: performance probe failed: {error}");
-                        if stop.wait(Duration::from_secs(30)) {
+                        logging::event(format!("measurement failure mode=performance: {error}"));
+                        if stop.wait(Duration::from_secs(1)) {
                             println!("shutdown requested; pending measurements remain queued");
                             return Ok(());
                         }
@@ -335,13 +489,13 @@ fn run_loop(
             let sleep_for = until_deadline
                 .min(until_light)
                 .min(MAINTENANCE_INTERVAL)
-                .min(Duration::from_secs(30));
+                .min(Duration::from_secs(1));
             if stop.wait(sleep_for.max(Duration::from_secs(1))) {
                 println!("shutdown requested; pending measurements remain queued");
                 return Ok(());
             }
         } else {
-            if stop.wait(Duration::from_secs(30)) {
+            if stop.wait(Duration::from_secs(1)) {
                 println!("shutdown requested; pending measurements remain queued");
                 return Ok(());
             }
@@ -350,8 +504,58 @@ fn run_loop(
 }
 
 fn flush_pending(client: &Client, queue: &Queue) {
-    if let Err(error) = client.upload_pending(queue) {
-        eprintln!("linkwatch-agent: upload queue flush failed: {error}");
+    match client.upload_pending(queue) {
+        Ok((uploaded, remaining)) => {
+            if uploaded > 0 {
+                logging::event(format!(
+                    "upload recovered: uploaded={uploaded} queue={remaining}"
+                ));
+            }
+            if remaining > 0 {
+                logging::event(format!("queue accumulating: depth={remaining}"));
+            }
+        }
+        Err(error) => {
+            logging::event(format!("server unavailable/upload failure: {error}"));
+            eprintln!("linkwatch-agent: upload queue flush failed: {error}");
+        }
+    }
+}
+
+fn persist_runtime_state(config: &Config, telemetry: &RuntimeTelemetry, queue: &Queue) {
+    let depth = queue.count().unwrap_or_default();
+    let state = json!({
+        "device_id": &config.device_id,
+        "hostname": &telemetry.hostname,
+        "agent_version": &config.agent_version,
+        "server": &config.server_url,
+        "dashboard_url": config.dashboard_url.as_ref().unwrap_or(&config.server_url),
+        "status": if telemetry.last_probe_status.as_deref() == Some("error") {
+            "error"
+        } else if !telemetry.server_connected && telemetry.heartbeat_attempted {
+            "server_unavailable"
+        } else {
+            "working"
+        },
+        "last_probe_at": &telemetry.last_probe_at,
+        "last_probe_status": &telemetry.last_probe_status,
+        "server_connected": telemetry.server_connected,
+        "heartbeat_attempted": telemetry.heartbeat_attempted,
+        "last_successful_heartbeat": &telemetry.last_heartbeat_at,
+        "queue_depth": depth,
+        "boot_started_at": &telemetry.boot_started_at,
+        "uptime_seconds": telemetry.started_at.elapsed().as_secs(),
+    });
+    // Keep the state file extensionless so Queue::pending never treats it as
+    // an observation payload.
+    let path = queue.dir_path().join(".runtime-state");
+    let temporary = queue.dir_path().join(".runtime-state.tmp");
+    if let Ok(raw) = serde_json::to_vec(&state) {
+        if std::fs::write(&temporary, raw).is_ok() {
+            #[cfg(windows)]
+            let _ = std::fs::remove_file(&path);
+            let _ = std::fs::rename(&temporary, &path);
+        }
     }
 }
 

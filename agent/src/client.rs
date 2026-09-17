@@ -7,6 +7,7 @@ const UPLOAD_BATCH_SIZE: usize = 50;
 
 #[derive(Debug, Clone, Default)]
 pub struct HeartbeatTelemetry {
+    pub hostname: Option<String>,
     pub boot_id: Option<String>,
     pub boot_started_at: Option<String>,
     pub uptime_seconds: Option<u64>,
@@ -53,6 +54,7 @@ impl Client {
             let response = match post_batch(&payloads) {
                 Ok(response) => response,
                 Err(error) => {
+                    crate::logging::event(format!("upload failure: {error}"));
                     eprintln!("linkwatch-agent: upload batch failed: {error}");
                     break;
                 }
@@ -154,6 +156,7 @@ impl Client {
 fn heartbeat_payload(agent_version: &str, telemetry: &HeartbeatTelemetry) -> Value {
     json!({
         "agent_version": agent_version,
+        "hostname": telemetry.hostname,
         "boot_id": telemetry.boot_id,
         "boot_started_at": telemetry.boot_started_at,
         "uptime_seconds": telemetry.uptime_seconds,
@@ -259,6 +262,7 @@ mod tests {
         let payload = heartbeat_payload("0.1.0", &HeartbeatTelemetry::default());
         assert_eq!(payload["agent_version"], "0.1.0");
         assert!(payload["boot_id"].is_null());
+        assert!(payload["hostname"].is_null());
         assert!(payload["boot_started_at"].is_null());
         assert!(payload["uptime_seconds"].is_null());
         assert!(payload["queue_depth"].is_null());
@@ -269,6 +273,7 @@ mod tests {
             "0.1.0",
             &HeartbeatTelemetry {
                 boot_id: Some("boot-1".into()),
+                hostname: Some("DESKTOP-ABC123".into()),
                 boot_started_at: Some("2026-09-17T00:00:00Z".into()),
                 uptime_seconds: Some(7),
                 queue_depth: Some(3),
@@ -277,6 +282,7 @@ mod tests {
             },
         );
         assert_eq!(payload["boot_id"], "boot-1");
+        assert_eq!(payload["hostname"], "DESKTOP-ABC123");
         assert_eq!(payload["boot_started_at"], "2026-09-17T00:00:00Z");
         assert_eq!(payload["uptime_seconds"], 7);
         assert_eq!(payload["queue_depth"], 3);

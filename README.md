@@ -45,7 +45,8 @@ curl http://127.0.0.1:8080/health/ready
 - `server/` — Go HTTP API и state engine; PostgreSQL является единственным
   source of truth. Все effective policy/contract snapshots сохраняются рядом с
   observation, а `client_event_id` обеспечивает идемпотентный ingest.
-- `agent/` — Rust CLI `run`, `once`, `probe`, `version`. Очередь — crash-safe
+- `agent/` — Rust CLI `run`, `once`, `probe`, `version` и Windows background/tray
+  режим. Очередь — crash-safe
   filesystem spool: файл удаляется только после подтверждения сервера; run
   хранит cursor расписания и регулярно flush-ит backlog/heartbeat/config.
 - `migrations/001_initial.sql`, `migrations/002_runtime_hardening.sql`,
@@ -53,7 +54,8 @@ curl http://127.0.0.1:8080/health/ready
   `migrations/004_schema_invariants.sql`,
   `migrations/005_policy_scope_integrity.sql`,
   `migrations/006_situation_integrity.sql`,
-  `migrations/007_agent_telemetry.sql`, `migrations/008_agent_boot_order.sql` и embedded
+  `migrations/007_agent_telemetry.sql`, `migrations/008_agent_boot_order.sql`,
+  `migrations/009_device_hostname.sql` и embedded
   `server/internal/database/migrations/*.sql` — versioned schema.
 - `web/` — существующий frontend; API выдаёт совместимые поля `status`,
   `state`, `latest`, `policy`, `contract`, `incidents`, отчёты CSV/XLSX.
@@ -120,6 +122,11 @@ make smoke
 `scripts/windows/stop-vko-prod.ps1`; они запускают Go image из
 `docker-compose.prod.yml`. Windows binary агента собирается
 `scripts/build-agent.ps1` в `dist/linkwatch-agent-windows-amd64.exe`.
+На Windows запуск этого единственного бинаря без аргументов выполняет
+первоначальную регистрацию service/tray и переносит runtime data в
+`C:\ProgramData\LINKWATCH`; постоянный terminal не нужен. `uninstall` удаляет
+службу и бинарь, сохраняя queue/config, а `uninstall --purge-data` удаляет данные
+явно.
 После сборки доступны обычные native-команды:
 
 ```powershell

@@ -2,8 +2,13 @@
 name = "linkwatch-agent"
 version = "0.1.0"
 edition = "2021"
+autobins = false
 description = "Small native LINKWATCH edge agent"
 license = "MIT"
+
+[[bin]]
+name = "linkwatch-agent"
+path = "src/main.rs"
 
 [dependencies]
 ctrlc = { version = "3.4", features = ["termination"] }

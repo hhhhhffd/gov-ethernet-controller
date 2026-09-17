@@ -36,6 +36,10 @@ pub struct Config {
     pub server_url: String,
     pub device_id: String,
     pub device_token: String,
+    /// Optional path used by service installations. The token itself is
+    /// never placed in a command line or log.
+    #[serde(default)]
+    pub device_token_file: Option<PathBuf>,
     // Kept only so older JSON files and VKO_* environment variables remain
     // parseable during migration. The server resolves these identities from
     // the authenticated device mapping; the agent never sends them.
@@ -49,6 +53,8 @@ pub struct Config {
     pub queue_dir: PathBuf,
     pub probe: ProbeConfig,
     pub probe_type: String,
+    #[serde(default)]
+    pub dashboard_url: Option<String>,
 }
 
 impl Default for Config {
@@ -57,6 +63,7 @@ impl Default for Config {
             server_url: "http://127.0.0.1:8080".into(),
             device_id: "device-42-primary".into(),
             device_token: "demo-device-42-primary-token".into(),
+            device_token_file: None,
             school_id: String::new(),
             line_id: String::new(),
             monitoring_point_id: String::new(),
@@ -64,9 +71,10 @@ impl Default for Config {
             performance_tests_per_day: 4,
             jitter_minutes: 8,
             light_checks_between: false,
-            queue_dir: PathBuf::from(".linkwatch-agent/queue"),
+            queue_dir: default_queue_dir(),
             probe: ProbeConfig::default(),
             probe_type: "demo".into(),
+            dashboard_url: None,
         }
     }
 }
@@ -75,8 +83,11 @@ impl Config {
     pub fn load() -> Result<Self, String> {
         let mut config = Config::default();
         let mut file_probe_explicit = false;
-        if let Ok(path) = env::var("LINKWATCH_CONFIG_FILE").or_else(|_| env::var("VKO_CONFIG_FILE"))
-        {
+        let config_path = env::var("LINKWATCH_CONFIG_FILE")
+            .or_else(|_| env::var("VKO_CONFIG_FILE"))
+            .ok()
+            .or_else(default_config_path);
+        if let Some(path) = config_path {
             let raw = fs::read_to_string(&path)
                 .map_err(|error| format!("read config file {path}: {error}"))?;
             let value: Value = serde_json::from_str(&raw)
@@ -86,6 +97,20 @@ impl Config {
                 .map_err(|error| format!("parse config file: {error}"))?;
         }
         config.apply_env();
+        if first_env(&["LINKWATCH_DEVICE_TOKEN", "VKO_DEVICE_TOKEN"]).is_none() {
+            if let Some(path) = config
+                .device_token_file
+                .clone()
+                .or_else(default_device_token_path)
+            {
+                if let Ok(token) = fs::read_to_string(&path) {
+                    let token = token.trim();
+                    if !token.is_empty() {
+                        config.device_token = token.to_string();
+                    }
+                }
+            }
+        }
         config.performance_tests_per_day = config.performance_tests_per_day.clamp(3, 5);
         config.jitter_minutes = config.jitter_minutes.min(240);
         config.probe.throughput_duration_seconds =
@@ -165,6 +190,9 @@ impl Config {
         text!(server_url, "LINKWATCH_SERVER_URL", "VKO_SERVER_URL");
         text!(device_id, "LINKWATCH_DEVICE_ID", "VKO_DEVICE_ID");
         text!(device_token, "LINKWATCH_DEVICE_TOKEN", "VKO_DEVICE_TOKEN");
+        if let Some(value) = first_env(&["LINKWATCH_DEVICE_TOKEN_FILE", "VKO_DEVICE_TOKEN_FILE"]) {
+            self.device_token_file = Some(PathBuf::from(value));
+        }
         text!(school_id, "LINKWATCH_SCHOOL_ID", "VKO_SCHOOL_ID");
         text!(line_id, "LINKWATCH_LINE_ID", "VKO_LINE_ID");
         text!(
@@ -179,6 +207,9 @@ impl Config {
             "VKO_AGENT_VERSION"
         );
         text!(probe_type, "LINKWATCH_PROBE", "VKO_PROBE");
+        if let Some(value) = first_env(&["LINKWATCH_DASHBOARD_URL", "VKO_DASHBOARD_URL"]) {
+            self.dashboard_url = Some(value);
+        }
         if let Some(value) = first_env(&["LINKWATCH_USE_SERVER_PROBE", "VKO_USE_SERVER_PROBE"]) {
             self.probe.use_server_probe = matches!(
                 value.to_ascii_lowercase().as_str(),
@@ -258,6 +289,53 @@ impl Config {
             }
         }
     }
+}
+
+fn default_config_path() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let mut candidates = Vec::new();
+        if let Ok(value) = env::var("ProgramData") {
+            candidates.push(format!(r#"{value}\LINKWATCH\config.json"#));
+        }
+        if let Ok(executable) = env::current_exe() {
+            if let Some(parent) = executable.parent() {
+                candidates.push(
+                    parent
+                        .join("linkwatch-config.json")
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        return candidates
+            .into_iter()
+            .find(|path| std::path::Path::new(path).exists());
+    }
+    #[cfg(not(windows))]
+    None
+}
+
+fn default_queue_dir() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Ok(program_data) = env::var("ProgramData") {
+            return PathBuf::from(program_data).join("LINKWATCH").join("queue");
+        }
+    }
+    PathBuf::from(".linkwatch-agent/queue")
+}
+
+fn default_device_token_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        return env::var("ProgramData")
+            .ok()
+            .map(|value| PathBuf::from(value).join("LINKWATCH").join("device-token"))
+            .filter(|path| path.exists());
+    }
+    #[cfg(not(windows))]
+    None
 }
 
 fn first_env(names: &[&str]) -> Option<String> {

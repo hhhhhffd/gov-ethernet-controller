@@ -40,6 +40,10 @@ impl Queue {
         self.dir.join(".schedule-state")
     }
 
+    pub fn dir_path(&self) -> PathBuf {
+        self.dir.clone()
+    }
+
     pub fn lock_path(&self) -> PathBuf {
         self.dir.join(".instance.lock")
     }

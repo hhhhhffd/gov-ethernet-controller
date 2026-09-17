@@ -5,6 +5,11 @@
 подтверждения batch-сервера. Поэтому перезапуск, обрыв сети и повторная
 доставка безопасны благодаря `client_event_id`.
 
+При каждом запуске агент автоматически определяет системный hostname
+(`COMPUTERNAME` в Windows, hostname системы в Linux) и передаёт его heartbeat.
+Hostname — только эксплуатационное поле; авторизация, школа и линия по-прежнему
+определяются `device_id` и серверной привязкой.
+
 ## CLI
 
 ```text
@@ -14,6 +19,23 @@ linkwatch-agent once                  # одна performance-проба и uploa
 linkwatch-agent run                   # расписание 3–5 раз в сутки
 linkwatch-agent --once                # alias once
 ```
+
+В Windows один release-бинарь, запущенный без аргументов, выполняет первичную
+установку: копирует себя в `C:\Program Files\LINKWATCH`, сохраняет queue/config/logs
+в `C:\ProgramData\LINKWATCH`, защищает token ACL, регистрирует Windows Service и
+tray autostart, затем запускает их. Дальше service владеет scheduler/probe/spool/
+heartbeat/upload, а `tray` общается с ним через локальный named pipe. Для удаления
+используйте тот же бинарь с `uninstall` (очередь сохраняется) или
+`uninstall --purge-data` для явного удаления `ProgramData`. CLI-команды `run`,
+`once`, `probe`, `version` остаются доступными.
+Перед первым запуском положите рядом с exe `linkwatch-config.json` либо задайте
+обычные `LINKWATCH_SERVER_URL`, `LINKWATCH_DEVICE_ID` и `LINKWATCH_DEVICE_TOKEN`;
+установщик один раз перенесёт token в защищённый файл `ProgramData` и больше не
+передаст его через command line.
+
+Tray показывает состояние, очередь, hostname и последний heartbeat, запускает
+обычный measurement pipeline через service (`probe → queue → upload`), открывает
+dashboard и копирует диагностику. Сетевой порт для tray не открывается.
 
 `LINKWATCH_*` — основной набор переменных конфигурации; старые `VKO_*` имена
 остаются совместимыми. Для файла конфигурации задайте
@@ -30,7 +52,7 @@ JSON-файлы перемещаются в `queue/quarantine/`, не блоки
 поэтому два процесса не обрабатывают одну очередь одновременно. `Ctrl+C` и
 `SIGTERM` корректно завершают `run`: уже записанные события остаются в очереди,
 а длительное ожидание расписания прерывается без задержки до следующего слота.
-Heartbeat дополнительно передаёт session `boot_id`, `boot_started_at`, monotonic `uptime_seconds`,
+Heartbeat дополнительно передаёт hostname, session `boot_id`, `boot_started_at`, monotonic `uptime_seconds`,
 `queue_depth` и `last_probe_status`/`last_probe_at`; сервер использует их только
 для fleet-диагностики, а не для вычисления authoritative freshness.
 
