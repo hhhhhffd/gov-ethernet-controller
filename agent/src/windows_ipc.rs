@@ -86,13 +86,13 @@ fn serve(queue_dir: PathBuf, control: Arc<ManualProbeControl>) {
             &mut descriptor_size,
         ) != 0
     };
+    if !security_ready {
+        crate::logging::event("named pipe security descriptor setup failed");
+        return;
+    }
     let mut security = SecurityAttributes {
         length: std::mem::size_of::<SecurityAttributes>() as Dword,
-        descriptor: if security_ready {
-            descriptor
-        } else {
-            ptr::null_mut()
-        },
+        descriptor,
         inherit_handle: 0,
     };
     loop {
@@ -105,11 +105,7 @@ fn serve(queue_dir: PathBuf, control: Arc<ManualProbeControl>) {
                 16 * 1024,
                 16 * 1024,
                 1_000,
-                if security_ready {
-                    &mut security
-                } else {
-                    ptr::null_mut()
-                },
+                &mut security,
             )
         };
         if pipe == INVALID_HANDLE_VALUE || pipe.is_null() {

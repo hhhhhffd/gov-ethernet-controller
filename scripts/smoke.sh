@@ -60,6 +60,19 @@ CARGO_TARGET_DIR="$target_dir" cargo run --release --manifest-path agent/Cargo.t
 queued_files="$(find "$queue_dir" -maxdepth 1 -type f -name '*.json' -print | wc -l | tr -d ' ')"
 [[ "$queued_files" == "0" ]] || { echo "acknowledged queue items were not removed" >&2; exit 1; }
 
+# The online run sends the automatic host name in heartbeat. Verify that the
+# server persisted and exposes it through both device-facing API surfaces.
+devices_after="$(curl -fsS -H "Authorization: Bearer $token" "$base/api/v1/admin/devices")"
+printf '%s' "$devices_after" | grep -Fq '"hostname":"' || {
+  echo "heartbeat hostname was not persisted in admin device API" >&2
+  exit 1
+}
+device_detail="$(curl -fsS -H "Authorization: Bearer $token" "$base/api/v1/devices/$smoke_device_id")"
+printf '%s' "$device_detail" | grep -Eq '"hostname":"[^"]+"' || {
+  echo "heartbeat hostname was not exposed in device detail API" >&2
+  exit 1
+}
+
 # Replay the acknowledged payload to prove server-side idempotency: the same
 # device/event pair must be reported as a duplicate without a second row.
 duplicate_body="$(printf '{"measurements":[%s]}' "$(<"$duplicate_payload")")"

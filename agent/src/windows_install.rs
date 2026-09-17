@@ -8,10 +8,54 @@
 use crate::config::Config;
 use serde_json::json;
 use std::{
-    env, fs,
+    env,
+    ffi::c_void,
+    fs,
     path::{Path, PathBuf},
     process::Command,
+    ptr, thread,
+    time::Duration,
 };
+
+type Handle = *mut c_void;
+const SW_HIDE: i32 = 0;
+
+#[link(name = "shell32")]
+extern "system" {
+    fn ShellExecuteW(
+        hwnd: Handle,
+        operation: *const u16,
+        file: *const u16,
+        parameters: *const u16,
+        directory: *const u16,
+        show: i32,
+    ) -> Handle;
+}
+
+/// Ask the shell for a UAC-elevated copy when a user starts the one-file
+/// installer from Explorer. The elevated child is marked by its private
+/// argument and performs the actual Program Files/SCM changes.
+pub fn request_elevation() -> Result<bool, String> {
+    let current =
+        env::current_exe().map_err(|error| format!("locate agent executable: {error}"))?;
+    let file = wide(&current.to_string_lossy());
+    let operation = wide("runas");
+    let parameters = wide("--elevated-install");
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            operation.as_ptr(),
+            file.as_ptr(),
+            parameters.as_ptr(),
+            ptr::null(),
+            SW_HIDE,
+        )
+    };
+    if result as isize <= 32 {
+        return Err("Windows UAC elevation was cancelled or failed".into());
+    }
+    Ok(true)
+}
 
 pub fn install() -> Result<(), String> {
     let current =
@@ -68,7 +112,7 @@ pub fn install() -> Result<(), String> {
     )
     .map_err(|error| format!("write installed config: {error}"))?;
 
-    run_sc("stop", "LINKWATCH");
+    stop_service("LINKWATCH");
     run_sc("delete", "LINKWATCH");
     let service_image = format!(r#""{}" run"#, installed.display());
     run_sc_args(&[
@@ -88,6 +132,15 @@ pub fn install() -> Result<(), String> {
         "LINKWATCH",
         "Background LINKWATCH monitoring runtime",
     ])?;
+    // Let the SCM bring monitoring back after a transient runtime crash.
+    run_sc_args(&[
+        "failure",
+        "LINKWATCH",
+        "reset=",
+        "86400",
+        "actions=",
+        "restart/60000/restart/60000/restart/60000",
+    ])?;
     run_reg_run(&install_root.join("linkwatch-agent.exe"))?;
     run_sc_args(&["start", "LINKWATCH"])?;
 
@@ -105,11 +158,11 @@ pub fn install() -> Result<(), String> {
         ])
         .spawn();
     crate::logging::event("Windows installation completed; service and tray started");
-    // The original bootstrap may be removed by the operator after this
-    // process exits. Windows does not permit unlinking the currently running
-    // image, so do not invoke a shell with an untrusted path just to delete it.
+    // Windows keeps the current image open until process exit. Schedule a
+    // small, hidden helper only for deleting this trusted bootstrap path; no
+    // token or other secret is passed to it.
     if current != installed {
-        let _ = fs::remove_file(&current);
+        remove_after_exit(&current);
     }
     Ok(())
 }
@@ -118,7 +171,7 @@ pub fn uninstall(purge_data: bool) -> Result<(), String> {
     let program_files =
         env::var("ProgramFiles").map_err(|_| "ProgramFiles is not set".to_string())?;
     let program_data = env::var("ProgramData").map_err(|_| "ProgramData is not set".to_string())?;
-    run_sc("stop", "LINKWATCH");
+    stop_service("LINKWATCH");
     run_sc("delete", "LINKWATCH");
     let _ = Command::new("reg.exe")
         .args([
@@ -131,8 +184,17 @@ pub fn uninstall(purge_data: bool) -> Result<(), String> {
         .status();
     let install_root = PathBuf::from(program_files).join("LINKWATCH");
     if install_root.exists() {
-        fs::remove_dir_all(&install_root)
-            .map_err(|error| format!("remove installed binaries: {error}"))?;
+        let current = env::current_exe().ok();
+        let running_from_install = current
+            .as_ref()
+            .map(|path| path.starts_with(&install_root))
+            .unwrap_or(false);
+        if running_from_install {
+            remove_after_exit(&install_root);
+        } else {
+            fs::remove_dir_all(&install_root)
+                .map_err(|error| format!("remove installed binaries: {error}"))?;
+        }
     }
     if purge_data {
         let data_root = PathBuf::from(program_data).join("LINKWATCH");
@@ -159,6 +221,29 @@ fn protect_token(path: &Path) -> Result<(), String> {
 
 fn run_sc(command: &str, name: &str) {
     let _ = run_sc_args(&[command, name]);
+}
+
+fn stop_service(name: &str) {
+    let _ = Command::new("sc.exe").args(["stop", name]).status();
+    for _ in 0..60 {
+        let Ok(output) = Command::new("sc.exe").args(["query", name]).output() else {
+            break;
+        };
+        if !output.status.success() || String::from_utf8_lossy(&output.stdout).contains("STOPPED") {
+            break;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
+fn remove_after_exit(path: &Path) {
+    let escaped = path.display().to_string().replace('\'', "''");
+    let script = format!(
+        "Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath '{escaped}' -Recurse -Force -ErrorAction SilentlyContinue"
+    );
+    let _ = Command::new("powershell.exe")
+        .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
+        .spawn();
 }
 
 fn run_sc_args(args: &[&str]) -> Result<(), String> {
@@ -196,4 +281,8 @@ fn run_reg_run(binary: &Path) -> Result<(), String> {
         return Err(format!("reg.exe failed with {status}"));
     }
     Ok(())
+}
+
+fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
 }

@@ -51,7 +51,9 @@ fn run() -> Result<(), String> {
         println!("linkwatch-agent {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    let mode = if args.iter().any(|arg| arg == "--once") {
+    let mode = if args.iter().any(|arg| arg == "--elevated-install") {
+        "install".to_string()
+    } else if args.iter().any(|arg| arg == "--once") {
         "once".to_string()
     } else {
         args.first().cloned().unwrap_or_else(|| {
@@ -67,6 +69,11 @@ fn run() -> Result<(), String> {
     };
     #[cfg(windows)]
     if mode == "install" {
+        if !args.iter().any(|arg| arg == "--elevated-install")
+            && windows_install::request_elevation()?
+        {
+            return Ok(());
+        }
         return windows_install::install();
     }
     #[cfg(windows)]
@@ -255,6 +262,7 @@ fn run_once(
             eprintln!("linkwatch-agent: heartbeat failed: {error}");
         }
     }
+    logging::event("measurement started mode=performance");
     let value = match probe.measure("performance") {
         Ok(value) => value,
         Err(error) => {
@@ -406,9 +414,12 @@ fn run_loop(
                         println!("shutdown requested; pending measurements remain queued");
                         return Ok(());
                     }
-                    match probe.measure("light") {
+                    logging::event("measurement started mode=light");
+                    manual_probe.running.store(true, Ordering::SeqCst);
+                    let light_result = probe.measure("light");
+                    manual_probe.running.store(false, Ordering::SeqCst);
+                    match light_result {
                         Ok(value) => {
-                            logging::event("measurement started mode=light");
                             let light = event(&config, value);
                             telemetry.record_success(&light);
                             let id = queue::Queue::event_id(&light);
@@ -443,9 +454,12 @@ fn run_loop(
                     return Ok(());
                 }
                 let day = deadline / scheduler::DAY_SECONDS;
-                match probe.measure("performance") {
+                logging::event("measurement started mode=performance");
+                manual_probe.running.store(true, Ordering::SeqCst);
+                let performance_result = probe.measure("performance");
+                manual_probe.running.store(false, Ordering::SeqCst);
+                match performance_result {
                     Ok(value) => {
-                        logging::event("measurement started mode=performance");
                         // A deterministic slot id makes the enqueue + cursor
                         // update recoverable if the process crashes between
                         // those two filesystem operations.
@@ -530,10 +544,17 @@ fn persist_runtime_state(config: &Config, telemetry: &RuntimeTelemetry, queue: &
         "agent_version": &config.agent_version,
         "server": &config.server_url,
         "dashboard_url": config.dashboard_url.as_ref().unwrap_or(&config.server_url),
-        "status": if telemetry.last_probe_status.as_deref() == Some("error") {
-            "error"
+        // A non-empty spool is actionable even when heartbeat still reaches
+        // the server (for example, the ingest endpoint is down). Keep this
+        // visible in the tray instead of reporting a misleading healthy state.
+        "status": if depth > 0 {
+            "server_unavailable"
         } else if !telemetry.server_connected && telemetry.heartbeat_attempted {
             "server_unavailable"
+        } else if telemetry.last_probe_status.as_deref() == Some("error") {
+            "error"
+        } else if telemetry.last_probe_status.as_deref() == Some("no_internet") {
+            "connection_problem"
         } else {
             "working"
         },

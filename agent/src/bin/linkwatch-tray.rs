@@ -357,10 +357,10 @@ mod win {
         let text = if STATUS.is_empty() {
             "Нет связи с агентом".into()
         } else {
-            STATUS.clone()
+            diagnostic_text(&STATUS)
         };
         copy_clipboard(&text);
-        show_message(hwnd, "Диагностика скопирована в clipboard", "LINKWATCH");
+        show_message(hwnd, &text, "LINKWATCH — диагностика (скопировано)");
     }
 
     unsafe fn open_dashboard(hwnd: Hwnd) {
@@ -457,10 +457,30 @@ mod win {
         Some(value.split([',', '}']).next()?.trim().to_string())
     }
 
+    fn diagnostic_text(json: &str) -> String {
+        let value = |name: &str, fallback: &str| {
+            field(json, name).filter(|value| !value.is_empty()).unwrap_or_else(|| fallback.into())
+        };
+        format!(
+            "Device ID: {}\nHostname: {}\nAgent version: {}\nServer: {}\nСтатус связи: {}\nПоследний heartbeat: {}\nПоследний замер: {}\nПоследний probe status: {}\nQueue depth: {}\nUptime: {} s",
+            value("device_id", "нет данных"),
+            value("hostname", "нет данных"),
+            value("agent_version", "нет данных"),
+            value("server", "нет данных"),
+            status_label(&value("status", "starting")),
+            value("last_successful_heartbeat", "нет данных"),
+            value("last_probe_at", "нет данных"),
+            value("last_probe_status", "нет данных"),
+            value("queue_depth", "0"),
+            value("uptime_seconds", "0"),
+        )
+    }
+
     fn status_label(value: &str) -> &'static str {
         match value {
             "working" => "Работает",
             "server_unavailable" => "Нет связи с сервером",
+            "connection_problem" => "Проблема соединения",
             "error" => "Ошибка агента",
             "starting" => "Запускается",
             _ => "Неизвестно",
