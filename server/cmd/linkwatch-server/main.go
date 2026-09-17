@@ -45,6 +45,7 @@ func main() {
 	}
 	httpServer := &http.Server{Addr: address, Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
 	go runNotificationOutbox(ctx, server.Measure, logger)
+	go runFreshnessWorker(ctx, server.Measure, logger)
 	go func() {
 		logger.Info("linkwatch server listening", "addr", address)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -69,6 +70,27 @@ func runNotificationOutbox(ctx context.Context, service *measurements.Service, l
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+func runFreshnessWorker(ctx context.Context, service *measurements.Service, logger *slog.Logger) {
+	const interval = 60 * time.Second
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	refresh := func() {
+		refreshed, err := service.RefreshFreshness(ctx, time.Now().UTC())
+		if err != nil && ctx.Err() == nil {
+			logger.Warn("freshness refresh failed", "refreshed", refreshed, "error", err)
+		}
+	}
+	refresh()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			refresh()
 		}
 	}
 }

@@ -17,6 +17,8 @@ type lineRecord struct {
 	ID, OrganizationID, SchoolID, OrganizationName, District, Address, ContactName, ContactPhone string
 	ProviderID, ProviderName, SupportContact, Role, Technology, Status                           string
 	Latitude, Longitude                                                                          *float64
+	State                                                                                        *stateRecord
+	Latest                                                                                       *latestRecord
 }
 
 func scanLine(row pgx.Row) (lineRecord, error) {
@@ -134,17 +136,31 @@ func (s *Server) latest(ctx context.Context, lineID string) map[string]interface
 	if err != nil {
 		return map[string]interface{}{}
 	}
+	return latestMap(row)
+}
+
+func latestMap(row latestRecord) map[string]interface{} {
 	return map[string]interface{}{"id": row.ID, "client_event_id": row.ClientEventID, "observed_at": row.ObservedAt, "device_id": row.DeviceID, "mode": row.Mode, "connection_status": row.ConnectionStatus, "download": row.Download, "upload": row.Upload, "ping": row.Ping, "jitter": row.Jitter, "packet_loss": row.PacketLoss, "loss": row.PacketLoss, "availability": row.Availability, "at": row.ObservedAt}
 }
 
 func (s *Server) lineMap(ctx context.Context, line lineRecord) map[string]interface{} {
-	_ = s.Measure.MarkFreshness(ctx, line.ID, time.Now().UTC())
-	state := s.state(ctx, line.ID)
+	state := stateRecord{}
+	if line.State != nil {
+		state = *line.State
+	} else {
+		state = s.state(ctx, line.ID)
+	}
 	status := state.ConnectionState
 	if state.DataState == "NO_DATA" {
 		status = "NO_DATA"
 	}
-	return map[string]interface{}{"id": line.ID, "line_id": line.ID, "organization_id": line.OrganizationID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "school_name": line.OrganizationName, "district": line.District, "address": line.Address, "contact_name": line.ContactName, "contact_phone": line.ContactPhone, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "provider": line.ProviderName, "support_contact": line.SupportContact, "role": line.Role, "technology": line.Technology, "line_status": line.Status, "status": status, "data_state": state.DataState, "quality_state": state.ConnectionState, "connection_state": state.ConnectionState, "contract_state": state.ContractState, "state": stateMap(state), "latest": s.latest(ctx, line.ID)}
+	latest := map[string]interface{}{}
+	if line.Latest != nil {
+		latest = latestMap(*line.Latest)
+	} else {
+		latest = s.latest(ctx, line.ID)
+	}
+	return map[string]interface{}{"id": line.ID, "line_id": line.ID, "organization_id": line.OrganizationID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "school_name": line.OrganizationName, "district": line.District, "address": line.Address, "contact_name": line.ContactName, "contact_phone": line.ContactPhone, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "provider": line.ProviderName, "support_contact": line.SupportContact, "role": line.Role, "technology": line.Technology, "line_status": line.Status, "status": status, "data_state": state.DataState, "quality_state": state.ConnectionState, "connection_state": state.ConnectionState, "contract_state": state.ContractState, "state": stateMap(state), "latest": latest}
 }
 
 func (s *Server) listLines(w http.ResponseWriter, r *http.Request) {
@@ -167,7 +183,18 @@ func (s *Server) listLines(w http.ResponseWriter, r *http.Request) {
 	add("provider_id", "l.provider_id")
 	add("role", "l.role")
 	add("line_status", "l.status")
-	rows, err := s.DB.Pool.Query(r.Context(), `SELECT l.id,l.organization_id,l.provider_id,l.role,l.technology,l.status,o.school_id,o.name,o.district,o.address,o.contact_name,o.contact_phone,o.latitude,o.longitude,p.name,p.support_contact FROM lines l JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE `+strings.Join(filters, " AND ")+` ORDER BY o.district,o.name,l.role`, params...)
+	rows, err := s.DB.Pool.Query(r.Context(), `SELECT l.id,l.organization_id,l.provider_id,l.role,l.technology,l.status,o.school_id,o.name,o.district,o.address,o.contact_name,o.contact_phone,o.latitude,o.longitude,p.name,p.support_contact,
+		ls.data_state,ls.connection_state,ls.contract_state,ls.recovery_state,ls.reason,ls.effective_since,ls.updated_at,ls.evidence_ids_json,ls.policy_id,
+		latest.id,latest.client_event_id,latest.observed_at,latest.device_id,latest.mode,latest.connection_status,latest.download,latest.upload,latest.ping,latest.jitter,latest.packet_loss,latest.availability
+		FROM lines l
+		JOIN organizations o ON o.id=l.organization_id
+		LEFT JOIN providers p ON p.id=l.provider_id
+		LEFT JOIN line_states ls ON ls.line_id=l.id
+		LEFT JOIN LATERAL (
+			SELECT id,client_event_id,observed_at,device_id,mode,connection_status,download,upload,ping,jitter,packet_loss,availability
+			FROM measurements WHERE line_id=l.id ORDER BY observed_at DESC,id DESC LIMIT 1
+		) latest ON TRUE
+		WHERE `+strings.Join(filters, " AND ")+` ORDER BY o.district,o.name,l.role`, params...)
 	if err != nil {
 		writeError(w, 500, "could not query lines")
 		return
@@ -177,13 +204,36 @@ func (s *Server) listLines(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var line lineRecord
 		var providerID, providerName, supportContact *string
-		if err := rows.Scan(&line.ID, &line.OrganizationID, &providerID, &line.Role, &line.Technology, &line.Status, &line.SchoolID, &line.OrganizationName, &line.District, &line.Address, &line.ContactName, &line.ContactPhone, &line.Latitude, &line.Longitude, &providerName, &supportContact); err != nil {
+		var dataState, connectionState, contractState, recoveryState, reason *string
+		var effectiveSince, updatedAt *time.Time
+		var evidence []byte
+		var policyID *int64
+		var latestID *int64
+		var latestClientEventID, latestDeviceID, latestMode, latestConnectionStatus *string
+		var latestObservedAt *time.Time
+		var latestDownload, latestUpload, latestPing, latestJitter, latestPacketLoss, latestAvailability *float64
+		if err := rows.Scan(&line.ID, &line.OrganizationID, &providerID, &line.Role, &line.Technology, &line.Status, &line.SchoolID, &line.OrganizationName, &line.District, &line.Address, &line.ContactName, &line.ContactPhone, &line.Latitude, &line.Longitude, &providerName, &supportContact, &dataState, &connectionState, &contractState, &recoveryState, &reason, &effectiveSince, &updatedAt, &evidence, &policyID, &latestID, &latestClientEventID, &latestObservedAt, &latestDeviceID, &latestMode, &latestConnectionStatus, &latestDownload, &latestUpload, &latestPing, &latestJitter, &latestPacketLoss, &latestAvailability); err != nil {
 			writeError(w, 500, "could not read line")
 			return
 		}
 		line.ProviderID = stringValue(providerID)
 		line.ProviderName = stringValue(providerName)
 		line.SupportContact = stringValue(supportContact)
+		line.State = &stateRecord{DataState: "NO_DATA", ConnectionState: "UNKNOWN", ContractState: "UNKNOWN", RecoveryState: "NONE", Reason: "No observations yet", Evidence: []int64{}}
+		if dataState != nil {
+			line.State.DataState = *dataState
+			line.State.ConnectionState = stringValue(connectionState)
+			line.State.ContractState = stringValue(contractState)
+			line.State.RecoveryState = stringValue(recoveryState)
+			line.State.Reason = stringValue(reason)
+			line.State.EffectiveSince = effectiveSince
+			line.State.UpdatedAt = updatedAt
+			line.State.PolicyID = policyID
+			_ = jsonUnmarshal(evidence, &line.State.Evidence)
+		}
+		if latestID != nil && latestObservedAt != nil && latestClientEventID != nil && latestDeviceID != nil && latestMode != nil && latestConnectionStatus != nil {
+			line.Latest = &latestRecord{ID: *latestID, ClientEventID: *latestClientEventID, ObservedAt: *latestObservedAt, DeviceID: *latestDeviceID, Mode: *latestMode, ConnectionStatus: *latestConnectionStatus, Download: latestDownload, Upload: latestUpload, Ping: latestPing, Jitter: latestJitter, PacketLoss: latestPacketLoss, Availability: latestAvailability}
+		}
 		result = append(result, s.lineMap(r.Context(), line))
 	}
 	if err := rows.Err(); err != nil {

@@ -26,20 +26,10 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM measurements m JOIN lines l ON l.id=m.line_id JOIN organizations o ON o.id=l.organization_id WHERE m.observed_at >= $1 AND `+whereWithSince, freshArgs...).Scan(&fresh); err != nil {
 		fresh = 0
 	}
-	problemLines := 0
-	rows, err := s.DB.Pool.Query(r.Context(), `SELECT l.id FROM lines l JOIN organizations o ON o.id=l.organization_id WHERE l.status <> 'DELETED' AND `+where, params...)
-	if err == nil {
-		for rows.Next() {
-			var id string
-			if rows.Scan(&id) == nil {
-				_ = s.Measure.MarkFreshness(r.Context(), id, time.Now().UTC())
-				st := s.state(r.Context(), id)
-				if st.ConnectionState == "DEGRADED" || st.ConnectionState == "NO_INTERNET" || st.ContractState == "DEVIATES" {
-					problemLines++
-				}
-			}
-		}
-		rows.Close()
+	var problemLines int
+	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM lines l JOIN organizations o ON o.id=l.organization_id LEFT JOIN line_states ls ON ls.line_id=l.id WHERE l.status <> 'DELETED' AND `+where+` AND (ls.connection_state IN ('DEGRADED','NO_INTERNET') OR ls.contract_state='DEVIATES')`, params...).Scan(&problemLines); err != nil {
+		writeError(w, 500, "could not calculate problem lines")
+		return
 	}
 	var avgDownload, avgUpload, avgPing *float64
 	_ = s.DB.Pool.QueryRow(r.Context(), `SELECT AVG(m.download),AVG(m.upload),AVG(m.ping) FROM measurements m JOIN lines l ON l.id=m.line_id JOIN organizations o ON o.id=l.organization_id WHERE m.observed_at >= $1 AND `+whereWithSince, freshArgs...).Scan(&avgDownload, &avgUpload, &avgPing)
@@ -77,8 +67,7 @@ func (s *Server) mapPoints(w http.ResponseWriter, r *http.Request) {
 			line.ProviderID = stringValue(providerID)
 			line.ProviderName = stringValue(providerName)
 			line.SupportContact = stringValue(supportContact)
-			item := s.lineMap(r.Context(), line)
-			result = append(result, map[string]interface{}{"line_id": line.ID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "district": line.District, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "role": line.Role, "technology": line.Technology, "state": item["state"]})
+			result = append(result, map[string]interface{}{"line_id": line.ID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "district": line.District, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "role": line.Role, "technology": line.Technology, "state": stateMap(s.state(r.Context(), line.ID))})
 		}
 	}
 	writeJSON(w, 200, result)

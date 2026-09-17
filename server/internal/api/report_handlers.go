@@ -52,14 +52,6 @@ func periodBounds(q map[string]string, defaultDays int) (time.Time, time.Time, e
 }
 
 func (s *Server) reportRows(r *http.Request, p *auth.Principal, start, end time.Time) ([]reportRow, error) {
-	if status := r.URL.Query().Get("status"); status != "" {
-		// Status is a freshness-aware materialized line verdict. Refresh only
-		// candidate lines before applying the status predicate so stale data
-		// cannot leak into a current-status report or export.
-		if err := s.refreshReportFreshness(r.Context(), r, p); err != nil {
-			return nil, err
-		}
-	}
 	where, params := scopeSQL(p, 3)
 	filters := []string{"m.observed_at >= $1", "m.observed_at < $2", where}
 	add := func(key, column string) {
@@ -252,11 +244,6 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) reportLineCount(ctx context.Context, r *http.Request, p *auth.Principal) int {
-	if status := r.URL.Query().Get("status"); status != "" {
-		if err := s.refreshReportFreshness(ctx, r, p); err != nil {
-			return 0
-		}
-	}
 	ids, err := s.reportLineIDs(ctx, r, p, true)
 	if err != nil {
 		return 0
@@ -275,9 +262,9 @@ func normalizeReportStatus(value string) string {
 	return normalized
 }
 
-// reportLineIDs resolves the lines represented by report filters. It keeps
-// status filtering on the same materialized state axis as reportRows while
-// allowing callers to refresh freshness before applying that predicate.
+// reportLineIDs resolves the lines represented by report filters. Status
+// filtering uses the materialized line state maintained by the freshness
+// worker; report reads never mutate that state.
 func (s *Server) reportLineIDs(ctx context.Context, r *http.Request, p *auth.Principal, withStatus bool) ([]string, error) {
 	where, params := scopeSQL(p, 1)
 	filters := []string{"l.status <> 'DELETED'", where}
@@ -324,19 +311,6 @@ func (s *Server) reportLineIDs(ctx context.Context, r *http.Request, p *auth.Pri
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
-}
-
-func (s *Server) refreshReportFreshness(ctx context.Context, r *http.Request, p *auth.Principal) error {
-	ids, err := s.reportLineIDs(ctx, r, p, false)
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if err := s.Measure.MarkFreshness(ctx, id, time.Now().UTC()); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func ratio(ok, known int) *float64 {

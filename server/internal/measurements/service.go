@@ -872,6 +872,43 @@ func mustJSON(value interface{}) string { data, _ := json.Marshal(value); return
 // Freshness is intentionally evaluated from observed_at.  A replayed backlog
 // can be accepted as evidence while it still leaves the current data axis
 // NO_DATA until a recent observation arrives.
+// RefreshFreshness updates materialized freshness for every non-deleted line.
+// It is called by the server worker, never by a read handler, so HTTP reads do
+// not acquire line locks or mutate state.
+func (s *Service) RefreshFreshness(ctx context.Context, now time.Time) (int, error) {
+	rows, err := s.DB.Pool.Query(ctx, `SELECT id FROM lines WHERE status <> 'DELETED' ORDER BY id`)
+	if err != nil {
+		return 0, err
+	}
+	lineIDs := []string{}
+	for rows.Next() {
+		var lineID string
+		if err := rows.Scan(&lineID); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		lineIDs = append(lineIDs, lineID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+
+	refreshed := 0
+	var firstErr error
+	for _, lineID := range lineIDs {
+		if err := s.MarkFreshness(ctx, lineID, now); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("refresh line %s: %w", lineID, err)
+			}
+			continue
+		}
+		refreshed++
+	}
+	return refreshed, firstErr
+}
+
 func (s *Service) MarkFreshness(ctx context.Context, lineID string, now time.Time) error {
 	tx, err := s.DB.Pool.Begin(ctx)
 	if err != nil {
