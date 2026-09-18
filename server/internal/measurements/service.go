@@ -247,6 +247,79 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agent
 	return result, nil
 }
 
+// updateVerification persists only the explicit evidence relation. It runs
+// under the existing per-line lock, so a retry or concurrent ingest cannot
+// choose two different verifiers or rewrite current line state.
+func updateVerification(ctx context.Context, tx pgx.Tx, lineID string, measurementID int64, input Input, evaluated evaluation.Result, policy *evaluation.Policy, contract *evaluation.Contract, now time.Time) error {
+	if input.Quality == "SUSPECT" {
+		expires := input.ObservedAt.Add(24 * time.Hour)
+		if policy != nil && policy.FreshnessSec > 0 {
+			expires = input.ObservedAt.Add(time.Duration(policy.FreshnessSec) * time.Second)
+		}
+		snapshot, err := json.Marshal(map[string]interface{}{
+			"measurement_id": measurementID, "observed_at": input.ObservedAt, "quality": input.Quality,
+			"connection_status": input.ConnectionStatus, "download": input.Download, "upload": input.Upload,
+			"ping": input.Ping, "jitter": input.Jitter, "packet_loss": input.PacketLoss, "availability": input.Availability,
+			"evaluation":      map[string]interface{}{"baseline_state": evaluated.BaselineState, "contract_state": evaluated.ContractState, "valid": evaluated.Valid, "reason": evaluated.Reason, "violations": evaluated.Violations},
+			"policy_snapshot": evaluated.PolicySnapshot, "contract_snapshot": evaluated.ContractSnapshot,
+		})
+		if err != nil {
+			return fmt.Errorf("marshal verification candidate snapshot: %w", err)
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO measurement_verifications(candidate_measurement_id,status,reason,candidate_snapshot_json,candidate_observed_at,expires_at,created_at,updated_at)
+            VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$7) ON CONFLICT (candidate_measurement_id) DO NOTHING`, measurementID, VerificationPending, "suspicious measurement requires subsequent evidence", string(snapshot), input.ObservedAt, expires, now)
+		if err != nil {
+			return fmt.Errorf("persist verification candidate: %w", err)
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,after_json,created_at)
+            VALUES ('SYSTEM','system','measurement.verification_pending','measurement',$1,$2::jsonb,$3) ON CONFLICT DO NOTHING`, strconv.FormatInt(measurementID, 10), fmt.Sprintf(`{"status":%q}`, VerificationPending), now)
+		return err
+	}
+
+	rows, err := tx.Query(ctx, `SELECT v.id,v.status,v.candidate_observed_at,v.expires_at
+        FROM measurement_verifications v JOIN measurements cm ON cm.id=v.candidate_measurement_id
+        WHERE cm.line_id=$1 AND v.status=$2 AND cm.observed_at < $3
+        ORDER BY cm.observed_at,cm.id FOR UPDATE OF v`, lineID, VerificationPending, input.ObservedAt)
+	if err != nil {
+		return fmt.Errorf("load pending verifications: %w", err)
+	}
+	defer rows.Close()
+	outcome := VerificationOutcome(evaluated.Valid, evaluated.BaselineState, evaluated.ContractState, input.ConnectionStatus)
+	for rows.Next() {
+		var id int64
+		var status string
+		var candidateAt, expiresAt time.Time
+		if err := rows.Scan(&id, &status, &candidateAt, &expiresAt); err != nil {
+			return err
+		}
+		next, changed := TransitionVerification(VerificationCandidate{Status: status, CandidateAt: candidateAt, ExpiresAt: expiresAt}, input.ObservedAt, outcome)
+		if !changed {
+			continue
+		}
+		verifyingSnapshot, marshalErr := json.Marshal(map[string]interface{}{
+			"measurement_id": measurementID, "observed_at": input.ObservedAt, "quality": input.Quality,
+			"connection_status": input.ConnectionStatus, "baseline_state": evaluated.BaselineState,
+			"contract_state": evaluated.ContractState, "valid": evaluated.Valid, "reason": evaluated.Reason,
+			"violations": evaluated.Violations, "policy_snapshot": evaluated.PolicySnapshot, "contract_snapshot": evaluated.ContractSnapshot,
+		})
+		if marshalErr != nil {
+			return fmt.Errorf("marshal verification snapshot: %w", marshalErr)
+		}
+		reason := "subsequent evidence classified the candidate"
+		if next == VerificationExpired {
+			reason = "no eligible subsequent evidence before expiry"
+		}
+		_, err = tx.Exec(ctx, `UPDATE measurement_verifications SET status=$1,verifying_measurement_id=CASE WHEN $1=$2 THEN $3 ELSE NULL END,verifying_snapshot_json=CASE WHEN $1=$2 THEN $4::jsonb ELSE NULL END,reason=$5,updated_at=$6,verified_at=$6 WHERE id=$7 AND status=$8`, next, VerificationExpired, measurementID, string(verifyingSnapshot), reason, now, id, VerificationPending)
+		if err != nil {
+			return fmt.Errorf("update verification: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // preserveLatencyEvidence keeps the agent's top-level latency fields in the
 // durable raw payload. Older agents put the same fields only under raw, while
 // newer agents expose latency_method at the top level for wire compatibility.
