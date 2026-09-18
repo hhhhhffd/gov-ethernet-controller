@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,8 @@ type Input struct {
 	Availability      *float64               `json:"availability,omitempty"`
 	ConnectionStatus  string                 `json:"connection_status"`
 	Quality           string                 `json:"quality,omitempty"`
+	LatencyMethod     string                 `json:"latency_method,omitempty"`
+	LatencyEvidence   map[string]interface{} `json:"latency_evidence,omitempty"`
 	Raw               map[string]interface{} `json:"raw,omitempty"`
 }
 
@@ -72,7 +75,9 @@ type contractRow struct{ Value *evaluation.Contract }
 type recentEvaluation struct {
 	ID               int64
 	ObservedAt       time.Time
+	Mode             string
 	ConnectionStatus string
+	Metrics          map[string]bool
 	BaselineState    string
 	ContractState    string
 	Valid            bool
@@ -125,6 +130,7 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agent
 	if input.Raw == nil {
 		input.Raw = map[string]interface{}{}
 	}
+	preserveLatencyEvidence(&input)
 	if input.ObservedAt.IsZero() {
 		return Result{}, &InputError{Code: "observed_at_required", Err: fmt.Errorf("observed_at is required")}
 	}
@@ -220,7 +226,7 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agent
 
 	late := hasLatest && input.ObservedAt.Before(latestBefore)
 	if !late {
-		if err := applyState(ctx, tx, lineID, input.ObservedAt, measurementID, evaluated, policy.Value, contract.Value); err != nil {
+		if err := applyState(ctx, tx, lineID, input.Mode, input.ObservedAt, measurementID, evaluated, policy.Value, contract.Value); err != nil {
 			return Result{}, err
 		}
 	}
@@ -239,6 +245,32 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agent
 		result.Evaluation["reason"] = "Backfilled observation stored without rewriting current state; " + evaluated.Reason
 	}
 	return result, nil
+}
+
+// preserveLatencyEvidence keeps the agent's top-level latency fields in the
+// durable raw payload. Older agents put the same fields only under raw, while
+// newer agents expose latency_method at the top level for wire compatibility.
+// If both forms disagree, retain the original raw values under an explicit
+// compatibility key instead of silently discarding either representation.
+func preserveLatencyEvidence(input *Input) {
+	if input == nil {
+		return
+	}
+	if input.Raw == nil {
+		input.Raw = map[string]interface{}{}
+	}
+	if input.LatencyMethod != "" {
+		if existing, ok := input.Raw["latency_method"]; ok && !reflect.DeepEqual(existing, input.LatencyMethod) {
+			input.Raw["latency_method_raw"] = existing
+		}
+		input.Raw["latency_method"] = input.LatencyMethod
+	}
+	if input.LatencyEvidence != nil {
+		if existing, ok := input.Raw["latency_evidence"]; ok && !reflect.DeepEqual(existing, input.LatencyEvidence) {
+			input.Raw["latency_evidence_raw"] = existing
+		}
+		input.Raw["latency_evidence"] = input.LatencyEvidence
+	}
 }
 
 func validateInput(input Input) error {
@@ -348,7 +380,10 @@ func latestObserved(ctx context.Context, q interface {
 func readRecent(ctx context.Context, q interface {
 	Query(context.Context, string, ...interface{}) (pgx.Rows, error)
 }, lineID string, limit int) ([]recentEvaluation, error) {
-	rows, err := q.Query(ctx, `SELECT m.id,m.observed_at,m.connection_status,e.baseline_state,e.contract_state,e.valid,e.violations_json
+	rows, err := q.Query(ctx, `SELECT m.id,m.observed_at,m.mode,m.connection_status,
+	        m.download IS NOT NULL,m.upload IS NOT NULL,m.ping IS NOT NULL,m.jitter IS NOT NULL,
+	        m.packet_loss IS NOT NULL,m.availability IS NOT NULL,
+	        e.baseline_state,e.contract_state,e.valid,e.violations_json
         FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE m.line_id=$1 ORDER BY m.observed_at DESC,m.id DESC LIMIT $2`, lineID, limit)
 	if err != nil {
 		return nil, err
@@ -358,8 +393,15 @@ func readRecent(ctx context.Context, q interface {
 	for rows.Next() {
 		var item recentEvaluation
 		var raw []byte
-		if err := rows.Scan(&item.ID, &item.ObservedAt, &item.ConnectionStatus, &item.BaselineState, &item.ContractState, &item.Valid, &raw); err != nil {
+		var download, upload, ping, jitter, packetLoss, availability bool
+		if err := rows.Scan(&item.ID, &item.ObservedAt, &item.Mode, &item.ConnectionStatus,
+			&download, &upload, &ping, &jitter, &packetLoss, &availability,
+			&item.BaselineState, &item.ContractState, &item.Valid, &raw); err != nil {
 			return nil, err
+		}
+		item.Metrics = map[string]bool{
+			"download": download, "upload": upload, "ping": ping,
+			"jitter": jitter, "packet_loss": packetLoss, "availability": availability,
 		}
 		if err := json.Unmarshal(raw, &item.Violations); err != nil {
 			return nil, fmt.Errorf("decode evaluation violations: %w", err)
@@ -369,38 +411,173 @@ func readRecent(ctx context.Context, q interface {
 	return result, rows.Err()
 }
 
-func confirmed(rows []recentEvaluation, required, minutes int, predicate func(recentEvaluation) bool) []recentEvaluation {
-	if required < 1 {
-		required = 1
-	}
-	if len(rows) < required {
-		return nil
-	}
-	selected := rows[:required]
-	if minutes > 0 {
-		newest, oldest := selected[0].ObservedAt, selected[len(selected)-1].ObservedAt
-		if newest.Sub(oldest) > time.Duration(minutes)*time.Minute {
-			return nil
-		}
-	}
-	for _, row := range selected {
-		if !predicate(row) {
-			return nil
-		}
-	}
-	return selected
+type confirmationMode string
+
+const (
+	confirmationCount    confirmationMode = "COUNT"
+	confirmationDuration confirmationMode = "DURATION"
+	confirmationEither   confirmationMode = "EITHER"
+	confirmationBoth     confirmationMode = "BOTH"
+)
+
+type confirmationPolicy struct {
+	Mode     confirmationMode
+	Count    int
+	Duration time.Duration
 }
 
-func problem(row recentEvaluation) bool {
-	return row.Valid && (row.BaselineState == "VIOLATION" || row.ContractState == "DEVIATES")
+// policyConfirmation keeps the existing database contract usable while making
+// count and duration independent. A positive legacy confirm_minutes is an
+// EITHER policy; it is no longer a maximum window for the count streak. A zero
+// confirm_count can be used by callers that need pure DURATION semantics.
+func policyConfirmation(policy *evaluation.Policy, recovery bool) confirmationPolicy {
+	result := confirmationPolicy{Mode: confirmationCount, Count: 3}
+	if policy != nil {
+		result.Count = policy.ConfirmCount
+		minutes := policy.ConfirmMinutes
+		if recovery {
+			result.Count = policy.RecoveryCount
+			minutes = policy.RecoveryMinutes
+		}
+		if minutes > 0 {
+			result.Duration = time.Duration(minutes) * time.Minute
+			if result.Count > 0 {
+				result.Mode = confirmationEither
+			} else {
+				result.Mode = confirmationDuration
+			}
+		}
+	}
+	if result.Count < 1 && result.Mode != confirmationDuration {
+		result.Count = 1
+	}
+	return result
 }
-func baselineProblem(row recentEvaluation) bool { return row.Valid && row.BaselineState == "VIOLATION" }
-func contractProblem(row recentEvaluation) bool { return row.Valid && row.ContractState == "DEVIATES" }
-func healthyConnection(row recentEvaluation) bool {
-	return row.Valid && row.ConnectionStatus == "OK" && row.BaselineState != "VIOLATION"
+
+func confirmationSatisfied(policy confirmationPolicy, count int, duration time.Duration) bool {
+	countOK := policy.Count > 0 && count >= policy.Count
+	durationOK := policy.Duration > 0 && duration >= policy.Duration
+	switch policy.Mode {
+	case confirmationDuration:
+		return durationOK
+	case confirmationEither:
+		return countOK || durationOK
+	case confirmationBoth:
+		return countOK && durationOK
+	default:
+		return countOK
+	}
 }
-func healthyBaseline(row recentEvaluation) bool { return row.Valid && row.BaselineState == "OK" }
-func healthyContract(row recentEvaluation) bool { return row.Valid && row.ContractState == "MEETS" }
+
+func confirmationEvidence(rows []recentEvaluation, policy confirmationPolicy, relevant, predicate func(recentEvaluation) bool) []recentEvaluation {
+	selected := make([]recentEvaluation, 0, len(rows))
+	for _, row := range rows {
+		if !relevant(row) {
+			continue
+		}
+		if !predicate(row) {
+			break
+		}
+		selected = append(selected, row)
+		duration := selected[0].ObservedAt.Sub(selected[len(selected)-1].ObservedAt)
+		if confirmationSatisfied(policy, len(selected), duration) {
+			return selected
+		}
+	}
+	return nil
+}
+
+type evidenceKey struct {
+	LineID        string
+	Axis          string
+	ViolationCode string
+	Mode          string
+}
+
+func keyFor(lineID, code, mode string) evidenceKey {
+	axis := "BASELINE"
+	if code == "NO_INTERNET" {
+		axis = "CONNECTION"
+	} else if strings.HasPrefix(code, "CONTRACT_") {
+		axis = "CONTRACT"
+	}
+	return evidenceKey{LineID: lineID, Axis: axis, ViolationCode: code, Mode: mode}
+}
+
+func metricForViolation(code string) string {
+	if code == "NO_INTERNET" {
+		return "connection_status"
+	}
+	name := strings.TrimPrefix(code, "BASELINE_")
+	name = strings.TrimPrefix(name, "CONTRACT_")
+	return strings.ToLower(name)
+}
+
+func hasViolation(row recentEvaluation, code string) bool {
+	if !row.Valid {
+		return false
+	}
+	for _, violation := range row.Violations {
+		if violation.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func relevantEvidence(row recentEvaluation, key evidenceKey) bool {
+	if row.Mode != key.Mode {
+		return false
+	}
+	if key.ViolationCode == "NO_INTERNET" {
+		return true
+	}
+	return row.Metrics[metricForViolation(key.ViolationCode)]
+}
+
+func confirmedForCode(lineID string, rows []recentEvaluation, mode string, policy confirmationPolicy, code string, healthy bool) []recentEvaluation {
+	key := keyFor(lineID, code, mode)
+	return confirmationEvidence(rows, policy,
+		func(row recentEvaluation) bool { return relevantEvidence(row, key) },
+		func(row recentEvaluation) bool {
+			if healthy {
+				return row.Valid && !hasViolation(row, code)
+			}
+			return hasViolation(row, code)
+		})
+}
+
+func violationCodes(result evaluation.Result) []string {
+	resultCodes := make([]string, 0, len(result.Violations))
+	seen := map[string]bool{}
+	for _, violation := range result.Violations {
+		if !seen[violation.Code] {
+			seen[violation.Code] = true
+			resultCodes = append(resultCodes, violation.Code)
+		}
+	}
+	return resultCodes
+}
+
+func baselineHealthy(result evaluation.Result) bool {
+	return result.Valid && result.BaselineState == "OK"
+}
+
+func connectionStateForResult(result evaluation.Result) string {
+	for _, violation := range result.Violations {
+		if violation.Code == "NO_INTERNET" {
+			return "NO_INTERNET"
+		}
+	}
+	switch result.BaselineState {
+	case "OK":
+		return "OK"
+	case "VIOLATION":
+		return "DEGRADED"
+	default:
+		return "UNKNOWN"
+	}
+}
 
 func loadState(ctx context.Context, q interface {
 	QueryRow(context.Context, string, ...interface{}) pgx.Row
@@ -463,20 +640,13 @@ func writeState(ctx context.Context, q interface {
 	return nil
 }
 
-func applyState(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, measurementID int64, result evaluation.Result, policy *evaluation.Policy, contract *evaluation.Contract) error {
-	required := 3
-	confirmMinutes := 0
-	recoveryRequired := 3
-	recoveryMinutes := 0
-	if policy != nil {
-		required, confirmMinutes, recoveryRequired, recoveryMinutes = policy.ConfirmCount, policy.ConfirmMinutes, policy.RecoveryCount, policy.RecoveryMinutes
-	}
-	recent, err := readRecent(ctx, tx, lineID, maxInt(required, recoveryRequired))
+func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Time, measurementID int64, result evaluation.Result, policy *evaluation.Policy, contract *evaluation.Contract) error {
+	confirmPolicy := policyConfirmation(policy, false)
+	recoveryPolicy := policyConfirmation(policy, true)
+	recent, err := readRecent(ctx, tx, lineID, maxInt(maxInt(confirmPolicy.Count, recoveryPolicy.Count), 1000))
 	if err != nil {
 		return err
 	}
-	confirmedBaseline := confirmed(recent, required, confirmMinutes, baselineProblem)
-	confirmedContract := confirmed(recent, required, confirmMinutes, contractProblem)
 	current, err := loadState(ctx, tx, lineID)
 	if err != nil {
 		return err
@@ -485,23 +655,47 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, mea
 	if err != nil {
 		return err
 	}
-	confirmedRows := confirmedBaseline
-	if active != nil && strings.HasPrefix(active.ViolationType, "CONTRACT_") {
-		confirmedRows = confirmedContract
-	} else if len(confirmedRows) == 0 {
-		confirmedRows = confirmedContract
+	confirmedByCode := make(map[evidenceKey][]recentEvaluation)
+	for _, code := range violationCodes(result) {
+		if evidence := confirmedForCode(lineID, recent, mode, confirmPolicy, code, false); len(evidence) > 0 {
+			confirmedByCode[keyFor(lineID, code, mode)] = evidence
+		}
 	}
-	if len(confirmedRows) > 0 {
-		connectionState := "OK"
-		for _, violation := range result.Violations {
-			if violation.Code == "NO_INTERNET" {
-				connectionState = "NO_INTERNET"
-				break
+	var confirmedRows []recentEvaluation
+	confirmedCode := ""
+	if active != nil {
+		confirmedCode = active.ViolationType
+		confirmedRows = confirmedByCode[keyFor(lineID, confirmedCode, mode)]
+	} else {
+		for _, code := range violationCodes(result) {
+			if strings.HasPrefix(code, "BASELINE_") || code == "NO_INTERNET" {
+				confirmedRows = confirmedByCode[keyFor(lineID, code, mode)]
+				if len(confirmedRows) > 0 {
+					confirmedCode = code
+					break
+				}
 			}
 		}
-		if connectionState == "OK" && result.BaselineState == "VIOLATION" {
-			connectionState = "DEGRADED"
+		if len(confirmedRows) == 0 {
+			for _, code := range violationCodes(result) {
+				if strings.HasPrefix(code, "CONTRACT_") {
+					confirmedRows = confirmedByCode[keyFor(lineID, code, mode)]
+					if len(confirmedRows) > 0 {
+						confirmedCode = code
+						break
+					}
+				}
+			}
 		}
+	}
+	// An active incident can only be changed by an observation that measured
+	// the same metric in the same mode. Missing/foreign metrics are evidence
+	// for their own stream, never confirmation or recovery for this incident.
+	if active != nil && (len(recent) == 0 || !relevantEvidence(recent[0], keyFor(lineID, active.ViolationType, mode))) {
+		return nil
+	}
+	if len(confirmedRows) > 0 {
+		connectionState := connectionStateForResult(result)
 		contractState := result.ContractState
 		if contractState != "MEETS" && contractState != "DEVIATES" {
 			contractState = "UNKNOWN"
@@ -510,7 +704,7 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, mea
 		for _, row := range confirmedRows {
 			evidence = append(evidence, row.ID)
 		}
-		if err := writeState(ctx, tx, lineID, at, "FRESH", connectionState, contractState, "NONE", fmt.Sprintf("Confirmed after %d consecutive observations: %s", required, result.Reason), evidence, policy, contract); err != nil {
+		if err := writeState(ctx, tx, lineID, at, "FRESH", connectionState, contractState, "NONE", fmt.Sprintf("Confirmed evidence (%s): %s", confirmPolicy.Mode, result.Reason), evidence, policy, contract); err != nil {
 			return err
 		}
 		var incidentID int64
@@ -549,36 +743,28 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, mea
 		return nil
 	}
 
-	healthyObservation := result.Valid && result.BaselineState != "VIOLATION"
-	for _, violation := range result.Violations {
-		if violation.Code == "NO_INTERNET" {
-			healthyObservation = false
-			break
-		}
+	healthyObservation := baselineHealthy(result)
+	if active != nil {
+		healthyObservation = len(recent) > 0 && recent[0].Valid && !hasViolation(recent[0], active.ViolationType)
 	}
 	healthyStreak := false
-	healthyTarget := healthyBaseline
-	if active != nil {
-		if active.ViolationType == "NO_INTERNET" {
-			healthyTarget = healthyConnection
-		} else if strings.HasPrefix(active.ViolationType, "CONTRACT_") {
-			healthyTarget = healthyContract
-		}
-	}
 	if healthyObservation && current != nil && (current.ConnectionState == "NO_INTERNET" || current.ConnectionState == "DEGRADED") {
-		healthyStreak = len(confirmed(recent, recoveryRequired, recoveryMinutes, healthyTarget)) > 0
-	}
-	connectionState := "UNKNOWN"
-	if healthyObservation {
-		connectionState = "OK"
-		if current != nil && (current.ConnectionState == "NO_INTERNET" || current.ConnectionState == "DEGRADED") && !healthyStreak {
-			connectionState = current.ConnectionState
+		if active != nil {
+			healthyStreak = len(confirmedForCode(lineID, recent, mode, recoveryPolicy, active.ViolationType, true)) > 0
 		}
-	} else if current != nil {
+	}
+	connectionState := connectionStateForResult(result)
+	if connectionState == "UNKNOWN" && current != nil {
+		connectionState = current.ConnectionState
+	}
+	if healthyObservation && connectionState == "OK" && current != nil && (current.ConnectionState == "NO_INTERNET" || current.ConnectionState == "DEGRADED") && !healthyStreak {
+		connectionState = current.ConnectionState
+	}
+	if !healthyObservation && current != nil {
 		connectionState = current.ConnectionState
 	}
 	contractState := result.ContractState
-	if confirmedContract != nil && len(confirmedContract) > 0 {
+	if active == nil && strings.HasPrefix(confirmedCode, "CONTRACT_") {
 		contractState = "DEVIATES"
 	} else if current != nil && current.ContractState == "DEVIATES" && result.ContractState == "DEVIATES" {
 		contractState = "DEVIATES"
@@ -593,7 +779,7 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, mea
 	if err := writeState(ctx, tx, lineID, at, "FRESH", connectionState, contractState, recoveryState, result.Reason, []int64{measurementID}, policy, contract); err != nil {
 		return err
 	}
-	return updateRecovery(ctx, tx, lineID, at, recent, result, policy, recoveryRequired, recoveryMinutes)
+	return updateRecovery(ctx, tx, lineID, mode, at, recent, recoveryPolicy)
 }
 
 type pendingNotification struct {
@@ -834,23 +1020,16 @@ func ids(rows []recentEvaluation) []int64 {
 	return result
 }
 
-func updateRecovery(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, recent []recentEvaluation, result evaluation.Result, policy *evaluation.Policy, required, minutes int) error {
+func updateRecovery(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Time, recent []recentEvaluation, recoveryPolicy confirmationPolicy) error {
 	item, err := activeIncident(ctx, tx, lineID)
 	if err != nil || item == nil {
 		return err
 	}
-	isProblem := false
-	if item.ViolationType == "NO_INTERNET" {
-		for _, violation := range result.Violations {
-			if violation.Code == "NO_INTERNET" {
-				isProblem = true
-			}
-		}
-	} else if strings.HasPrefix(item.ViolationType, "CONTRACT_") {
-		isProblem = result.ContractState == "DEVIATES"
-	} else {
-		isProblem = result.BaselineState == "VIOLATION"
+	key := keyFor(lineID, item.ViolationType, mode)
+	if len(recent) == 0 || !relevantEvidence(recent[0], key) {
+		return nil
 	}
+	isProblem := hasViolation(recent[0], item.ViolationType)
 	if isProblem {
 		if item.Status == "RESOLVED" {
 			if _, err := tx.Exec(ctx, `UPDATE incidents SET status='IN_PROGRESS',recovery_state='NONE',resolved_at=NULL WHERE id=$1`, item.ID); err != nil {
@@ -862,13 +1041,7 @@ func updateRecovery(ctx context.Context, tx pgx.Tx, lineID string, at time.Time,
 		}
 		return nil
 	}
-	target := healthyBaseline
-	if item.ViolationType == "NO_INTERNET" {
-		target = healthyConnection
-	} else if strings.HasPrefix(item.ViolationType, "CONTRACT_") {
-		target = healthyContract
-	}
-	good := confirmed(recent, required, minutes, target)
+	good := confirmedForCode(lineID, recent, mode, recoveryPolicy, item.ViolationType, true)
 	if len(good) == 0 {
 		// A first healthy observation starts recovery verification even when
 		// the configured sustained-recovery window is not complete yet. Keep
