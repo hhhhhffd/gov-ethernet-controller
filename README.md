@@ -105,6 +105,13 @@ validation, readiness и отказ unauthenticated protected endpoint.
 
 Агент принимает `LINKWATCH_*`; старые `VKO_*` имена поддерживаются для плавной
 миграции. Приоритет локальной конфигурации: defaults → JSON-файл → environment.
+
+AI-черновики ProviderCase используют только локальный Ollama: `LINKWATCH_OLLAMA_URL`
+(алиас `VKO_OLLAMA_URL`), `LINKWATCH_OLLAMA_MODEL` (`VKO_OLLAMA_MODEL`),
+`LINKWATCH_OLLAMA_TIMEOUT_SECONDS` и `LINKWATCH_OLLAMA_MAX_RETRIES`. По умолчанию
+используется `http://127.0.0.1:11434` и модель `qwen3.5:9b-q6k`; удалённые endpoint-ы
+отклоняются. Черновик сохраняется как редактируемый, а отправка требует отдельного
+human review/send.
 Если задать `LINKWATCH_USE_SERVER_CONFIG=1`, расписание из
 `/api/v1/agent/config` применяется после локальных значений и обновляется во
 время run; при недоступности сервера агент продолжает работу с локальной

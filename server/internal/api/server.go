@@ -21,16 +21,17 @@ import (
 )
 
 type Server struct {
-	DB      *database.DB
-	Measure *measurements.Service
-	WebDir  string
-	Logger  *slog.Logger
+	DB             *database.DB
+	Measure        *measurements.Service
+	WebDir         string
+	Logger         *slog.Logger
+	DraftGenerator DraftGenerator
 }
 
 type requestIDContextKey struct{}
 
 func New(db *database.DB, webDir string) *Server {
-	return &Server{DB: db, Measure: &measurements.Service{DB: db}, WebDir: webDir, Logger: slog.Default()}
+	return &Server{DB: db, Measure: &measurements.Service{DB: db}, WebDir: webDir, Logger: slog.Default(), DraftGenerator: newOllamaDraftGeneratorFromEnv()}
 }
 
 func (s *Server) Handler() http.Handler { return s }

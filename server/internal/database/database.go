@@ -14,7 +14,7 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-const latestMigrationVersion = 11
+const latestMigrationVersion = 12
 
 var migrations = []struct {
 	version int64
@@ -31,6 +31,7 @@ var migrations = []struct {
 	{version: 9, file: "migrations/009_device_hostname.sql"},
 	{version: 10, file: "migrations/010_admin_catalog_auth.sql"},
 	{version: 11, file: "migrations/011_p0_passport_fields.sql"},
+	{version: 12, file: "migrations/012_provider_case_draft_generations.sql"},
 }
 
 // DB is the only persistence dependency used by the server.  Keeping the pool

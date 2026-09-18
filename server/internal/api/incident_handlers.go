@@ -596,6 +596,10 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		writeError(w, 404, "provider case not found")
 		return
 	}
+	if parts[1] == "ai-draft" && r.Method == http.MethodPost {
+		s.providerAIDraft(w, r, strconv.FormatInt(id, 10), lineID, p)
+		return
+	}
 	if !requireRole(w, p, "provider_send") {
 		return
 	}

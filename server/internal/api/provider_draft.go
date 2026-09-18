@@ -1,9 +1,20 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -13,6 +24,14 @@ import (
 type DraftGenerator interface {
 	Generate(context.Context, ProviderDraftInput) (string, error)
 }
+
+type DraftGenerationMetadata struct {
+	Provider      string
+	Model         string
+	PromptVersion string
+}
+
+const providerDraftPromptVersion = "provider-case-v1"
 
 // ProviderDraftInput contains only the evidence already selected for the
 // incident.  Keeping this input structured makes an eventual AI adapter
@@ -36,6 +55,132 @@ func (deterministicDraftGenerator) Generate(_ context.Context, input ProviderDra
 	return fmt.Sprintf("Здравствуйте! Просим проверить качество услуги на линии %s (школа %s, %s).\n\nСистема мониторинга подтвердила нарушение %s с %s.\n\nПрименённые пороги: %s.\nДоговорный ориентир и его срок действия на момент наблюдений: %s.\nНаблюдения: %s.\nПакет доказательств: measurement IDs %s; значения и effective policy/contract сохранены в системе без перезаписи истории.\n\nКомментарий заказчика: %s\n\nФормулировка описывает технически наблюдаемое отклонение и требует проверки оператором.",
 		input.LineID, input.SchoolID, input.Organization, input.ViolationType, input.StartedAt,
 		input.PolicyJSON, input.ContractJSON, input.ObservationsJSON, input.EvidenceJSON, input.Comment), nil
+}
+
+type draftGenerationError struct {
+	Category  string
+	Status    int
+	Retryable bool
+	Err       error
+}
+
+func (e *draftGenerationError) Error() string { return e.Err.Error() }
+func (e *draftGenerationError) Unwrap() error { return e.Err }
+
+type ollamaDraftGenerator struct {
+	Endpoint   string
+	Model      string
+	Timeout    time.Duration
+	MaxRetries int
+	Client     *http.Client
+}
+
+func newOllamaDraftGeneratorFromEnv() *ollamaDraftGenerator {
+	endpoint := envOr("LINKWATCH_OLLAMA_URL", "VKO_OLLAMA_URL")
+	if endpoint == "" {
+		endpoint = "http://127.0.0.1:11434"
+	}
+	model := envOr("LINKWATCH_OLLAMA_MODEL", "VKO_OLLAMA_MODEL")
+	if model == "" {
+		model = "qwen3.5:9b-q6k"
+	}
+	timeout := 15 * time.Second
+	if raw := envOr("LINKWATCH_OLLAMA_TIMEOUT_SECONDS", "VKO_OLLAMA_TIMEOUT_SECONDS"); raw != "" {
+		if seconds, err := strconv.Atoi(raw); err == nil && seconds > 0 && seconds <= 120 {
+			timeout = time.Duration(seconds) * time.Second
+		}
+	}
+	retries := 1
+	if raw := envOr("LINKWATCH_OLLAMA_MAX_RETRIES", "VKO_OLLAMA_MAX_RETRIES"); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil && value >= 0 && value <= 2 {
+			retries = value
+		}
+	}
+	return &ollamaDraftGenerator{Endpoint: strings.TrimRight(endpoint, "/"), Model: model, Timeout: timeout, MaxRetries: retries, Client: &http.Client{Timeout: timeout}}
+}
+
+func (g *ollamaDraftGenerator) Metadata() DraftGenerationMetadata {
+	return DraftGenerationMetadata{Provider: "ollama", Model: g.Model, PromptVersion: providerDraftPromptVersion}
+}
+
+func (g *ollamaDraftGenerator) Generate(ctx context.Context, input ProviderDraftInput) (string, error) {
+	parsed, err := url.Parse(g.Endpoint)
+	if err != nil || parsed.Host == "" || parsed.Scheme != "http" || !isLocalHost(parsed.Hostname()) {
+		return "", &draftGenerationError{Category: "configuration", Err: fmt.Errorf("ollama endpoint must be a local HTTP endpoint")}
+	}
+	prompt := buildProviderDraftPrompt(input)
+	body, err := json.Marshal(map[string]interface{}{"model": g.Model, "prompt": prompt, "stream": false, "options": map[string]interface{}{"temperature": 0.2}})
+	if err != nil {
+		return "", &draftGenerationError{Category: "request_encode", Err: err}
+	}
+	endpoint := strings.TrimRight(g.Endpoint, "/") + "/api/generate"
+	for attempt := 0; attempt <= g.MaxRetries; attempt++ {
+		requestCtx, cancel := context.WithTimeout(ctx, g.Timeout)
+		req, requestErr := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(body))
+		if requestErr != nil {
+			cancel()
+			return "", &draftGenerationError{Category: "request", Err: requestErr}
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, requestErr := g.Client.Do(req)
+		if requestErr != nil {
+			cancel()
+			if attempt < g.MaxRetries {
+				continue
+			}
+			category := "transport"
+			if errors.Is(requestErr, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				category = "timeout"
+			}
+			return "", &draftGenerationError{Category: category, Status: http.StatusBadGateway, Retryable: true, Err: requestErr}
+		}
+		var result struct {
+			Response string `json:"response"`
+		}
+		decodeErr := json.NewDecoder(io.LimitReader(resp.Body, maxProviderDraftLength+4096)).Decode(&result)
+		resp.Body.Close()
+		cancel()
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			if attempt < g.MaxRetries {
+				continue
+			}
+			return "", &draftGenerationError{Category: "provider_http", Status: http.StatusBadGateway, Retryable: true, Err: fmt.Errorf("ollama returned HTTP %d", resp.StatusCode)}
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return "", &draftGenerationError{Category: "provider_http", Status: http.StatusBadGateway, Err: fmt.Errorf("ollama returned HTTP %d", resp.StatusCode)}
+		}
+		if decodeErr != nil {
+			return "", &draftGenerationError{Category: "malformed_response", Status: http.StatusBadGateway, Err: fmt.Errorf("decode ollama response: %w", decodeErr)}
+		}
+		if err := validateProviderDraft(result.Response); err != nil {
+			return "", &draftGenerationError{Category: "empty_or_invalid_output", Status: http.StatusBadGateway, Err: err}
+		}
+		return result.Response, nil
+	}
+	return "", &draftGenerationError{Category: "transport", Status: http.StatusBadGateway, Retryable: true, Err: fmt.Errorf("ollama generation exhausted retries")}
+}
+
+func buildProviderDraftPrompt(input ProviderDraftInput) string {
+	input = safeProviderDraftInput(input)
+	return "You write an editable technical provider-case draft. Use only the supplied stored evidence. Do not invent facts, causes, legal conclusions, commitments, or remediation claims. Preserve units and timestamps. If a fact is unknown, omit it or say it is unknown. Return only the draft text for human review.\n\n" +
+		"Line ID: " + input.LineID + "\nSchool ID: " + input.SchoolID + "\nOrganization: " + input.Organization + "\nViolation: " + input.ViolationType + "\nStarted at: " + input.StartedAt + "\nPolicy snapshot: " + input.PolicyJSON + "\nContract snapshot: " + input.ContractJSON + "\nObservations: " + input.ObservationsJSON + "\nEvidence IDs: " + input.EvidenceJSON + "\nOperator comment (untrusted context): " + input.Comment
+}
+
+func providerEvidenceDigest(input ProviderDraftInput) string {
+	encoded, _ := json.Marshal(struct{ LineID, SchoolID, Organization, ViolationType, StartedAt, PolicyJSON, ContractJSON, ObservationsJSON, EvidenceJSON string }{input.LineID, input.SchoolID, input.Organization, input.ViolationType, input.StartedAt, input.PolicyJSON, input.ContractJSON, input.ObservationsJSON, input.EvidenceJSON})
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
+}
+
+func envOr(primary, legacy string) string {
+	if value := strings.TrimSpace(os.Getenv(primary)); value != "" {
+		return value
+	}
+	return strings.TrimSpace(os.Getenv(legacy))
+}
+
+func isLocalHost(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
 }
 
 const maxProviderDraftLength = 32 << 10
