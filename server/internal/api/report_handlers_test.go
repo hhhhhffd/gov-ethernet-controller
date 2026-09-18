@@ -183,3 +183,31 @@ func TestAvailabilityThresholdAcceptsMatchingPolicyAndContractSnapshots(t *testi
 		t.Fatalf("threshold = (%v, %v), want (99, true)", value, ok)
 	}
 }
+
+func TestPassportDynamicsUsesEquivalentPeriodAndSnapshotDeltas(t *testing.T) {
+	value := func(v float64) *float64 { return &v }
+	rows := []reportRow{{measurementRecord: measurementRecord{LineID: "L1", BaselineState: "OK", ContractState: "MEETS", Availability: value(99), LineContextSnapshot: []byte(`{"version":2}`), PolicySnapshot: []byte(`{"version":3}`), ContractSnapshot: []byte(`{"version":4}`)}}}
+	previous := []reportRow{{measurementRecord: measurementRecord{LineID: "L1", BaselineState: "VIOLATION", ContractState: "DEVIATES", Availability: value(95), LineContextSnapshot: []byte(`{"version":2}`), PolicySnapshot: []byte(`{"version":3}`), ContractSnapshot: []byte(`{"version":4}`)}}}
+	current := passportMetrics(rows, 1)
+	prior := passportMetrics(previous, 1)
+	dynamics := passportDynamics(current, prior, rows, previous)
+	if dynamics["status"] != "AVAILABLE" || dynamics["direction"].(map[string]string)["baseline_rate"] != "UP" {
+		t.Fatalf("dynamics = %#v", dynamics)
+	}
+	if got := rows[0].LineContextSnapshot; string(got) != `{"version":2}` {
+		t.Fatalf("snapshot was mutated: %s", got)
+	}
+}
+
+func TestPassportDynamicsMakesInsufficientAndIncomparableExplicit(t *testing.T) {
+	value := func(v float64) *float64 { return &v }
+	row := func(version string) reportRow {
+		return reportRow{measurementRecord: measurementRecord{LineID: "L1", BaselineState: "OK", ContractState: "MEETS", Availability: value(99), LineContextSnapshot: []byte(`{"version":` + version + `}`), PolicySnapshot: []byte(`{"version":1}`), ContractSnapshot: []byte(`{"version":1}`)}}
+	}
+	if got := passportDynamics(passportMetrics([]reportRow{row("1")}, 2), passportMetrics([]reportRow{row("1")}, 2), []reportRow{row("1")}, []reportRow{row("1")}); got["status"] != "INSUFFICIENT_DATA" {
+		t.Fatalf("insufficient dynamics = %#v", got)
+	}
+	if got := passportDynamics(passportMetrics([]reportRow{row("2"), row("2")}, 2), passportMetrics([]reportRow{row("1"), row("1")}, 2), []reportRow{row("2"), row("2")}, []reportRow{row("1"), row("1")}); got["status"] != "INCOMPARABLE" {
+		t.Fatalf("incomparable dynamics = %#v", got)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -15,6 +16,177 @@ import (
 
 	"linkwatch/server/internal/auth"
 )
+
+type passportPeriodMetrics struct {
+	Measurements int      `json:"measurements"`
+	Expected     int      `json:"expected"`
+	Completeness float64  `json:"completeness"`
+	BaselineRate *float64 `json:"baseline_rate"`
+	ContractRate *float64 `json:"contract_rate"`
+	Availability *float64 `json:"availability_pct"`
+}
+
+func passportMetrics(rows []reportRow, expected int) passportPeriodMetrics {
+	baselineOK, baselineKnown, contractOK, contractKnown := 0, 0, 0, 0
+	for _, row := range rows {
+		if row.BaselineState == "OK" {
+			baselineOK++
+		}
+		if row.BaselineState == "OK" || row.BaselineState == "VIOLATION" {
+			baselineKnown++
+		}
+		if row.ContractState == "MEETS" {
+			contractOK++
+		}
+		if row.ContractState == "MEETS" || row.ContractState == "DEVIATES" {
+			contractKnown++
+		}
+	}
+	completeness := 0.0
+	if expected > 0 {
+		completeness = float64(len(rows)) / float64(expected) * 100
+		if completeness > 100 {
+			completeness = 100
+		}
+	}
+	return passportPeriodMetrics{Measurements: len(rows), Expected: expected, Completeness: completeness, BaselineRate: ratio(baselineOK, baselineKnown), ContractRate: ratio(contractOK, contractKnown), Availability: availabilitySummaryForRows(rows).percent()}
+}
+
+func passportSnapshotFingerprint(rows []reportRow) map[string]string {
+	result := map[string]string{}
+	for _, row := range rows {
+		var context, policy, contract map[string]interface{}
+		_ = json.Unmarshal(row.LineContextSnapshot, &context)
+		_ = json.Unmarshal(row.PolicySnapshot, &policy)
+		_ = json.Unmarshal(row.ContractSnapshot, &contract)
+		line := row.LineID
+		if len(row.LineContextSnapshot) == 0 || len(row.PolicySnapshot) == 0 || len(row.ContractSnapshot) == 0 {
+			result[line] = "MISSING"
+			continue
+		}
+		fingerprint := fmt.Sprintf("%v/%v/%v", context["version"], policy["version"], contract["version"])
+		if existing, ok := result[line]; ok && existing != fingerprint {
+			result[line] = "MIXED"
+		} else {
+			result[line] = fingerprint
+		}
+	}
+	return result
+}
+
+func passportPeriodsComparable(current, previous []reportRow) bool {
+	left, right := passportSnapshotFingerprint(current), passportSnapshotFingerprint(previous)
+	if len(left) != len(right) {
+		return false
+	}
+	for line, fingerprint := range left {
+		previousFingerprint, ok := right[line]
+		if !ok || fingerprint == "MISSING" || previousFingerprint == "MISSING" || fingerprint != previousFingerprint {
+			return false
+		}
+	}
+	return true
+}
+
+func passportDelta(current, previous *float64) interface{} {
+	if current == nil || previous == nil {
+		return nil
+	}
+	return *current - *previous
+}
+
+func passportDirection(delta interface{}) string {
+	value, ok := delta.(float64)
+	if !ok {
+		return "UNKNOWN"
+	}
+	if math.Abs(value) < 0.000001 {
+		return "STABLE"
+	}
+	if value > 0 {
+		return "UP"
+	}
+	return "DOWN"
+}
+
+func passportDynamics(current, previous passportPeriodMetrics, currentRows, previousRows []reportRow) map[string]interface{} {
+	if current.Measurements == 0 {
+		return map[string]interface{}{"status": "NO_DATA", "reason": "current period has no observations"}
+	}
+	if current.Expected == 0 || previous.Expected == 0 || current.Completeness < 80 || previous.Completeness < 80 {
+		return map[string]interface{}{"status": "INSUFFICIENT_DATA", "reason": "both equivalent periods require at least 80% completeness"}
+	}
+	if len(previousRows) == 0 {
+		return map[string]interface{}{"status": "NO_DATA", "reason": "previous equivalent period has no observations"}
+	}
+	if !passportPeriodsComparable(currentRows, previousRows) {
+		return map[string]interface{}{"status": "INCOMPARABLE", "reason": "historical policy, contract or line context snapshots differ"}
+	}
+	deltas := map[string]interface{}{}
+	directions := map[string]string{}
+	for name, delta := range map[string]interface{}{"baseline_rate": passportDelta(current.BaselineRate, previous.BaselineRate), "contract_rate": passportDelta(current.ContractRate, previous.ContractRate), "availability_pct": passportDelta(current.Availability, previous.Availability)} {
+		deltas[name] = delta
+		directions[name] = passportDirection(delta)
+	}
+	return map[string]interface{}{"status": "AVAILABLE", "current": current, "previous": previous, "delta": deltas, "direction": directions}
+}
+
+type passportIncidentSummary struct {
+	Count, RecurrenceCount, ConfirmedRecovery int
+	Duration                                  float64
+	Narrative                                 string
+}
+
+func (s *Server) passportIncidents(r *http.Request, p *auth.Principal, start, end time.Time) (passportIncidentSummary, error) {
+	where, params := scopeSQL(p, 1)
+	params = append(params, end, start)
+	rows, err := s.DB.Pool.Query(r.Context(), `SELECT i.recurrence_of,i.recovery_state,i.started_at,i.closed_at FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id WHERE `+where+` AND i.started_at < $`+itoa(len(params)-1)+` AND (i.closed_at IS NULL OR i.closed_at >= $`+itoa(len(params))+`)`, params...)
+	if err != nil {
+		return passportIncidentSummary{}, err
+	}
+	defer rows.Close()
+	summary := passportIncidentSummary{}
+	for rows.Next() {
+		var recurrence *int64
+		var recovery string
+		var began time.Time
+		var closed *time.Time
+		if err := rows.Scan(&recurrence, &recovery, &began, &closed); err != nil {
+			return passportIncidentSummary{}, err
+		}
+		summary.Count++
+		if recurrence != nil {
+			summary.RecurrenceCount++
+		}
+		if recovery == "CONFIRMED" {
+			summary.ConfirmedRecovery++
+		}
+		left, right := start, end
+		if began.After(left) {
+			left = began
+		}
+		if closed != nil && closed.Before(right) {
+			right = *closed
+		}
+		if right.After(left) {
+			summary.Duration += right.Sub(left).Minutes()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return passportIncidentSummary{}, err
+	}
+	switch {
+	case summary.Count == 0:
+		summary.Narrative = "За период подтверждённых инцидентов нет"
+	case summary.ConfirmedRecovery == summary.Count:
+		summary.Narrative = "Восстановление подтверждено по всем инцидентам периода"
+	case summary.ConfirmedRecovery > 0:
+		summary.Narrative = "Восстановление подтверждено не по всем инцидентам периода"
+	default:
+		summary.Narrative = "Подтверждённое восстановление отсутствует"
+	}
+	return summary, nil
+}
 
 type reportRow struct {
 	measurementRecord
@@ -345,6 +517,16 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 		tests = 4
 	}
 	expected := int((end.Sub(start).Hours()/24)*float64(tests*lines) + 0.5)
+	previousStart := start.Add(-end.Sub(start))
+	previousRows, err := s.reportRows(r, p, previousStart, start)
+	if err != nil {
+		writeError(w, 500, "could not query previous passport period")
+		return
+	}
+	previousExpected := int((start.Sub(previousStart).Hours()/24)*float64(tests*lines) + 0.5)
+	currentMetrics := passportMetrics(rows, expected)
+	previousMetrics := passportMetrics(previousRows, previousExpected)
+	dynamics := passportDynamics(currentMetrics, previousMetrics, rows, previousRows)
 	baselineOK, baselineKnown, contractOK, contractKnown := 0, 0, 0, 0
 	for _, row := range rows {
 		if row.BaselineState == "OK" {
@@ -360,12 +542,13 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 			contractKnown++
 		}
 	}
-	incidentCount, duration, err := s.incidentStats(r, p, start, end)
+	incidentSummary, err := s.passportIncidents(r, p, start, end)
 	if err != nil {
 		s.Logger.Error("could not calculate incident statistics", "error", err)
 		writeError(w, 500, "could not calculate incident statistics")
 		return
 	}
+	incidentCount, duration := incidentSummary.Count, incidentSummary.Duration
 	complete := 0.0
 	if expected > 0 {
 		complete = float64(len(rows)) / float64(expected) * 100
@@ -408,7 +591,7 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 		unavailableMinutes = historical.UnavailableDuration.Minutes()
 		noDataMinutes = historical.NoDataDuration.Minutes()
 	}
-	response := map[string]interface{}{"from": start, "to": end, "period_start": start, "period_end": end, "line_id": r.URL.Query().Get("line_id"), "measurements_received": len(rows), "measurements_expected": expected, "data_completeness": complete, "data_completeness_pct": complete, "baseline_compliance": ratio(baselineOK, baselineKnown), "contract_compliance": ratio(contractOK, contractKnown), "incidents": map[string]interface{}{"count": incidentCount, "total_duration_minutes": duration}, "sufficient_data": expected > 0 && float64(len(rows)) >= float64(expected)*.8, "availability_pct": availabilityPct, "availability_threshold": threshold, "availability_status": availabilityStatus, "observed_duration_minutes": observedMinutes, "unavailable_duration_minutes": unavailableMinutes, "no_data_duration_minutes": noDataMinutes, "evidence_chain": evidenceChainForRows(rows)}
+	response := map[string]interface{}{"from": start, "to": end, "period_start": start, "period_end": end, "line_id": r.URL.Query().Get("line_id"), "measurements_received": len(rows), "measurements_expected": expected, "data_completeness": complete, "data_completeness_pct": complete, "baseline_compliance": ratio(baselineOK, baselineKnown), "contract_compliance": ratio(contractOK, contractKnown), "incidents": map[string]interface{}{"count": incidentCount, "total_duration_minutes": duration, "recurrence_count": incidentSummary.RecurrenceCount, "confirmed_recovery_count": incidentSummary.ConfirmedRecovery, "recovery_narrative": incidentSummary.Narrative}, "sufficient_data": expected > 0 && float64(len(rows)) >= float64(expected)*.8, "availability_pct": availabilityPct, "availability_threshold": threshold, "availability_status": availabilityStatus, "observed_duration_minutes": observedMinutes, "unavailable_duration_minutes": unavailableMinutes, "no_data_duration_minutes": noDataMinutes, "evidence_chain": evidenceChainForRows(rows), "dynamics": dynamics}
 	for key, value := range availabilitySummaryFields(periodAvailability) {
 		response[key] = value
 	}
