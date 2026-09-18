@@ -97,6 +97,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.agentBatch(w, r)
 	case normalized == "/agent/config" && r.Method == http.MethodGet:
 		s.agentConfig(w, r)
+	case normalized == "/agent/commands:lease" && r.Method == http.MethodPost:
+		s.agentCommandLease(w, r)
+	case strings.HasPrefix(normalized, "/agent/commands/") && strings.HasSuffix(normalized, ":ack") && r.Method == http.MethodPost:
+		s.agentCommandAck(w, r, strings.TrimSuffix(strings.TrimPrefix(normalized, "/agent/commands/"), ":ack"))
 	case normalized == "/agent/probe/download" && (r.Method == http.MethodGet || r.Method == http.MethodHead):
 		s.agentProbeDownload(w, r)
 	case normalized == "/agent/probe/upload" && r.Method == http.MethodPost:

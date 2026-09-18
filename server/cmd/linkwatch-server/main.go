@@ -47,6 +47,7 @@ func main() {
 	go runNotificationOutbox(ctx, server.Measure, logger)
 	go runFreshnessWorker(ctx, server.Measure, logger)
 	go runSituationWorker(ctx, server, logger)
+	go runAgentCommandWorker(ctx, server, logger)
 	go func() {
 		logger.Info("linkwatch server listening", "addr", address)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -58,6 +59,21 @@ func main() {
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdown)
+}
+
+func runAgentCommandWorker(ctx context.Context, server *api.Server, logger *slog.Logger) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		if _, err := server.ReconcileAgentCommands(ctx); err != nil && ctx.Err() == nil {
+			logger.Warn("agent command reconciliation failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func runNotificationOutbox(ctx context.Context, service *measurements.Service, logger *slog.Logger) {

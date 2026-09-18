@@ -255,6 +255,11 @@ fn run_once(
     client: &Client,
 ) -> Result<(), String> {
     let mut telemetry = RuntimeTelemetry::new();
+    if let Ok(commands) = client.poll_commands(1) {
+        if !commands.is_empty() {
+            logging::event(format!("leased {} agent command(s)", commands.len()));
+        }
+    }
     match client.heartbeat(&telemetry.snapshot(queue)) {
         Ok(_) => telemetry.record_heartbeat(true),
         Err(error) => {
@@ -384,6 +389,11 @@ fn run_loop(
                 telemetry.record_heartbeat(true);
             }
             flush_pending(&client, &queue);
+            if let Ok(commands) = client.poll_commands(1) {
+                if !commands.is_empty() {
+                    logging::event(format!("leased {} agent command(s)", commands.len()));
+                }
+            }
             if use_server_config() {
                 if let Ok(remote) = client.server_config() {
                     let before = (

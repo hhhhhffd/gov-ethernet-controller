@@ -16,6 +16,14 @@ pub struct HeartbeatTelemetry {
     pub last_probe_status: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AgentCommand {
+    pub id: i64,
+    pub command_type: String,
+    pub payload: Value,
+    pub attempt_count: u32,
+}
+
 pub struct Client {
     config: Config,
     http: reqwest::blocking::Client,
@@ -150,6 +158,86 @@ impl Client {
         response
             .json()
             .map_err(|error| format!("decode config response: {error}"))
+    }
+
+    /// Lease framework commands for a caller-provided handler. The server is
+    /// authoritative; commands are never mirrored in the local measurement
+    /// spool and an unacknowledged lease is safely retried after its timeout.
+    pub fn poll_commands(&self, limit: usize) -> Result<Vec<AgentCommand>, String> {
+        let url = format!(
+            "{}/api/v1/agent/commands:lease",
+            self.config.server_url.trim_end_matches('/')
+        );
+        let response = self
+            .http
+            .post(url)
+            .query(&[("limit", limit.min(4).max(1))])
+            .header("X-Device-ID", &self.config.device_id)
+            .header("X-Device-Token", &self.config.device_token)
+            .send()
+            .map_err(|error| error.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("server returned HTTP {}", response.status()));
+        }
+        let body: Value = response
+            .json()
+            .map_err(|error| format!("decode command response: {error}"))?;
+        let mut commands = Vec::new();
+        for raw in body
+            .get("commands")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            commands.push(AgentCommand {
+                id: raw
+                    .get("id")
+                    .and_then(Value::as_i64)
+                    .ok_or("command id missing")?,
+                command_type: raw
+                    .get("command_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                payload: raw.get("payload").cloned().unwrap_or_else(|| json!({})),
+                attempt_count: raw
+                    .get("attempt_count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default() as u32,
+            });
+        }
+        Ok(commands)
+    }
+
+    pub fn acknowledge_command(
+        &self,
+        command_id: i64,
+        status: &str,
+        result: Value,
+        error: Option<&str>,
+    ) -> Result<Value, String> {
+        if status != "DONE" && status != "FAILED" {
+            return Err("command status must be DONE or FAILED".into());
+        }
+        let url = format!(
+            "{}/api/v1/agent/commands/{}:ack",
+            self.config.server_url.trim_end_matches('/'),
+            command_id
+        );
+        let response = self
+            .http
+            .post(url)
+            .header("X-Device-ID", &self.config.device_id)
+            .header("X-Device-Token", &self.config.device_token)
+            .json(&json!({"status":status,"result":result,"error":error.unwrap_or("")}))
+            .send()
+            .map_err(|error| error.to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("server returned HTTP {}", response.status()));
+        }
+        response
+            .json()
+            .map_err(|error| format!("decode command acknowledgement: {error}"))
     }
 }
 
