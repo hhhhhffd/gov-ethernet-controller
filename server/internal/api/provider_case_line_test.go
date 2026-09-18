@@ -2,7 +2,19 @@ package api
 
 import (
 	"testing"
+	"time"
 )
+
+func TestLineProviderObservationKeepsHistoricalContextSnapshot(t *testing.T) {
+	observation := lineProviderObservation(42, time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil, nil, nil, nil, nil, nil, []byte(`{"version":1}`), []byte(`{"version":2}`), []byte(`{"provider_id":"provider-old","technology":"FIBER","role":"PRIMARY","version":1}`))
+	context, ok := observation["line_context_snapshot"].(map[string]interface{})
+	if !ok || context["provider_id"] != "provider-old" || context["technology"] != "FIBER" || context["role"] != "PRIMARY" {
+		t.Fatalf("historical line context was not preserved: %#v", observation["line_context_snapshot"])
+	}
+	if _, currentFallback := context["current_provider_id"]; currentFallback {
+		t.Fatal("provider evidence must not add a current-config fallback")
+	}
+}
 
 func TestValidateProviderCaseRootRequiresExactlyOne(t *testing.T) {
 	valid := int64(42)

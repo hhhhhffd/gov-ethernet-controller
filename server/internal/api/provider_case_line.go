@@ -168,7 +168,7 @@ func (s *Server) buildLineProviderDraftInput(ctx context.Context, line lineRecor
 		where = append(where, fmt.Sprintf("m.observed_at < $%d", len(args)+1))
 		args = append(args, *to)
 	}
-	query := `SELECT m.id,m.observed_at,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,e.policy_snapshot_json,e.contract_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE ` + strings.Join(where, " AND ") + ` ORDER BY m.observed_at,m.id`
+	query := `SELECT m.id,m.observed_at,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,e.policy_snapshot_json,e.contract_snapshot_json,e.line_context_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE ` + strings.Join(where, " AND ") + ` ORDER BY m.observed_at,m.id`
 	rows, err := s.DB.Pool.Query(ctx, query, args...)
 	if err != nil {
 		return ProviderDraftInput{}, err
@@ -183,12 +183,12 @@ func (s *Server) buildLineProviderDraftInput(ctx context.Context, line lineRecor
 		var id int64
 		var at time.Time
 		var download, upload, ping, jitter, loss, availability *float64
-		var policy, contract []byte
-		if err := rows.Scan(&id, &at, &download, &upload, &ping, &jitter, &loss, &availability, &policy, &contract); err != nil {
+		var policy, contract, lineContext []byte
+		if err := rows.Scan(&id, &at, &download, &upload, &ping, &jitter, &loss, &availability, &policy, &contract, &lineContext); err != nil {
 			return ProviderDraftInput{}, err
 		}
 		found[id] = struct{}{}
-		observations = append(observations, map[string]interface{}{"id": id, "observed_at": at.UTC().Format(time.RFC3339), "download": download, "upload": upload, "ping": ping, "jitter": jitter, "packet_loss": loss, "availability": availability, "policy_snapshot": decodeJSONBytes(policy), "contract_snapshot": decodeJSONBytes(contract)})
+		observations = append(observations, lineProviderObservation(id, at, download, upload, ping, jitter, loss, availability, policy, contract, lineContext))
 		for _, snapshot := range []struct {
 			value  []byte
 			seen   map[string]struct{}
@@ -237,6 +237,10 @@ func (s *Server) buildLineProviderDraftInput(ctx context.Context, line lineRecor
 		started = *from
 	}
 	return ProviderDraftInput{LineID: line.ID, SchoolID: line.SchoolID, Organization: line.OrganizationName, ViolationType: "LINE_REVIEW", StartedAt: started.Format(time.RFC3339), PolicyJSON: string(policyJSON), ContractJSON: string(contractJSON), ObservationsJSON: string(observationsJSON), EvidenceJSON: string(evidenceJSON), Comment: comment}, nil
+}
+
+func lineProviderObservation(id int64, at time.Time, download, upload, ping, jitter, loss, availability *float64, policy, contract, lineContext []byte) map[string]interface{} {
+	return map[string]interface{}{"id": id, "observed_at": at.UTC().Format(time.RFC3339), "download": download, "upload": upload, "ping": ping, "jitter": jitter, "packet_loss": loss, "availability": availability, "policy_snapshot": decodeJSONBytes(policy), "contract_snapshot": decodeJSONBytes(contract), "line_context_snapshot": decodeJSONBytes(lineContext)}
 }
 
 func (s *Server) createProviderCase(w http.ResponseWriter, r *http.Request) {
