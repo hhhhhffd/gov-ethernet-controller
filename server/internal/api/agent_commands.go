@@ -34,6 +34,7 @@ type agentCommand struct {
 	CompletedAt    *time.Time      `json:"completed_at,omitempty"`
 	Result         json.RawMessage `json:"result,omitempty"`
 	LastError      *string         `json:"last_error,omitempty"`
+	SituationID    *int64          `json:"situation_id,omitempty"`
 }
 
 func validateCommandInput(commandType, idempotency string, payload json.RawMessage) error {
@@ -88,12 +89,12 @@ func (s *Server) adminAgentCommand(w http.ResponseWriter, r *http.Request, p *au
 	err := s.DB.Pool.QueryRow(r.Context(), `
 		INSERT INTO agent_commands(device_id,command_type,payload_json,idempotency_key,expires_at)
 		SELECT $1,$2,$3::jsonb,$4,$5 FROM devices WHERE id=$1
-		RETURNING id,device_id,command_type,payload_json,status,idempotency_key,attempt_count,created_at,expires_at,lease_expires_at,completed_at,result_json,last_error`,
+		RETURNING id,device_id,command_type,payload_json,status,idempotency_key,attempt_count,created_at,expires_at,lease_expires_at,completed_at,result_json,last_error,situation_id`,
 		deviceID, strings.TrimSpace(request.CommandType), request.Payload, strings.TrimSpace(request.IdempotencyKey), expires).Scan(commandScanArgs(&command)...)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			if scanErr := s.DB.Pool.QueryRow(r.Context(), `SELECT id,device_id,command_type,payload_json,status,idempotency_key,attempt_count,created_at,expires_at,lease_expires_at,completed_at,result_json,last_error FROM agent_commands WHERE device_id=$1 AND idempotency_key=$2`, deviceID, strings.TrimSpace(request.IdempotencyKey)).Scan(commandScanArgs(&command)...); scanErr == nil {
+			if scanErr := s.DB.Pool.QueryRow(r.Context(), `SELECT id,device_id,command_type,payload_json,status,idempotency_key,attempt_count,created_at,expires_at,lease_expires_at,completed_at,result_json,last_error,situation_id FROM agent_commands WHERE device_id=$1 AND idempotency_key=$2`, deviceID, strings.TrimSpace(request.IdempotencyKey)).Scan(commandScanArgs(&command)...); scanErr == nil {
 				writeJSON(w, http.StatusOK, command)
 				return
 			}
@@ -106,7 +107,7 @@ func (s *Server) adminAgentCommand(w http.ResponseWriter, r *http.Request, p *au
 }
 
 func commandScanArgs(c *agentCommand) []interface{} {
-	return []interface{}{&c.ID, &c.DeviceID, &c.CommandType, &c.Payload, &c.Status, &c.IdempotencyKey, &c.AttemptCount, &c.CreatedAt, &c.ExpiresAt, &c.LeaseExpiresAt, &c.CompletedAt, &c.Result, &c.LastError}
+	return []interface{}{&c.ID, &c.DeviceID, &c.CommandType, &c.Payload, &c.Status, &c.IdempotencyKey, &c.AttemptCount, &c.CreatedAt, &c.ExpiresAt, &c.LeaseExpiresAt, &c.CompletedAt, &c.Result, &c.LastError, &c.SituationID}
 }
 
 func (s *Server) agentCommandLease(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +137,7 @@ func (s *Server) agentCommandLease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	rows, err := tx.Query(r.Context(), `SELECT id,device_id,command_type,payload_json,status,idempotency_key,attempt_count,created_at,expires_at,lease_expires_at,completed_at,result_json,last_error FROM agent_commands WHERE device_id=$1 AND status='PENDING' AND available_at<=now() AND expires_at>now() ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT $2`, device.ID, limit)
+	rows, err := tx.Query(r.Context(), `SELECT id,device_id,command_type,payload_json,status,idempotency_key,attempt_count,created_at,expires_at,lease_expires_at,completed_at,result_json,last_error,situation_id FROM agent_commands WHERE device_id=$1 AND status='PENDING' AND available_at<=now() AND expires_at>now() ORDER BY created_at,id FOR UPDATE SKIP LOCKED LIMIT $2`, device.ID, limit)
 	if err != nil {
 		writeError(w, 500, "could not lease commands")
 		return
@@ -193,7 +194,7 @@ func (s *Server) agentCommandAck(w http.ResponseWriter, r *http.Request, id stri
 		request.Result = []byte("{}")
 	}
 	var command agentCommand
-	err = s.DB.Pool.QueryRow(r.Context(), `UPDATE agent_commands SET status=$1,result_json=$2::jsonb,last_error=NULLIF($3,''),completed_at=now(),updated_at=now(),lease_expires_at=NULL WHERE id=$4 AND device_id=$5 AND status='LEASED' AND expires_at>now() RETURNING id,device_id,command_type,payload_json,status,idempotency_key,attempt_count,created_at,expires_at,lease_expires_at,completed_at,result_json,last_error`, request.Status, request.Result, strings.TrimSpace(request.Error), commandID, device.ID).Scan(commandScanArgs(&command)...)
+	err = s.DB.Pool.QueryRow(r.Context(), `UPDATE agent_commands SET status=$1,result_json=$2::jsonb,last_error=NULLIF($3,''),completed_at=now(),updated_at=now(),lease_expires_at=NULL WHERE id=$4 AND device_id=$5 AND status='LEASED' AND expires_at>now() RETURNING id,device_id,command_type,payload_json,status,idempotency_key,attempt_count,created_at,expires_at,lease_expires_at,completed_at,result_json,last_error,situation_id`, request.Status, request.Result, strings.TrimSpace(request.Error), commandID, device.ID).Scan(commandScanArgs(&command)...)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusConflict, "command is no longer leased or has expired")

@@ -255,11 +255,7 @@ fn run_once(
     client: &Client,
 ) -> Result<(), String> {
     let mut telemetry = RuntimeTelemetry::new();
-    if let Ok(commands) = client.poll_commands(1) {
-        if !commands.is_empty() {
-            logging::event(format!("leased {} agent command(s)", commands.len()));
-        }
-    }
+    process_commands(config, probe, queue, client);
     match client.heartbeat(&telemetry.snapshot(queue)) {
         Ok(_) => telemetry.record_heartbeat(true),
         Err(error) => {
@@ -389,11 +385,7 @@ fn run_loop(
                 telemetry.record_heartbeat(true);
             }
             flush_pending(&client, &queue);
-            if let Ok(commands) = client.poll_commands(1) {
-                if !commands.is_empty() {
-                    logging::event(format!("leased {} agent command(s)", commands.len()));
-                }
-            }
+            process_commands(&config, &mut *probe, &queue, &client);
             if use_server_config() {
                 if let Ok(remote) = client.server_config() {
                     let before = (
@@ -554,6 +546,57 @@ fn flush_pending(client: &Client, queue: &Queue) {
         Err(error) => {
             logging::event(format!("server unavailable/upload failure: {error}"));
             eprintln!("linkwatch-agent: upload queue flush failed: {error}");
+        }
+    }
+}
+
+fn process_commands(config: &Config, probe: &mut dyn Probe, queue: &Queue, client: &Client) {
+    let commands = match client.poll_commands(1) {
+        Ok(commands) => commands,
+        Err(error) => {
+            logging::event(format!("command poll failure: {error}"));
+            return;
+        }
+    };
+    for command in commands {
+        if command.command_type != "LIVE_VERIFY" {
+            let _ = client.acknowledge_command(
+                command.id,
+                "FAILED",
+                json!({}),
+                Some("unsupported command type"),
+            );
+            continue;
+        }
+        let mut result = match probe.measure("performance") {
+            Ok(value) => event(config, value),
+            Err(error) => {
+                let _ = client.acknowledge_command(command.id, "FAILED", json!({}), Some(&error));
+                continue;
+            }
+        };
+        if let Some(object) = result.as_object_mut() {
+            object.insert("mode".into(), json!("PERFORMANCE"));
+            object.insert("raw".into(), json!({
+                "trigger": "LIVE_VERIFY",
+                "live_verify_command_id": command.id,
+                "situation_id": command.payload.get("situation_id").cloned().unwrap_or(Value::Null),
+            }));
+        }
+        let event_id = Queue::event_id(&result);
+        if queue.enqueue(&event_id, &result).is_err() {
+            continue;
+        }
+        match client.upload_pending(queue) {
+            Ok(_) => {
+                let _ = client.acknowledge_command(
+                    command.id,
+                    "DONE",
+                    json!({"client_event_id": event_id}),
+                    None,
+                );
+            }
+            Err(error) => logging::event(format!("LIVE_VERIFY upload deferred: {error}")),
         }
     }
 }

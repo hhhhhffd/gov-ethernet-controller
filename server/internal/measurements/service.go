@@ -211,6 +211,14 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agent
 		}
 		return Result{}, err
 	}
+	// LIVE_VERIFY results remain ordinary measurements. The optional linkage is
+	// recorded only when the command is authenticated to this device and line;
+	// it never changes evaluation or the line state machine.
+	if commandID, ok := rawInt64(input.Raw["live_verify_command_id"]); ok {
+		if _, linkErr := tx.Exec(ctx, `INSERT INTO live_verify_results(command_id,situation_id,measurement_id) SELECT c.id,c.situation_id,$1 FROM agent_commands c WHERE c.id=$2 AND c.device_id=$3 AND c.command_type='LIVE_VERIFY' AND c.situation_id IS NOT NULL ON CONFLICT DO NOTHING`, measurementID, commandID, deviceID); linkErr != nil {
+			return Result{}, linkErr
+		}
+	}
 	violations, err := json.Marshal(evaluated.Violations)
 	if err != nil {
 		return Result{}, fmt.Errorf("marshal violations: %w", err)
@@ -256,6 +264,19 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agent
 		result.Evaluation["reason"] = "Backfilled observation stored without rewriting current state; " + evaluated.Reason
 	}
 	return result, nil
+}
+
+func rawInt64(value interface{}) (int64, bool) {
+	switch number := value.(type) {
+	case float64:
+		return int64(number), number == float64(int64(number))
+	case int64:
+		return number, true
+	case int:
+		return int64(number), true
+	default:
+		return 0, false
+	}
 }
 
 // updateVerification persists only the explicit evidence relation. It runs
