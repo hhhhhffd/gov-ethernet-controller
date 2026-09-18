@@ -410,7 +410,7 @@ func (s *Server) adminOrganizations(w http.ResponseWriter, r *http.Request, p *a
 	}
 	contactChanged := previous.ContactName != payload.ContactName || previous.ContactPhone != payload.ContactPhone || previous.ContactRole != payload.ContactRole || previous.ContactEmail != payload.ContactEmail
 	contactUpdatedAt := previous.ContactUpdatedAt
-	if contactChanged || contactUpdatedAt == nil {
+	if contactChanged {
 		contactUpdatedAt = &now
 	}
 	payload.ContactUpdatedAt = contactUpdatedAt
@@ -882,6 +882,32 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 	if !requireAdmin(w, p) {
 		return
 	}
+	if len(parts) == 1 && (r.Method == http.MethodPut || r.Method == http.MethodPatch) {
+		var payload struct {
+			DisplayName *string `json:"display_name"`
+		}
+		if err := decodeJSON(r, &payload); err != nil || payload.DisplayName == nil {
+			writeError(w, http.StatusUnprocessableEntity, "display_name is required")
+			return
+		}
+		name := strings.TrimSpace(*payload.DisplayName)
+		if len(name) > 255 {
+			writeError(w, http.StatusUnprocessableEntity, "display_name must contain at most 255 characters")
+			return
+		}
+		var previous *string
+		if err := s.DB.Pool.QueryRow(r.Context(), `SELECT display_name FROM devices WHERE id=$1`, parts[0]).Scan(&previous); err != nil {
+			writeError(w, http.StatusNotFound, "device not found")
+			return
+		}
+		if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE devices SET display_name=$1 WHERE id=$2`, nullableString(name), parts[0]); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not update device")
+			return
+		}
+		writeAudit(r.Context(), s, p, "device.display_name_updated", "device", parts[0], map[string]interface{}{"display_name": previous}, map[string]interface{}{"display_name": nullableString(name)})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"device_id": parts[0], "display_name": nullableString(name)})
+		return
+	}
 	if len(parts) > 1 && parts[1] == "rotate-token" && r.Method == http.MethodPost {
 		tx, err := s.DB.Pool.Begin(r.Context())
 		if err != nil {
@@ -987,7 +1013,7 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		return
 	}
 	if r.Method == http.MethodGet {
-		rows, err := s.DB.Pool.Query(r.Context(), `SELECT d.id,d.monitoring_point_id,mp.line_id,l.organization_id,o.school_id,o.name,d.hostname,d.agent_version,d.last_seen,d.blocked_at,d.created_at,d.agent_boot_id,d.agent_boot_started_at,d.agent_uptime_seconds,d.agent_queue_depth,d.agent_last_probe_at,d.agent_last_probe_status,d.agent_telemetry_received_at FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id JOIN lines l ON l.id=mp.line_id JOIN organizations o ON o.id=l.organization_id ORDER BY o.district,o.name,d.id`)
+		rows, err := s.DB.Pool.Query(r.Context(), `SELECT d.id,d.monitoring_point_id,mp.line_id,l.organization_id,o.school_id,o.name,d.hostname,d.display_name,d.agent_version,d.last_seen,d.blocked_at,d.created_at,d.agent_boot_id,d.agent_boot_started_at,d.agent_uptime_seconds,d.agent_queue_depth,d.agent_last_probe_at,d.agent_last_probe_status,d.agent_telemetry_received_at FROM devices d JOIN monitoring_points mp ON mp.id=d.monitoring_point_id JOIN lines l ON l.id=mp.line_id JOIN organizations o ON o.id=l.organization_id ORDER BY o.district,o.name,d.id`)
 		if err != nil {
 			writeError(w, 500, "could not query devices")
 			return
@@ -996,15 +1022,15 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		result := []map[string]interface{}{}
 		for rows.Next() {
 			var id, point, line, organizationID, schoolID, organizationName, version string
-			var hostname *string
+			var hostname, displayName *string
 			var seen, blocked, created, bootStartedAt, probeAt, telemetryReceived *time.Time
 			var bootID, probeStatus *string
 			var uptime, queueDepth *int64
-			if err := rows.Scan(&id, &point, &line, &organizationID, &schoolID, &organizationName, &hostname, &version, &seen, &blocked, &created, &bootID, &bootStartedAt, &uptime, &queueDepth, &probeAt, &probeStatus, &telemetryReceived); err != nil {
+			if err := rows.Scan(&id, &point, &line, &organizationID, &schoolID, &organizationName, &hostname, &displayName, &version, &seen, &blocked, &created, &bootID, &bootStartedAt, &uptime, &queueDepth, &probeAt, &probeStatus, &telemetryReceived); err != nil {
 				writeError(w, 500, "could not read devices")
 				return
 			}
-			result = append(result, map[string]interface{}{"id": id, "hostname": hostname, "monitoring_point_id": point, "line_id": line, "organization_id": organizationID, "school_id": schoolID, "organization_name": organizationName, "agent_version": version, "last_seen": seen, "blocked_at": blocked, "blocked": blocked != nil, "created_at": created, "agent_boot_id": bootID, "agent_boot_started_at": bootStartedAt, "agent_uptime_seconds": uptime, "agent_queue_depth": queueDepth, "agent_last_probe_at": probeAt, "agent_last_probe_status": probeStatus, "agent_telemetry_received_at": telemetryReceived})
+			result = append(result, map[string]interface{}{"id": id, "hostname": hostname, "display_name": displayName, "monitoring_point_id": point, "line_id": line, "organization_id": organizationID, "school_id": schoolID, "organization_name": organizationName, "agent_version": version, "last_seen": seen, "blocked_at": blocked, "blocked": blocked != nil, "created_at": created, "agent_boot_id": bootID, "agent_boot_started_at": bootStartedAt, "agent_uptime_seconds": uptime, "agent_queue_depth": queueDepth, "agent_last_probe_at": probeAt, "agent_last_probe_status": probeStatus, "agent_telemetry_received_at": telemetryReceived})
 		}
 		if err := rows.Err(); err != nil {
 			writeError(w, 500, "could not read devices")

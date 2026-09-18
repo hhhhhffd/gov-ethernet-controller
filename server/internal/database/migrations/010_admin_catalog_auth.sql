@@ -5,12 +5,6 @@ ALTER TABLE organizations
     ADD COLUMN IF NOT EXISTS contact_role TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS contact_email TEXT NOT NULL DEFAULT '',
     ADD COLUMN IF NOT EXISTS contact_updated_at TIMESTAMPTZ;
-UPDATE organizations
-SET contact_updated_at = COALESCE(contact_updated_at, created_at, now())
-WHERE contact_updated_at IS NULL;
-ALTER TABLE organizations
-    ALTER COLUMN contact_updated_at SET DEFAULT now(),
-    ALTER COLUMN contact_updated_at SET NOT NULL;
 
 CREATE TABLE IF NOT EXISTS districts (
     id TEXT PRIMARY KEY,
