@@ -2,11 +2,13 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/smtp"
 	"strings"
 	"sync"
 	"testing"
@@ -161,5 +163,78 @@ func TestPostJSONRejectsNullSuccessfulResponse(t *testing.T) {
 	deliveryErr := requireDeliveryError(t, err)
 	if !deliveryErr.Retryable {
 		t.Fatalf("null upstream response should remain retryable: %+v", deliveryErr)
+	}
+}
+
+func TestSendNotificationTelegramUsesConfiguredSecretAndIdempotency(t *testing.T) {
+	t.Setenv("LINKWATCH_ENV", "test")
+	t.Setenv("LINKWATCH_ALLOW_INSECURE_WEBHOOK", "1")
+	t.Setenv("LINKWATCH_NOTIFICATION_TRANSPORT", "telegram")
+	t.Setenv("LINKWATCH_NOTIFICATION_TELEGRAM_BOT_TOKEN", "bot-secret")
+	t.Setenv("LINKWATCH_NOTIFICATION_TELEGRAM_CHAT_ID", "chat-7")
+	server := testWebhookServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Idempotency-Key") != "linkwatch-notification-17" {
+			t.Fatalf("idempotency key = %q", r.Header.Get("Idempotency-Key"))
+		}
+		var payload map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload["chat_id"] != "chat-7" {
+			t.Fatalf("telegram payload = %#v err=%v", payload, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true,"result":{"message_id":91}}`)
+	}))
+	t.Setenv("LINKWATCH_NOTIFICATION_TELEGRAM_URL", server.URL)
+	result, err := SendNotification(context.Background(), Notification{ID: 17, Message: "line degraded"})
+	if err != nil || result.Channel != "TELEGRAM" || result.ExternalID != "91" {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+func TestSendNotificationClassifiesTelegramRateLimit(t *testing.T) {
+	t.Setenv("LINKWATCH_ENV", "test")
+	t.Setenv("LINKWATCH_ALLOW_INSECURE_WEBHOOK", "1")
+	t.Setenv("LINKWATCH_NOTIFICATION_TRANSPORT", "telegram")
+	t.Setenv("LINKWATCH_NOTIFICATION_TELEGRAM_BOT_TOKEN", "secret")
+	t.Setenv("LINKWATCH_NOTIFICATION_TELEGRAM_CHAT_ID", "chat")
+	server := testWebhookServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "provider secret", http.StatusTooManyRequests)
+	}))
+	t.Setenv("LINKWATCH_NOTIFICATION_TELEGRAM_URL", server.URL)
+	_, err := SendNotification(context.Background(), Notification{ID: 18, Message: "test"})
+	deliveryErr := requireDeliveryError(t, err)
+	if !deliveryErr.Retryable || strings.Contains(deliveryErr.Error(), "provider secret") || strings.Contains(deliveryErr.Error(), "secret") {
+		t.Fatalf("telegram rate-limit classification = %+v", deliveryErr)
+	}
+}
+
+func TestSendNotificationEmailUsesExternalizedDestination(t *testing.T) {
+	t.Setenv("LINKWATCH_NOTIFICATION_TRANSPORT", "email")
+	t.Setenv("LINKWATCH_NOTIFICATION_EMAIL_SMTP_HOST", "smtp.example.test")
+	t.Setenv("LINKWATCH_NOTIFICATION_EMAIL_SMTP_PORT", "587")
+	t.Setenv("LINKWATCH_NOTIFICATION_EMAIL_FROM", "alerts@example.test")
+	t.Setenv("LINKWATCH_NOTIFICATION_EMAIL_TO", "ops@example.test")
+	old := sendMail
+	defer func() { sendMail = old }()
+	var gotHost, gotFrom, gotTo, gotBody string
+	sendMail = func(host string, _ smtp.Auth, from string, to []string, body []byte) error {
+		gotHost, gotFrom, gotTo, gotBody = host, from, strings.Join(to, ","), string(body)
+		return nil
+	}
+	result, err := SendNotification(context.Background(), Notification{ID: 19, Message: "incident message"})
+	if err != nil || result.Channel != "EMAIL" || gotHost != "smtp.example.test:587" || gotFrom != "alerts@example.test" || gotTo != "ops@example.test" || !strings.Contains(gotBody, "incident message") {
+		t.Fatalf("result=%+v host=%q from=%q to=%q body=%q err=%v", result, gotHost, gotFrom, gotTo, gotBody, err)
+	}
+}
+
+func TestSendNotificationEmailRejectsInvalidDestinationWithoutSecretLeak(t *testing.T) {
+	t.Setenv("LINKWATCH_NOTIFICATION_TRANSPORT", "email")
+	t.Setenv("LINKWATCH_NOTIFICATION_EMAIL_SMTP_HOST", "smtp.example.test")
+	t.Setenv("LINKWATCH_NOTIFICATION_EMAIL_SMTP_PORT", "587")
+	t.Setenv("LINKWATCH_NOTIFICATION_EMAIL_FROM", "alerts@example.test")
+	t.Setenv("LINKWATCH_NOTIFICATION_EMAIL_TO", "ops@example.test\r\nBcc:secret@example.test")
+	_, err := SendNotification(context.Background(), Notification{ID: 20, Message: "test"})
+	deliveryErr := requireDeliveryError(t, err)
+	if deliveryErr.Retryable || strings.Contains(deliveryErr.Error(), "secret") {
+		t.Fatalf("invalid destination classification = %+v", deliveryErr)
 	}
 }
