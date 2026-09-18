@@ -1,4 +1,7 @@
-use std::{env, fs, process::Command};
+use std::{env, process::Command};
+
+#[cfg(not(windows))]
+use std::fs;
 
 /// Return the operating system hostname without making it part of device
 /// identity.  COMPUTERNAME is the native Windows value; HOSTNAME covers the

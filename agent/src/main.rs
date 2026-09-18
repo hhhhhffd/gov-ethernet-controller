@@ -98,6 +98,7 @@ pub(crate) fn run_service_mode(stop: StopToken) -> Result<(), String> {
 }
 
 fn run_mode(mode: String, service_stop: Option<StopToken>) -> Result<(), String> {
+    let service_mode = service_stop.is_some();
     let mut config = Config::load()?;
     let log_path = logging::init(&config.queue_dir)?;
     logging::event(format!("startup mode={mode} log={}", log_path.display()));
@@ -149,7 +150,7 @@ fn run_mode(mode: String, service_stop: Option<StopToken>) -> Result<(), String>
     } else {
         let manual_probe = Arc::new(ManualProbeControl::default());
         #[cfg(windows)]
-        let _ipc = if service_stop.is_some() {
+        let _ipc = if service_mode {
             Some(windows_ipc::start(queue.dir_path(), manual_probe.clone()))
         } else {
             None

@@ -35,7 +35,7 @@ extern "system" {
         out_buffer_size: Dword,
         in_buffer_size: Dword,
         default_timeout: Dword,
-        security_attributes: *mut c_void,
+        security_attributes: *mut SecurityAttributes,
     ) -> Handle;
     fn ConnectNamedPipe(pipe: Handle, overlapped: *mut c_void) -> i32;
     fn DisconnectNamedPipe(pipe: Handle) -> i32;
