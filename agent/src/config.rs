@@ -157,7 +157,12 @@ impl Config {
     }
 
     pub fn apply_server_config(&mut self, value: &Value) {
-        let _ = self.apply_remote_config(value);
+        // Legacy /agent/config responses also contain identity and policy
+        // projections. Only feed the established schedule subset into the
+        // validator; versioned desired configs arrive through REMOTE_CONFIG.
+        if let Some(schedule) = value.get("schedule") {
+            let _ = self.apply_remote_config(&serde_json::json!({"schedule": schedule}));
+        }
     }
 
     pub fn apply_remote_config(&mut self, value: &Value) -> Result<(), String> {
