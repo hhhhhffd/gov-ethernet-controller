@@ -210,7 +210,10 @@ fn protect_token(path: &Path) -> Result<(), String> {
     let status = Command::new("icacls.exe")
         .arg(path)
         .arg("/inheritance:r")
-        .args(["/grant:r", "SYSTEM:(R)", "Administrators:(R)"])
+        // Use well-known SIDs instead of localized account names.  On a
+        // non-English Windows image `SYSTEM`/`Administrators` can otherwise
+        // fail with icacls error 1332 (name-to-SID mapping unavailable).
+        .args(["/grant:r", "*S-1-5-18:(R)", "*S-1-5-32-544:(R)"])
         .status()
         .map_err(|error| format!("set token ACL: {error}"))?;
     if !status.success() {
