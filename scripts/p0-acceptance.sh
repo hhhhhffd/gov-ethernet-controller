@@ -107,7 +107,7 @@ for role in provider-a district school-42; do
   expect_status "$role export scope ($role)" GET "/api/v1/exports/preview?kind=raw&format=csv" 200 "$role_token"
 done
 
-record_skip "Windows service/tray" "requires supported native Windows target"
+record_skip "Windows remaining matrix" "TASK-018 report verifies SCM/runtime and local offline queue; admin/reboot/tray/authenticated-resend/reinstall still require native Windows evidence"
 record_skip "live TLS/ACME" "requires DNS, public host and ACME email"
 record_skip "live provider delivery" "requires authorized test webhook endpoint and credentials"
 

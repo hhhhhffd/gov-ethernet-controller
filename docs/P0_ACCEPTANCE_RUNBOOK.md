@@ -58,7 +58,7 @@ node --check web/app.js
 | Role×Scope | API gate users `admin`, `provider-a`, `district`, `school-42` | list/read/mutation/export/notification/admin isolation |
 | 401/403/404/409 | API gate plus stale/concurrent mutation fixture | exact status contracts and canonical refresh |
 | Worker regression | Compose restart/retry run | durable outbox/freshness/situation behavior |
-| Windows P0-A01/I08 | native PowerShell scripts and supported Windows target | service, reboot, tray, offline, reinstall evidence |
+| Windows P0-A01/I08 | authoritative TASK-018 native Windows report | **Verified:** Windows SCM/runtime startup and local offline queue behavior. **Not verified:** admin/elevated setup, reboot recovery, tray UX, authenticated resend against a live server, and reinstall matrix |
 | TLS P0-I04 | `scripts/production-tls-smoke.sh` | real DNS/ACME redirect/certificate/protected endpoint |
 | Provider P0-I09 | configured authorized test webhook | auth/signing/retry/idempotency/external reference/failure visibility |
 
@@ -73,14 +73,17 @@ The following commands were executed in the current environment:
 - `node --check web/app.js` — **PASS**.
 - `scripts/p0-local-acceptance.sh` — **PASS**, 12 local scenarios.
 - `scripts/p0-acceptance.sh` — **PASS**, 32 API/local checks, 0 failures, 3
-  external skips; exits 2 only because Windows/TLS/provider evidence is not
-  available in this environment.
+  external skips; exits 2 because the remaining Windows scenarios, public
+  TLS/ACME, and live provider evidence are not complete.
 
 ## External evidence still required
 
 P0 cannot be declared accepted until the following artifacts are attached:
 
-1. TASK-018 native Windows service/tray matrix on a supported Windows target.
+1. TASK-018 follow-up evidence for Windows admin/elevated setup, reboot
+   recovery, tray UX, authenticated resend against the server, and reinstall;
+   the authoritative report already verifies SCM/runtime startup and local
+   offline queue behavior.
 2. TASK-017 public DNS/ACME run using `scripts/production-tls-smoke.sh`.
 3. TASK-019 authorized provider test endpoint run, including retry and
    permanent failure output.
