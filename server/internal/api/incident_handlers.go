@@ -229,6 +229,13 @@ func (s *Server) createManualIncident(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Manual incidents are an operator workflow. Reuse the existing assign
+	// capability: ADMIN, OBLAST, and DISTRICT may create them, while SCHOOL is
+	// intentionally limited to read/comment access and PROVIDER handles only
+	// provider-side actions.
+	if !requireRole(w, p, "assign") {
+		return
+	}
 	var payload struct {
 		LineID        string  `json:"line_id"`
 		ViolationType string  `json:"violation_type"`
@@ -425,6 +432,9 @@ func (s *Server) incidentEvent(w http.ResponseWriter, r *http.Request, item inci
 }
 
 func (s *Server) providerDraft(w http.ResponseWriter, r *http.Request, item incidentRecord, p *auth.Principal) {
+	if !requireRole(w, p, "provider_send") {
+		return
+	}
 	var payload struct {
 		Comment string `json:"comment"`
 	}

@@ -407,6 +407,9 @@ func (s *Server) demoReplay(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !requireAdmin(w, p) {
+		return
+	}
 	line, visible, lineErr := s.lineVisible(r.Context(), p, "line-42-primary")
 	if lineErr != nil {
 		writeError(w, 500, "could not query demo line")
