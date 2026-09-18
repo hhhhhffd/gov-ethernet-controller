@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -500,6 +501,10 @@ func (s *Server) lineMeasurements(w http.ResponseWriter, r *http.Request, lineID
 	start, end := r.URL.Query().Get("from"), r.URL.Query().Get("to")
 	where := []string{"m.line_id=$1"}
 	params := []interface{}{lineID}
+	if mode := strings.TrimSpace(r.URL.Query().Get("mode")); mode != "" {
+		params = append(params, mode)
+		where = append(where, "m.mode=$"+itoa(len(params)))
+	}
 	if start != "" {
 		value, e := parseTime(start, time.Now())
 		if e != nil {
@@ -518,7 +523,26 @@ func (s *Server) lineMeasurements(w http.ResponseWriter, r *http.Request, lineID
 		params = append(params, value)
 		where = append(where, "m.observed_at < $"+itoa(len(params)))
 	}
-	rows, err := s.DB.Pool.Query(r.Context(), `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE `+strings.Join(where, " AND ")+` ORDER BY m.observed_at DESC,m.id DESC`, params...)
+	limit, offset, paginated := 50, 0, r.URL.Query().Has("limit") || r.URL.Query().Has("offset")
+	if value := r.URL.Query().Get("limit"); value != "" {
+		if parsed, parseErr := strconv.Atoi(value); parseErr == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		} else {
+			writeError(w, 422, "limit must be 1-200")
+			return
+		}
+	}
+	if value := r.URL.Query().Get("offset"); value != "" {
+		if parsed, parseErr := strconv.Atoi(value); parseErr == nil && parsed >= 0 {
+			offset = parsed
+		} else {
+			writeError(w, 422, "offset must be non-negative")
+			return
+		}
+	}
+	params = append(params, limit+1, offset)
+	query := `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE ` + strings.Join(where, " AND ") + ` ORDER BY m.observed_at DESC,m.id DESC LIMIT $` + itoa(len(params)-1) + ` OFFSET $` + itoa(len(params))
+	rows, err := s.DB.Pool.Query(r.Context(), query, params...)
 	if err != nil {
 		writeError(w, 500, "could not query measurements")
 		return
@@ -535,6 +559,19 @@ func (s *Server) lineMeasurements(w http.ResponseWriter, r *http.Request, lineID
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, 500, "could not read measurements")
+		return
+	}
+	hasMore := len(result) > limit
+	if hasMore {
+		result = result[:limit]
+	}
+	if paginated {
+		writeJSON(w, 200, map[string]interface{}{"items": result, "offset": offset, "limit": limit, "has_more": hasMore, "next_offset": func() interface{} {
+			if hasMore {
+				return offset + limit
+			}
+			return nil
+		}()})
 		return
 	}
 	writeJSON(w, 200, result)
@@ -587,7 +624,24 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request, deviceID s
 		return
 	}
 	items := []map[string]interface{}{}
-	rows, rowsErr := s.DB.Pool.Query(r.Context(), `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE m.device_id=$1 ORDER BY m.observed_at DESC,m.id DESC LIMIT 100`, deviceID)
+	deviceLimit, deviceOffset := 100, 0
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, parseErr := strconv.Atoi(value)
+		if parseErr != nil || parsed < 1 || parsed > 200 {
+			writeError(w, 422, "limit must be 1-200")
+			return
+		}
+		deviceLimit = parsed
+	}
+	if value := r.URL.Query().Get("offset"); value != "" {
+		parsed, parseErr := strconv.Atoi(value)
+		if parseErr != nil || parsed < 0 {
+			writeError(w, 422, "offset must be non-negative")
+			return
+		}
+		deviceOffset = parsed
+	}
+	rows, rowsErr := s.DB.Pool.Query(r.Context(), `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE m.device_id=$1 ORDER BY m.observed_at DESC,m.id DESC LIMIT $2 OFFSET $3`, deviceID, deviceLimit+1, deviceOffset)
 	if rowsErr == nil {
 		for rows.Next() {
 			if measurement, scanErr := scanMeasurement(rows); scanErr == nil {
@@ -596,12 +650,21 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request, deviceID s
 		}
 		rows.Close()
 	}
+	hasMore := len(items) > deviceLimit
+	if hasMore {
+		items = items[:deviceLimit]
+	}
 	lineState, stateErr := s.state(r.Context(), lineID)
 	if stateErr != nil {
 		writeError(w, 500, "could not load line state")
 		return
 	}
-	writeJSON(w, 200, map[string]interface{}{"id": deviceID, "hostname": hostname, "display_name": displayName, "line_id": lineID, "organization_id": orgID, "school_id": school, "organization_name": name, "district": district, "address": address, "contact_name": contactName, "contact_phone": contactPhone, "provider_id": providerID, "provider_name": providerName, "role": role, "technology": technology, "line_status": lineStatus, "monitoring_point_id": pointID, "monitoring_point_location": location, "agent_version": agent, "blocked": blocked != nil, "blocked_at": blocked, "last_seen": lastSeen, "created_at": created, "monitoring_point_primary": primary, "monitoring_point_active": active, "state": stateMap(lineState), "measurements": items})
+	writeJSON(w, 200, map[string]interface{}{"id": deviceID, "hostname": hostname, "display_name": displayName, "line_id": lineID, "organization_id": orgID, "school_id": school, "organization_name": name, "district": district, "address": address, "contact_name": contactName, "contact_phone": contactPhone, "provider_id": providerID, "provider_name": providerName, "role": role, "technology": technology, "line_status": lineStatus, "monitoring_point_id": pointID, "monitoring_point_location": location, "agent_version": agent, "blocked": blocked != nil, "blocked_at": blocked, "last_seen": lastSeen, "created_at": created, "monitoring_point_primary": primary, "monitoring_point_active": active, "state": stateMap(lineState), "measurements": items, "history": map[string]interface{}{"offset": deviceOffset, "limit": deviceLimit, "has_more": hasMore, "next_offset": func() interface{} {
+		if hasMore {
+			return deviceOffset + deviceLimit
+		}
+		return nil
+	}()}})
 }
 
 func stringValue(value *string) string {
