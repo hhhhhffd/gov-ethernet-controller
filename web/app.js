@@ -2,6 +2,13 @@
 (function () {
   "use strict";
 
+  document.addEventListener("DOMContentLoaded", () => {
+    const format = document.querySelector("#exportFormat");
+    if (format && !format.querySelector("option[value='json']")) {
+      const option = document.createElement("option"); option.value = "json"; option.textContent = "JSON"; format.appendChild(option);
+    }
+  });
+
   const $ = (selector, root = document) => root.querySelector(selector);
   const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
   const state = {

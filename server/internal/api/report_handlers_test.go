@@ -147,6 +147,28 @@ func TestCSVAndXLSXUseTheSameSelectedDataset(t *testing.T) {
 	}
 }
 
+func TestJSONExportEnvelopeUsesSelectedAllowlistAndPreservesNull(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	payload, err := jsonExportEnvelope("raw", []string{"device_id", "download"}, [][]interface{}{{"dev-1", nil}}, 1, start, start.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["schema_version"] != float64(1) || decoded["count"] != float64(1) {
+		t.Fatalf("envelope = %#v", decoded)
+	}
+	row := decoded["rows"].([]interface{})[0].(map[string]interface{})
+	if _, ok := row["raw_json"]; ok {
+		t.Fatal("raw_json leaked outside allowlist")
+	}
+	if row["download"] != nil {
+		t.Fatalf("null download became %#v", row["download"])
+	}
+}
+
 func TestAvailabilitySummaryUsesStoredThresholdAndExplicitUnknowns(t *testing.T) {
 	threshold := func(value float64) []byte {
 		payload, _ := json.Marshal(map[string]interface{}{"availability_min": value})

@@ -794,8 +794,8 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 422, "kind must be raw or aggregate")
 		return
 	}
-	if format != "csv" && format != "xlsx" {
-		writeError(w, 422, "format must be csv or xlsx")
+	if format != "csv" && format != "xlsx" && format != "json" {
+		writeError(w, 422, "format must be csv, xlsx or json")
 		return
 	}
 	fields, err := selectedExportFields(query, kind)
@@ -905,6 +905,17 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeAudit(r.Context(), s, p, "report.exported", "export", fmt.Sprintf("%s:%s", kind, format), nil, map[string]interface{}{"kind": kind, "format": format, "row_count": len(data), "period": query.Get("period")})
+	if format == "json" {
+		payload, err := jsonExportEnvelope(kind, headers, data, len(rows), start, end)
+		if err != nil {
+			writeError(w, 500, "could not build json export")
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=linkwatch-export.json")
+		_, _ = w.Write(payload)
+		return
+	}
 	if format == "xlsx" {
 		payload, err := xlsx(headers, data)
 		if err != nil {
@@ -948,6 +959,18 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	if _, err := w.Write(buffer.Bytes()); err != nil {
 		s.Logger.Error("could not write csv export", "error", err)
 	}
+}
+
+func jsonExportEnvelope(kind string, headers []string, data [][]interface{}, measurementCount int, start, end time.Time) ([]byte, error) {
+	jsonRows := make([]map[string]interface{}, 0, len(data))
+	for _, row := range data {
+		item := make(map[string]interface{}, len(headers))
+		for i, field := range headers {
+			item[field] = row[i]
+		}
+		jsonRows = append(jsonRows, item)
+	}
+	return json.Marshal(map[string]interface{}{"schema_version": 1, "kind": kind, "format": "json", "from": start, "to": end, "columns": headers, "count": len(jsonRows), "measurement_count": measurementCount, "rows": jsonRows})
 }
 
 func xlsx(headers []string, rows [][]interface{}) ([]byte, error) {
