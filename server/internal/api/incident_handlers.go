@@ -696,10 +696,10 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 			writeError(w, 500, "could not persist provider delivery failure")
 			return
 		}
-		if _, eventErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_DELIVERY_FAILED',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"error":%q,"retryable":%t}`, id, deliveryErr.Error(), retryable), now); eventErr != nil {
+		if _, eventErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_DELIVERY_FAILED',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"error":"provider delivery failed","retryable":%t}`, id, retryable), now); eventErr != nil {
 			s.Logger.Error("could not record provider case delivery failure event", "case_id", id, "error", eventErr)
 		}
-		writeAudit(r.Context(), s, p, "provider_case.delivery_failed", "provider_case", fmt.Sprint(id), nil, map[string]interface{}{"status": "FAILED", "attempts": attempt, "retryable": retryable, "error": deliveryErr.Error()})
+		writeAudit(r.Context(), s, p, "provider_case.delivery_failed", "provider_case", fmt.Sprint(id), nil, map[string]interface{}{"status": "FAILED", "attempts": attempt, "retryable": retryable, "error": "provider delivery failed"})
 		writeError(w, http.StatusBadGateway, "provider delivery failed; delivery state was persisted")
 		return
 	}

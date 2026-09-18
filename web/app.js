@@ -74,6 +74,10 @@
       await login(true);
       return api(path, { ...options, _retried: true });
     }
+    if (response.status === 403 && !options._capabilityRetried && state.token) {
+      await loadUserProfile();
+      return api(path, { ...options, _capabilityRetried: true });
+    }
     if (!response.ok) { const text = await response.text(); const error = new Error(text || `${response.status}`); error.status = response.status; throw error; }
     if (response.status === 204) return null;
     const type = response.headers.get("content-type") || "";
@@ -124,23 +128,14 @@
     }
   }
   function updateUser() { if (!state.user) return; $("#userName").textContent = state.user.name || state.user.full_name || state.user.username || "Айдана К."; $("#userRole").textContent = state.user.role_label || state.user.role || "Областной уровень"; applyCapabilities(); }
-  function role() { return String(state.user?.role || "").toUpperCase(); }
   function demoCapabilities() { return state.usingDemoData && !state.user; }
-  function scopeEntries() { return Array.isArray(state.user?.scopes) ? state.user.scopes : []; }
-  function lineInScope(line) {
-    if (demoCapabilities() || ["ADMIN", "OBLAST"].includes(role())) return true;
-    return scopeEntries().some((scope) => {
-      const type = String(scope.scope_type || scope.type || "").toUpperCase();
-      const id = String(scope.scope_id || scope.id || "");
-      return (type === "LINE" && id === String(line.id)) || (type === "ORGANIZATION" && [line.organization_id, line.school_id].map(String).includes(id)) || (type === "DISTRICT" && role() === "DISTRICT" && id === String(line.district)) || (type === "PROVIDER" && role() === "PROVIDER" && id === String(line.provider_id || line.provider));
-    });
-  }
-  function canAdmin() { return demoCapabilities() || role() === "ADMIN"; }
-  function canSendProvider(line) { return (demoCapabilities() || ["ADMIN", "OBLAST", "DISTRICT", "PROVIDER"].includes(role())) && (!line || lineInScope(line)); }
+  function hasCapability(name) { return demoCapabilities() || (Array.isArray(state.user?.capabilities) && state.user.capabilities.includes(name)); }
+  function canAdmin() { return hasCapability("admin.manage"); }
+  function canSendProvider() { return hasCapability("provider_case.send"); }
   function applyCapabilities() {
     const admin = $("[data-view='admin']"); if (admin) admin.hidden = !canAdmin();
     const replay = $("#demoButton"); if (replay) replay.hidden = !canAdmin();
-    const manual = $("#manualIncidentButton"); if (manual) manual.hidden = !state.user && !demoCapabilities();
+    const manual = $("#manualIncidentButton"); if (manual) manual.hidden = !hasCapability("incident.create");
     $$("[data-provider-action]").forEach((button) => { button.hidden = !canSendProvider(button._line || null); });
   }
   async function loadUserProfile() {

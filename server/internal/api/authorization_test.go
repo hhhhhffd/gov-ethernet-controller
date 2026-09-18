@@ -63,3 +63,22 @@ func TestRequireAdminRejectsOblastAndAllowsAdmin(t *testing.T) {
 		t.Fatalf("requireAdmin ADMIN status = %d, want untouched recorder status", allowed.Code)
 	}
 }
+
+func TestAuditUserSnapshotExcludesPassword(t *testing.T) {
+	payload := userPayload{ID: "u1", Username: "alice", Role: "ADMIN", Password: "super-secret", Disabled: false}
+	snapshot := auditUserSnapshot(payload, []scopePayload{{Type: "LINE", ID: "line-1"}})
+	if _, ok := snapshot["password"]; ok {
+		t.Fatal("user audit snapshot contains password")
+	}
+	if snapshot["role"] != "ADMIN" {
+		t.Fatalf("snapshot role = %v", snapshot["role"])
+	}
+}
+
+func TestSameScopesMatchesCanonicalScopeSets(t *testing.T) {
+	left := []scopePayload{{Type: "DISTRICT", ID: "d1"}, {Type: "LINE", ID: "l1"}}
+	right := []scopePayload{{Type: "DISTRICT", ID: "d1"}, {Type: "LINE", ID: "l1"}}
+	if !sameScopes(left, right) {
+		t.Fatal("identical scopes were considered different")
+	}
+}

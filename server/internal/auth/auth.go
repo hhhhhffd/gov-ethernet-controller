@@ -23,13 +23,32 @@ type Scope struct {
 }
 
 type Principal struct {
-	ID       string  `json:"id"`
-	Username string  `json:"username"`
-	Role     string  `json:"role"`
-	Scopes   []Scope `json:"scopes,omitempty"`
+	ID           string   `json:"id"`
+	Username     string   `json:"username"`
+	Role         string   `json:"role"`
+	Scopes       []Scope  `json:"scopes,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
 }
 
 func (p Principal) IsAdmin() bool { return p.Role == "ADMIN" || p.Role == "OBLAST" }
+
+// EffectiveCapabilities is the server-authoritative action contract consumed by
+// the browser. Object scope remains enforced separately by backend routes.
+func EffectiveCapabilities(p *Principal) []string {
+	if p == nil {
+		return nil
+	}
+	capabilities := []string{"line.read", "incident.read", "report.read", "report.export"}
+	switch p.Role {
+	case "ADMIN":
+		capabilities = append(capabilities, "audit.read", "admin.manage", "admin.users", "admin.devices", "admin.policies", "notification.dispatch", "incident.create", "incident.update", "provider_case.draft", "provider_case.send")
+	case "OBLAST", "DISTRICT":
+		capabilities = append(capabilities, "audit.read", "incident.create", "incident.update", "provider_case.draft", "provider_case.send")
+	case "PROVIDER":
+		capabilities = append(capabilities, "incident.update", "provider_case.draft", "provider_case.send")
+	}
+	return capabilities
+}
 
 func TokenHash(value string) string {
 	sum := sha256.Sum256([]byte(value))

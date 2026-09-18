@@ -388,6 +388,7 @@ func (s *Server) notificationDispatch(w http.ResponseWriter, r *http.Request, p 
 	}
 	delivery, deliveryErr := s.Measure.DispatchNotification(r.Context(), notificationID)
 	if deliveryErr != nil {
+		writeAudit(r.Context(), s, p, "notification.delivery_failed", "notification", id, nil, map[string]interface{}{"status": "FAILED"})
 		if strings.Contains(deliveryErr.Error(), "not pending") {
 			writeError(w, http.StatusNotFound, "notification not found or already delivered")
 			return
@@ -395,6 +396,7 @@ func (s *Server) notificationDispatch(w http.ResponseWriter, r *http.Request, p 
 		writeError(w, http.StatusBadGateway, "notification delivery failed; retry is available")
 		return
 	}
+	writeAudit(r.Context(), s, p, "notification.sent", "notification", id, nil, map[string]interface{}{"status": "SENT", "delivery_channel": delivery.Channel})
 	writeJSON(w, 200, map[string]interface{}{"id": notificationID, "status": "SENT", "delivery_channel": delivery.Channel})
 }
 

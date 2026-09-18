@@ -672,6 +672,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 			data = append(data, item)
 		}
 	}
+	writeAudit(r.Context(), s, p, "report.exported", "export", fmt.Sprintf("%s:%s", kind, format), nil, map[string]interface{}{"kind": kind, "format": format, "row_count": len(data), "period": query.Get("period")})
 	if format == "xlsx" {
 		payload, err := xlsx(headers, data)
 		if err != nil {

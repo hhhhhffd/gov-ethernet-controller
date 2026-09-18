@@ -229,7 +229,7 @@ func (s *Server) adminUserRoute(w http.ResponseWriter, r *http.Request, p *auth.
 			}
 			token = sessionToken
 		}
-		writeAudit(r.Context(), s, p, "user.created", "user", payload.ID, nil, payload)
+		writeAudit(r.Context(), s, p, "user.created", "user", payload.ID, nil, auditUserSnapshot(payload, payload.Scopes))
 		writeJSON(w, 201, map[string]interface{}{"id": payload.ID, "username": payload.Username, "role": payload.Role, "disabled": payload.Disabled, "scopes": payload.Scopes, "token": token, "created_at": now})
 		return
 	}
@@ -245,6 +245,11 @@ func (s *Server) adminUserRoute(w http.ResponseWriter, r *http.Request, p *auth.
 		return
 	}
 	current.Disabled = disabledAt != nil
+	previousScopes, err := userScopes(r.Context(), s, payload.ID)
+	if err != nil {
+		writeError(w, 500, "could not read user scopes")
+		return
+	}
 	setPassword := ""
 	args := []interface{}{payload.Username, payload.Role, nullableNow(payload.Disabled, now)}
 	var replacementToken string
@@ -288,7 +293,13 @@ func (s *Server) adminUserRoute(w http.ResponseWriter, r *http.Request, p *auth.
 		writeError(w, 422, err.Error())
 		return
 	}
-	writeAudit(r.Context(), s, p, "user.updated", "user", payload.ID, current, payload)
+	writeAudit(r.Context(), s, p, "user.updated", "user", payload.ID, auditUserSnapshot(current, previousScopes), auditUserSnapshot(payload, payload.Scopes))
+	if current.Role != payload.Role {
+		writeAudit(r.Context(), s, p, "user.role_changed", "user", payload.ID, map[string]interface{}{"role": current.Role}, map[string]interface{}{"role": payload.Role})
+	}
+	if !sameScopes(previousScopes, payload.Scopes) {
+		writeAudit(r.Context(), s, p, "user.scope_changed", "user", payload.ID, map[string]interface{}{"scopes": previousScopes}, map[string]interface{}{"scopes": payload.Scopes})
+	}
 	writeJSON(w, 200, map[string]interface{}{"id": payload.ID, "username": payload.Username, "role": payload.Role, "disabled": payload.Disabled, "scopes": payload.Scopes, "created_at": created})
 }
 
@@ -312,6 +323,39 @@ func replaceUserScopes(ctx context.Context, s *Server, userID string, scopes []s
 		}
 	}
 	return nil
+}
+
+func userScopes(ctx context.Context, s *Server, userID string) ([]scopePayload, error) {
+	rows, err := s.DB.Pool.Query(ctx, `SELECT scope_type,scope_id FROM role_scopes WHERE user_id=$1 ORDER BY scope_type,scope_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []scopePayload{}
+	for rows.Next() {
+		var scope scopePayload
+		if err := rows.Scan(&scope.Type, &scope.ID); err != nil {
+			return nil, err
+		}
+		result = append(result, scope)
+	}
+	return result, rows.Err()
+}
+
+func sameScopes(left, right []scopePayload) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(left))
+	for _, scope := range left {
+		seen[strings.ToUpper(scope.Type)+"\x00"+scope.ID] = struct{}{}
+	}
+	for _, scope := range right {
+		if _, ok := seen[strings.ToUpper(scope.Type)+"\x00"+scope.ID]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) agentRegister(w http.ResponseWriter, r *http.Request) {
@@ -815,6 +859,10 @@ func writeAudit(ctx context.Context, s *Server, p *auth.Principal, action, objec
 	if _, err := s.DB.Pool.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,request_id,created_at) VALUES ('USER',$1,$2,$3,$4,NULLIF($5,'')::jsonb,NULLIF($6,'')::jsonb,NULLIF($7,''),now())`, p.ID, action, objectType, objectID, string(beforeJSON), string(afterJSON), requestIDFromContext(ctx)); err != nil {
 		s.Logger.Error("could not persist audit event", "action", action, "object_type", objectType, "object_id", objectID, "error", err)
 	}
+}
+
+func auditUserSnapshot(user userPayload, scopes []scopePayload) map[string]interface{} {
+	return map[string]interface{}{"id": user.ID, "username": user.Username, "role": user.Role, "disabled": user.Disabled, "scopes": scopes}
 }
 
 // writeVersionAudit keeps the version snapshot and its audit event in the

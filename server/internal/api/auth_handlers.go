@@ -58,9 +58,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,request_id,created_at) VALUES ('USER',$1,'auth.login','user',$1,$2,now())`, id, r.Header.Get("X-Request-ID")); err != nil {
 		s.Logger.Error("could not persist login audit event", "user_id", id, "error", err)
 	}
+	principal := &auth.Principal{ID: id, Username: username, Role: role}
+	if loaded, loadErr := auth.AuthenticateUser(r.Context(), s.DB, token); loadErr == nil {
+		principal = loaded
+	}
+	principal.Capabilities = auth.EffectiveCapabilities(principal)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"token": token, "token_type": "Bearer", "expires_at": expires.UTC().Format(time.RFC3339),
-		"user": map[string]interface{}{"id": id, "username": username, "role": role, "role_label": roleLabel(role)},
+		"user": map[string]interface{}{"id": principal.ID, "username": principal.Username, "role": principal.Role, "role_label": roleLabel(principal.Role), "scopes": principal.Scopes, "capabilities": principal.Capabilities},
 	})
 }
 
@@ -99,6 +104,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	p.Capabilities = auth.EffectiveCapabilities(p)
 	writeJSON(w, http.StatusOK, p)
 }
 

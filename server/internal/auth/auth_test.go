@@ -35,3 +35,27 @@ func TestPasswordHashVerification(t *testing.T) {
 		t.Fatal("wrong password verified")
 	}
 }
+
+func TestEffectiveCapabilitiesUseBackendActionContract(t *testing.T) {
+	admin := EffectiveCapabilities(&Principal{Role: "ADMIN"})
+	if !containsCapability(admin, "admin.users") || !containsCapability(admin, "notification.dispatch") {
+		t.Fatalf("admin capabilities = %v", admin)
+	}
+	school := EffectiveCapabilities(&Principal{Role: "SCHOOL"})
+	if containsCapability(school, "incident.create") || containsCapability(school, "provider_case.send") {
+		t.Fatalf("school received mutation capabilities: %v", school)
+	}
+	provider := EffectiveCapabilities(&Principal{Role: "PROVIDER", Scopes: []Scope{{Type: "PROVIDER", ID: "p1"}}})
+	if !containsCapability(provider, "provider_case.send") || containsCapability(provider, "admin.manage") {
+		t.Fatalf("provider capabilities = %v", provider)
+	}
+}
+
+func containsCapability(capabilities []string, wanted string) bool {
+	for _, capability := range capabilities {
+		if capability == wanted {
+			return true
+		}
+	}
+	return false
+}
