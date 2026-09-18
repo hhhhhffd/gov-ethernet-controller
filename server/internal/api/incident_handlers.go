@@ -625,6 +625,19 @@ func (s *Server) providerCases(ctx context.Context, incidentID int64) ([]map[str
 
 func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest string) {
 	parts := strings.Split(strings.Trim(rest, "/"), "/")
+	if len(parts) == 1 && r.Method == http.MethodGet {
+		id, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil {
+			writeError(w, 404, "provider case not found")
+			return
+		}
+		p, ok := s.principal(w, r)
+		if !ok {
+			return
+		}
+		s.providerCaseWorkspaceDetail(w, r, id, p)
+		return
+	}
 	if len(parts) < 2 {
 		writeError(w, 404, "provider case not found")
 		return

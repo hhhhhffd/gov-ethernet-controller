@@ -197,6 +197,7 @@
     populateFilters();
     applyCapabilities();
     renderAll();
+    loadProviderWorkspace();
     $("#lastSync").textContent = time(new Date().toISOString());
   }
 
@@ -321,6 +322,17 @@
     const root = $("#incidentBoard"); if (!state.incidents.length) { root.innerHTML = `<div class="table-empty">Инцидентов нет</div>`; return; }
     root.innerHTML = state.incidents.map((incident) => { const closed = String(incident.status).toUpperCase() === "CLOSED"; const line = state.lines.find((item) => item.id === incident.line_id); const providerAction = !closed && canSendProvider(line) ? `<button class="button button-primary" data-incident-id="${escapeHtml(incident.id)}" data-incident-action="draft">Обращение →</button>` : ""; return `<article class="incident-card ${statusClass(incident.severity)}"><div class="incident-top"><span class="incident-number">${escapeHtml(incident.number || incident.id)} · ${escapeHtml(incident.source === "MANUAL" ? "создан вручную" : "автоматически")}</span><span class="status-badge ${closed ? "healthy" : statusClass(incident.severity)}"><i></i>${escapeHtml(incidentStatusLabel(incident.status))}</span></div><h3>${escapeHtml(incident.title || incident.description || "Инцидент на линии")}</h3><p>${escapeHtml(incident.school_name)} · ${escapeHtml(incident.provider)} · ${escapeHtml(incident.description || "")}</p><div class="incident-meta"><span class="axis-chip">Начало ${escapeHtml(time(incident.started_at || incident.start_time))}</span><span class="axis-chip">${incident.duration_minutes ? `Длительность ${number(incident.duration_minutes, " мин")}` : "В работе"}</span></div><div class="incident-action"><button class="button button-quiet" data-incident-id="${escapeHtml(incident.id)}" data-incident-action="open">Открыть timeline</button>${providerAction}</div></article>`; }).join("");
     $$("[data-incident-action]", root).forEach((button) => button.addEventListener("click", () => { const incident = state.incidents.find((item) => item.id === button.dataset.incidentId); if (!incident) return; if (button.dataset.incidentAction === "draft") openCaseModal(incident); else { const line = state.lines.find((item) => item.id === incident.line_id); if (line) openLine(line.id); else toast("Timeline инцидента доступна в API", "warn"); } }));
+  }
+  async function loadProviderWorkspace() {
+    if (!canSendProvider()) return;
+    try {
+      const payload = await apiTry(["/api/provider-cases?limit=50", "/api/v1/provider-cases?limit=50"]);
+      const items = payload.items || payload.data || [];
+      const root = $("#incidentBoard"); if (!root || !items.length) return;
+      const panel = document.createElement("section"); panel.className = "provider-workspace";
+      panel.innerHTML = `<div class="panel-kicker">PROVIDER WORKSPACE · SERVER-SCOPED QUEUE</div><h3>Очередь обращений поставщику</h3><p class="section-subtitle">События, evidence и delivery status читаются из canonical provider cases; отправка требует human review.</p><div class="provider-queue">${items.map((item) => `<article class="incident-card"><div class="incident-top"><span>${escapeHtml(item.ticket_no || `CASE-${item.id}`)} · ${escapeHtml(item.provider_name || "Провайдер")}</span><span class="status-badge ${statusClass(item.delivery_status)}"><i></i>${escapeHtml(item.delivery_status || item.status || "UNKNOWN")}</span></div><h4>${escapeHtml(item.organization_name || item.line_id || "Линия")}</h4><p>${escapeHtml(item.line_id || "—")} · ${escapeHtml(item.incident_no || "LINE REVIEW")}</p><div class="incident-meta"><span class="axis-chip">Попыток: ${escapeHtml(String(item.delivery_attempts || 0))}</span><span class="axis-chip">${item.delivery_retryable ? "Retryable" : "Не повторять автоматически"}</span></div>${item.delivery_error ? `<small>${escapeHtml(item.delivery_error)}</small>` : ""}</article>`).join("")}</div>`;
+      root.prepend(panel);
+    } catch (_) { /* provider workspace is additive; incidents remain available */ }
   }
   function renderIncidents() {
     const root = $("#incidentBoard"); if (!root) return;

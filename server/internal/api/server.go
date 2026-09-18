@@ -152,6 +152,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.observedAgentVersions(w, r, strings.Split(strings.Trim(strings.TrimPrefix(normalized, "/agent-versions/"), "/"), "/"))
 	case normalized == "/notifications" && r.Method == http.MethodGet:
 		s.notifications(w, r)
+	case normalized == "/provider-cases" && r.Method == http.MethodGet:
+		s.listProviderCases(w, r)
 	case normalized == "/provider-cases" && r.Method == http.MethodPost:
 		s.createProviderCase(w, r)
 	case normalized == "/demo/replay" && r.Method == http.MethodPost:
