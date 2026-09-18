@@ -203,6 +203,21 @@ func (s *Server) agentCommandAck(w http.ResponseWriter, r *http.Request, id stri
 		writeError(w, 500, "could not acknowledge command")
 		return
 	}
+	if command.CommandType == "REMOTE_CONFIG" {
+		var resultPayload struct {
+			ConfigVersion int64 `json:"config_version"`
+		}
+		if json.Unmarshal(request.Result, &resultPayload) == nil && resultPayload.ConfigVersion > 0 {
+			state := request.Status
+			if request.Status == "DONE" {
+				state = "APPLIED"
+			}
+			if request.Status == "FAILED" && strings.Contains(strings.ToUpper(request.Error), "ROLLBACK") {
+				state = "ROLLED_BACK"
+			}
+			_ = s.agentConfigStateAck(r.Context(), device.ID, resultPayload.ConfigVersion, state, request.Error)
+		}
+	}
 	writeJSON(w, http.StatusOK, command)
 }
 

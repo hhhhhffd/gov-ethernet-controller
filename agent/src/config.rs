@@ -157,26 +157,83 @@ impl Config {
     }
 
     pub fn apply_server_config(&mut self, value: &Value) {
-        let Some(schedule) = value.get("schedule") else {
-            return;
-        };
-        if let Some(value) = schedule
-            .get("performance_tests_per_day")
-            .or_else(|| schedule.get("tests_per_day"))
-            .and_then(Value::as_u64)
-        {
-            self.performance_tests_per_day = value.min(u8::MAX as u64) as u8;
+        let _ = self.apply_remote_config(value);
+    }
+
+    pub fn apply_remote_config(&mut self, value: &Value) -> Result<(), String> {
+        if !value.is_object() {
+            return Err("remote config must be an object".into());
         }
-        if let Some(value) = schedule.get("jitter_minutes").and_then(Value::as_u64) {
-            self.jitter_minutes = value.min(240) as u32;
+        for key in value.as_object().unwrap().keys() {
+            if key != "schedule" && key != "probe" {
+                return Err(format!("unsupported remote config field: {key}"));
+            }
         }
-        if let Some(value) = schedule
-            .get("light_checks_between")
-            .and_then(Value::as_bool)
-        {
-            self.light_checks_between = value;
+        if let Some(schedule) = value.get("schedule") {
+            if let Some(value) = schedule
+                .get("performance_tests_per_day")
+                .or_else(|| schedule.get("tests_per_day"))
+                .and_then(Value::as_u64)
+            {
+                self.performance_tests_per_day = value.min(u8::MAX as u64) as u8;
+            }
+            if let Some(value) = schedule.get("jitter_minutes").and_then(Value::as_u64) {
+                self.jitter_minutes = value.min(240) as u32;
+            }
+            if let Some(value) = schedule
+                .get("light_checks_between")
+                .and_then(Value::as_bool)
+            {
+                self.light_checks_between = value;
+            }
+            self.performance_tests_per_day = self.performance_tests_per_day.clamp(3, 5);
         }
-        self.performance_tests_per_day = self.performance_tests_per_day.clamp(3, 5);
+        if let Some(probe) = value.get("probe") {
+            let object = probe.as_object().ok_or("probe config must be an object")?;
+            for key in object.keys() {
+                if key != "timeout_seconds"
+                    && key != "throughput_duration_seconds"
+                    && key != "use_server_probe"
+                {
+                    return Err(format!("unsupported probe field: {key}"));
+                }
+            }
+            if let Some(seconds) = object.get("timeout_seconds").and_then(Value::as_u64) {
+                if !(1..=120).contains(&seconds) {
+                    return Err("timeout_seconds must be 1-120".into());
+                }
+                self.probe.timeout_seconds = seconds;
+            }
+            if let Some(seconds) = object
+                .get("throughput_duration_seconds")
+                .and_then(Value::as_u64)
+            {
+                if !(3..=5).contains(&seconds) {
+                    return Err("throughput_duration_seconds must be 3-5".into());
+                }
+                self.probe.throughput_duration_seconds = seconds;
+            }
+            if let Some(server_probe) = object.get("use_server_probe").and_then(Value::as_bool) {
+                self.probe.use_server_probe = server_probe;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn persist_remote_snapshot(
+        &self,
+        version: u64,
+        payload: &Value,
+        last_known_good: Option<u64>,
+    ) -> Result<(), String> {
+        let snapshot = serde_json::json!({"version": version, "payload": payload, "last_known_good_version": last_known_good});
+        std::fs::create_dir_all(&self.queue_dir)
+            .map_err(|e| format!("create config snapshot directory: {e}"))?;
+        std::fs::write(
+            self.queue_dir.join("remote-config.json"),
+            serde_json::to_vec_pretty(&snapshot).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| format!("persist config snapshot: {e}"))
     }
 
     fn apply_env(&mut self) {
@@ -382,5 +439,15 @@ mod tests {
         }));
         assert_eq!(config.performance_tests_per_day, 5);
         assert_eq!(config.jitter_minutes, 240);
+    }
+
+    #[test]
+    fn remote_config_rejects_unknown_fields_without_mutation() {
+        let mut config = Config::default();
+        let before = config.performance_tests_per_day;
+        assert!(config
+            .apply_remote_config(&serde_json::json!({"credentials": {"token": "x"}}))
+            .is_err());
+        assert_eq!(config.performance_tests_per_day, before);
     }
 }

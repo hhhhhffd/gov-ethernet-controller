@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -290,7 +291,16 @@ func (s *Server) agentConfig(w http.ResponseWriter, r *http.Request) {
 	if policyErr == nil {
 		policy = map[string]interface{}{"id": policyID, "scope_type": scopeType, "scope_id": scopeID, "version": version, "valid_from": validFrom, "valid_to": validTo, "download_min": downloadMin, "upload_min": uploadMin, "ping_max": pingMax, "jitter_max": jitterMax, "packet_loss_max": lossMax, "availability_min": availabilityMin, "confirm_count": confirmCount, "confirm_minutes": confirmMinutes, "confirm_duration_minutes": confirmDurationMinutes, "recovery_count": recoveryCount, "recovery_minutes": recoveryMinutes, "freshness_seconds": freshness}
 	}
-	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "hostname": device.Hostname, "line_id": device.LineID, "monitoring_point_id": device.PointID, "schedule": map[string]interface{}{"tests_per_day": testsPerDay, "performance_tests_per_day": testsPerDay, "jitter_minutes": jitter, "light_checks_between": light > 0}, "policy": policy})
+	response := map[string]interface{}{"device_id": device.ID, "hostname": device.Hostname, "line_id": device.LineID, "monitoring_point_id": device.PointID, "schedule": map[string]interface{}{"tests_per_day": testsPerDay, "performance_tests_per_day": testsPerDay, "jitter_minutes": jitter, "light_checks_between": light > 0}, "policy": policy}
+	var desiredVersion *int64
+	var configPayload, configHash []byte
+	var configStatus string
+	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT st.desired_version,v.payload_json,v.payload_hash,st.status FROM agent_config_device_state st JOIN agent_config_versions v ON v.version=st.desired_version WHERE st.device_id=$1`, device.ID).Scan(&desiredVersion, &configPayload, &configHash, &configStatus); err == nil {
+		var payload interface{}
+		_ = json.Unmarshal(configPayload, &payload)
+		response["desired_config"] = map[string]interface{}{"version": desiredVersion, "payload": payload, "hash": string(configHash), "status": configStatus}
+	}
+	writeJSON(w, 200, response)
 }
 
 // agentProbeDownload and agentProbeUpload provide an optional controlled

@@ -144,9 +144,9 @@ fn run_mode(mode: String, service_stop: Option<StopToken>) -> Result<(), String>
         }
     }
     let mut probe = probe::build(&config)?;
-    let client = Client::new(config.clone())?;
+    let mut client = Client::new(config.clone())?;
     if mode == "once" {
-        run_once(&config, &mut *probe, &queue, &client)
+        run_once(&mut config, &mut *probe, &queue, &mut client)
     } else {
         let manual_probe = Arc::new(ManualProbeControl::default());
         #[cfg(windows)]
@@ -249,10 +249,10 @@ impl RuntimeTelemetry {
 }
 
 fn run_once(
-    config: &Config,
+    config: &mut Config,
     probe: &mut dyn Probe,
     queue: &Queue,
-    client: &Client,
+    client: &mut Client,
 ) -> Result<(), String> {
     let mut telemetry = RuntimeTelemetry::new();
     process_commands(config, probe, queue, client);
@@ -385,7 +385,7 @@ fn run_loop(
                 telemetry.record_heartbeat(true);
             }
             flush_pending(&client, &queue);
-            process_commands(&config, &mut *probe, &queue, &client);
+            process_commands(&mut config, &mut *probe, &queue, &mut client);
             if use_server_config() {
                 if let Ok(remote) = client.server_config() {
                     let before = (
@@ -550,7 +550,12 @@ fn flush_pending(client: &Client, queue: &Queue) {
     }
 }
 
-fn process_commands(config: &Config, probe: &mut dyn Probe, queue: &Queue, client: &Client) {
+fn process_commands(
+    config: &mut Config,
+    probe: &mut dyn Probe,
+    queue: &Queue,
+    client: &mut Client,
+) {
     let commands = match client.poll_commands(1) {
         Ok(commands) => commands,
         Err(error) => {
@@ -559,6 +564,39 @@ fn process_commands(config: &Config, probe: &mut dyn Probe, queue: &Queue, clien
         }
     };
     for command in commands {
+        if command.command_type == "REMOTE_CONFIG" {
+            let payload = command
+                .payload
+                .get("config")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let version = command
+                .payload
+                .get("config_version")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            match config.apply_remote_config(&payload) {
+                Ok(()) => {
+                    let _ = config.persist_remote_snapshot(version, &payload, Some(version));
+                    let _ = client.acknowledge_command(
+                        command.id,
+                        "DONE",
+                        json!({"config_version": version, "status": "APPLIED"}),
+                        None,
+                    );
+                    client.update_config(config.clone());
+                }
+                Err(error) => {
+                    let _ = client.acknowledge_command(
+                        command.id,
+                        "FAILED",
+                        json!({"config_version": version, "status": "ROLLED_BACK"}),
+                        Some(&error),
+                    );
+                }
+            }
+            continue;
+        }
         if command.command_type != "LIVE_VERIFY" {
             let _ = client.acknowledge_command(
                 command.id,

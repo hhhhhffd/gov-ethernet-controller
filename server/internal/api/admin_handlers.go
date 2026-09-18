@@ -72,6 +72,10 @@ func (s *Server) adminRoute(w http.ResponseWriter, r *http.Request, rest string)
 		return
 	}
 	if parts[0] == "devices" {
+		if len(parts) == 3 && parts[2] == "config" && r.Method == http.MethodPost {
+			s.adminRemoteConfig(w, r, p, parts[1])
+			return
+		}
 		if len(parts) == 3 && parts[2] == "commands" && r.Method == http.MethodPost {
 			s.adminAgentCommand(w, r, p, parts[1])
 			return
