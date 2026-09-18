@@ -53,3 +53,16 @@ func TestRenderEvidenceReportRejectsInvalidRenderMetadata(t *testing.T) {
 		t.Fatal("expected missing template version render error")
 	}
 }
+
+func TestRenderEvidenceReportEscapesMetadataRole(t *testing.T) {
+	content, err := renderEvidenceReport(nil, evidenceReportMetadata{
+		From: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
+		GeneratedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), TemplateVersion: evidenceReportTemplateVersion, Role: "DISTRICT<unsafe>&1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(content, "DISTRICT<unsafe>&1") || !strings.Contains(content, "DISTRICT&lt;unsafe&gt;&amp;1") {
+		t.Fatal("metadata role was not escaped")
+	}
+}
