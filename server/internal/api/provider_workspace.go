@@ -44,7 +44,8 @@ func (s *Server) listProviderCases(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	result := []map[string]interface{}{}
 	for rows.Next() {
-		var id, incidentID int64
+		var id int64
+		var incidentID *int64
 		var lineID, source, ticket, status, delivery, errorText, incidentNo, schoolID, orgName, providerName, providerID string
 		var attempts int
 		var retryable bool
@@ -53,7 +54,11 @@ func (s *Server) listProviderCases(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "could not read provider workspace")
 			return
 		}
-		result = append(result, providerCaseSummary(id, incidentID, lineID, source, ticket, status, delivery, attempts, errorText, retryable, next, created, incidentNo, schoolID, orgName, providerName, providerID))
+		incidentValue := int64(0)
+		if incidentID != nil {
+			incidentValue = *incidentID
+		}
+		result = append(result, providerCaseSummary(id, incidentValue, lineID, source, ticket, status, delivery, attempts, errorText, retryable, next, created, incidentNo, schoolID, orgName, providerName, providerID))
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, 500, "could not read provider workspace")
@@ -82,6 +87,10 @@ func (s *Server) providerCaseWorkspaceDetail(w http.ResponseWriter, r *http.Requ
 		writeError(w, 404, "provider case not found")
 		return
 	}
+	if value, ok := item["delivery_error"].(*string); ok && value != nil && len(*value) > 240 {
+		redacted := (*value)[:240]
+		item["delivery_error"] = &redacted
+	}
 	item["scope_enforced"] = true
 	item["human_send_gate"] = item["status"] != "SENT"
 	var incidentID *int64
@@ -92,6 +101,7 @@ func (s *Server) providerCaseWorkspaceDetail(w http.ResponseWriter, r *http.Requ
 		if visible {
 			if mapped, mapErr := s.incidentMap(r.Context(), incident); mapErr == nil {
 				item["incident"] = mapped
+				item["timeline"] = mapped["events"]
 			}
 		}
 	}
