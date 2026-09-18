@@ -99,49 +99,57 @@ func Evaluate(m Measurement, policy *Policy, contract *Contract) Result {
 		result.Reason = "measurement marked INVALID"
 		return result
 	}
+	// SUSPECT measurements may be useful as diagnostics, but they are not
+	// authoritative evidence for a line state or an incident. Keep all
+	// aggregate states UNKNOWN so callers cannot accidentally treat them as a
+	// confirmed evaluation.
+	if m.Quality == "SUSPECT" {
+		result.Valid = false
+		result.Reason = "measurement marked SUSPECT"
+		return result
+	}
 	if m.ConnectionStatus == "NO_INTERNET" {
 		result.Violations = append(result.Violations, Violation{Code: "NO_INTERNET", Metric: "connection_status", Actual: "NO_INTERNET", Threshold: "reachable"})
 	}
+	baselineMetrics := metricEvaluation{}
 	if policy != nil {
-		result.Violations = append(result.Violations, metricViolations(m, policy.DownloadMin, policy.UploadMin, policy.PingMax, policy.JitterMax, policy.PacketLossMax, policy.AvailabilityMin, "BASELINE")...)
+		baselineMetrics = evaluatePolicyMetrics(m, policy)
+		result.Violations = append(result.Violations, baselineMetrics.violations...)
 	}
-	contractViolations := []Violation{}
+	contractMetrics := metricEvaluation{}
 	if contract != nil {
-		contractViolations = contractMetricViolations(m, contract)
-		result.Violations = append(result.Violations, contractViolations...)
+		contractMetrics = evaluateContractMetrics(m, contract)
+		result.Violations = append(result.Violations, contractMetrics.violations...)
 	}
-	hasMetrics := m.Download != nil || m.Upload != nil || m.Ping != nil || m.Jitter != nil || m.PacketLoss != nil || m.Availability != nil
 	if policy == nil {
 		if m.ConnectionStatus == "NO_INTERNET" {
 			result.BaselineState = "VIOLATION"
 		}
-	} else if len(result.Violations) > 0 {
-		// Contract-only failures belong to the contract axis. Connectivity
-		// remains healthy when no baseline/connection violation exists.
-		baselineViolations := false
-		for _, violation := range result.Violations {
-			if violation.Code == "NO_INTERNET" || len(violation.Code) >= 9 && violation.Code[:9] == "BASELINE_" {
-				baselineViolations = true
-				break
-			}
-		}
-		if baselineViolations {
+	} else if m.ConnectionStatus == "NO_INTERNET" {
+		// Connectivity failure is authoritative independently of the missing
+		// performance metrics that normally accompany it.
+		result.BaselineState = "VIOLATION"
+	} else if baselineMetrics.unknown == 0 && baselineMetrics.required > 0 {
+		if len(baselineMetrics.violations) > 0 {
 			result.BaselineState = "VIOLATION"
-		} else if hasMetrics || m.ConnectionStatus == "OK" {
+		} else {
 			result.BaselineState = "OK"
 		}
-	} else if hasMetrics || m.ConnectionStatus == "OK" {
-		result.BaselineState = "OK"
 	}
-	if len(contractViolations) > 0 {
-		result.ContractState = "DEVIATES"
-	} else if contract != nil && hasMetrics {
-		result.ContractState = "MEETS"
+	if contract != nil && contractMetrics.required > 0 && contractMetrics.unknown == 0 {
+		if len(contractMetrics.violations) > 0 {
+			result.ContractState = "DEVIATES"
+		} else {
+			result.ContractState = "MEETS"
+		}
 	}
 	result.Reason = "No threshold violation"
+	if (policy != nil && baselineMetrics.unknown > 0) || (contract != nil && contractMetrics.unknown > 0) {
+		result.Reason = "Required metric unavailable"
+	}
 	if len(result.Violations) > 0 {
 		for i, violation := range result.Violations {
-			if i > 0 {
+			if i > 0 || result.Reason != "No threshold violation" {
 				result.Reason += "; "
 			}
 			if violation.Direction == "" {
@@ -154,59 +162,83 @@ func Evaluate(m Measurement, policy *Policy, contract *Contract) Result {
 	return result
 }
 
-func metricViolations(m Measurement, downloadMin, uploadMin, pingMax, jitterMax, lossMax, availabilityMin float64, prefix string) []Violation {
-	result := []Violation{}
-	if m.Download != nil && *m.Download < downloadMin {
-		result = append(result, Violation{Code: prefix + "_DOWNLOAD", Metric: "download", Actual: *m.Download, Threshold: downloadMin, Direction: "<"})
-	}
-	if m.Upload != nil && *m.Upload < uploadMin {
-		result = append(result, Violation{Code: prefix + "_UPLOAD", Metric: "upload", Actual: *m.Upload, Threshold: uploadMin, Direction: "<"})
-	}
-	if m.Ping != nil && *m.Ping > pingMax {
-		result = append(result, Violation{Code: prefix + "_PING", Metric: "ping", Actual: *m.Ping, Threshold: pingMax, Direction: ">"})
-	}
-	if m.Jitter != nil && *m.Jitter > jitterMax {
-		result = append(result, Violation{Code: prefix + "_JITTER", Metric: "jitter", Actual: *m.Jitter, Threshold: jitterMax, Direction: ">"})
-	}
-	if m.PacketLoss != nil && *m.PacketLoss > lossMax {
-		result = append(result, Violation{Code: prefix + "_PACKET_LOSS", Metric: "packet_loss", Actual: *m.PacketLoss, Threshold: lossMax, Direction: ">"})
-	}
-	if m.Availability != nil && *m.Availability < availabilityMin {
-		result = append(result, Violation{Code: prefix + "_AVAILABILITY", Metric: "availability", Actual: *m.Availability, Threshold: availabilityMin, Direction: "<"})
-	}
-	return result
+const (
+	metricObserved  = "observed"
+	metricUnknown   = "UNKNOWN"
+	metricOK        = "OK"
+	metricViolation = "VIOLATION"
+)
+
+type metricEvaluation struct {
+	required   int
+	unknown    int
+	violations []Violation
+	states     map[string]string
 }
 
-func contractMetricViolations(m Measurement, c *Contract) []Violation {
-	result := []Violation{}
-	checks := []struct {
-		name      string
-		actual    *float64
-		threshold *float64
-		direction string
-	}{
-		{"download", m.Download, c.DownloadMin, "<"}, {"upload", m.Upload, c.UploadMin, "<"},
-		{"ping", m.Ping, c.PingMax, ">"}, {"jitter", m.Jitter, c.JitterMax, ">"},
-		{"packet_loss", m.PacketLoss, c.PacketLossMax, ">"}, {"availability", m.Availability, c.AvailabilityMin, "<"},
+// evaluateMetric classifies one metric before it contributes to an axis. A
+// present value without a configured threshold is deliberately only observed:
+// it cannot prove that an axis meets a policy or contract.
+func evaluateMetric(name string, actual, threshold *float64, direction, code string) (string, *Violation) {
+	if actual == nil {
+		return metricUnknown, nil
 	}
+	if threshold == nil {
+		return metricObserved, nil
+	}
+	bad := (direction == "<" && *actual < *threshold) || (direction == ">" && *actual > *threshold)
+	if !bad {
+		return metricOK, nil
+	}
+	return metricViolation, &Violation{Code: code, Metric: name, Actual: *actual, Threshold: *threshold, Direction: direction}
+}
+
+func evaluatePolicyMetrics(m Measurement, p *Policy) metricEvaluation {
+	return evaluateMetrics([]metricCheck{
+		{"download", m.Download, metricThreshold(p.DownloadMin), "<", "BASELINE_DOWNLOAD"},
+		{"upload", m.Upload, metricThreshold(p.UploadMin), "<", "BASELINE_UPLOAD"},
+		{"ping", m.Ping, metricThreshold(p.PingMax), ">", "BASELINE_PING"},
+		{"jitter", m.Jitter, metricThreshold(p.JitterMax), ">", "BASELINE_JITTER"},
+		{"packet_loss", m.PacketLoss, metricThreshold(p.PacketLossMax), ">", "BASELINE_PACKET_LOSS"},
+		{"availability", m.Availability, metricThreshold(p.AvailabilityMin), "<", "BASELINE_AVAILABILITY"},
+	})
+}
+
+func metricThreshold(value float64) *float64 { return &value }
+
+func evaluateContractMetrics(m Measurement, c *Contract) metricEvaluation {
+	return evaluateMetrics([]metricCheck{
+		{"download", m.Download, c.DownloadMin, "<", "CONTRACT_DOWNLOAD"},
+		{"upload", m.Upload, c.UploadMin, "<", "CONTRACT_UPLOAD"},
+		{"ping", m.Ping, c.PingMax, ">", "CONTRACT_PING"},
+		{"jitter", m.Jitter, c.JitterMax, ">", "CONTRACT_JITTER"},
+		{"packet_loss", m.PacketLoss, c.PacketLossMax, ">", "CONTRACT_PACKET_LOSS"},
+		{"availability", m.Availability, c.AvailabilityMin, "<", "CONTRACT_AVAILABILITY"},
+	})
+}
+
+type metricCheck struct {
+	name      string
+	actual    *float64
+	threshold *float64
+	direction string
+	code      string
+}
+
+func evaluateMetrics(checks []metricCheck) metricEvaluation {
+	evaluation := metricEvaluation{states: make(map[string]string, len(checks))}
 	for _, check := range checks {
-		if check.actual == nil || check.threshold == nil {
-			continue
+		state, violation := evaluateMetric(check.name, check.actual, check.threshold, check.direction, check.code)
+		evaluation.states[check.name] = state
+		if check.threshold != nil {
+			evaluation.required++
+			if state == metricUnknown {
+				evaluation.unknown++
+			}
 		}
-		bad := check.direction == "<" && *check.actual < *check.threshold || check.direction == ">" && *check.actual > *check.threshold
-		if bad {
-			result = append(result, Violation{Code: "CONTRACT_" + upper(check.name), Metric: check.name, Actual: *check.actual, Threshold: *check.threshold, Direction: check.direction})
-		}
-	}
-	return result
-}
-
-func upper(value string) string {
-	result := []byte(value)
-	for i, char := range result {
-		if char >= 'a' && char <= 'z' {
-			result[i] = char - ('a' - 'A')
+		if violation != nil {
+			evaluation.violations = append(evaluation.violations, *violation)
 		}
 	}
-	return string(result)
+	return evaluation
 }
