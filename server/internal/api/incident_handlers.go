@@ -63,6 +63,7 @@ func (s *Server) incidentMap(ctx context.Context, item incidentRecord) (map[stri
 		duration = &value
 	}
 	result := map[string]interface{}{"id": item.ID, "incident_no": item.Number, "number": item.Number, "line_id": item.LineID, "organization_id": item.OrganizationID, "school_id": item.SchoolID, "organization_name": item.OrganizationName, "school_name": item.OrganizationName, "district": item.District, "provider_id": item.ProviderID, "provider_name": item.ProviderName, "provider": provider, "source": item.Source, "violation_type": item.ViolationType, "status": item.Status, "recovery_state": item.RecoveryState, "started_at": item.StartedAt, "confirmed_at": item.ConfirmedAt, "resolved_at": item.ResolvedAt, "closed_at": item.ClosedAt, "duration_minutes": duration, "assignee": item.Assignee, "recurrence_of": item.RecurrenceOf, "opening_snapshot": opening, "severity": map[bool]string{true: "CRITICAL", false: "ATTENTION"}[item.ViolationType == "NO_INTERNET"], "title": title, "description": description}
+	result["recovery_label"] = recoveryLabel(item.RecoveryState, item.Status)
 	events := []map[string]interface{}{}
 	rows, err := s.DB.Pool.Query(ctx, `SELECT id,event_type,actor,payload_json,created_at FROM incident_events WHERE incident_id=$1 ORDER BY id`, item.ID)
 	if err != nil {
@@ -77,7 +78,14 @@ func (s *Server) incidentMap(ctx context.Context, item incidentRecord) (map[stri
 			rows.Close()
 			return nil, fmt.Errorf("scan incident event: %w", err)
 		}
-		events = append(events, map[string]interface{}{"id": id, "event_type": typ, "actor": actor, "payload": decodeJSONBytes(payload), "created_at": at, "at": at, "text": typ})
+		eventPayload := decodeJSONBytes(payload)
+		text := typ
+		if values, ok := eventPayload.(map[string]interface{}); ok {
+			if note, ok := values["note"].(string); ok && strings.TrimSpace(note) != "" {
+				text += ": " + note
+			}
+		}
+		events = append(events, map[string]interface{}{"id": id, "event_type": typ, "actor": actor, "payload": eventPayload, "created_at": at, "at": at, "text": text})
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -90,12 +98,50 @@ func (s *Server) incidentMap(ctx context.Context, item incidentRecord) (map[stri
 		actions = append(actions, map[string]interface{}{"at": event["at"], "text": event["text"], "actor": event["actor"], "payload": event["payload"]})
 	}
 	result["actions"] = actions
+	relatedRows, relatedErr := s.DB.Pool.Query(ctx, `SELECT id,incident_no,status,started_at,closed_at,duration_minutes,recurrence_of FROM incidents WHERE line_id=$1 AND id<>$2 AND started_at >= $3 - INTERVAL '90 days' ORDER BY started_at DESC,id DESC`, item.LineID, item.ID, item.StartedAt)
+	if relatedErr != nil {
+		return nil, fmt.Errorf("query related incidents: %w", relatedErr)
+	}
+	related := []map[string]interface{}{}
+	for relatedRows.Next() {
+		var id int64
+		var number, status string
+		var started time.Time
+		var closed *time.Time
+		var durationMinutes *float64
+		var recurrenceOf *int64
+		if err := relatedRows.Scan(&id, &number, &status, &started, &closed, &durationMinutes, &recurrenceOf); err != nil {
+			relatedRows.Close()
+			return nil, fmt.Errorf("scan related incident: %w", err)
+		}
+		related = append(related, map[string]interface{}{"id": id, "number": number, "status": status, "started_at": started, "closed_at": closed, "duration_minutes": durationMinutes, "recurrence_of": recurrenceOf})
+	}
+	if err := relatedRows.Err(); err != nil {
+		relatedRows.Close()
+		return nil, fmt.Errorf("iterate related incidents: %w", err)
+	}
+	relatedRows.Close()
+	result["repeatability"] = map[string]interface{}{"lookback_days": 90, "related_incidents": related, "statement": "Похожие инциденты на этой линии за период; это не доказательство общей причины или идентичности аварии."}
 	providerCases, err := s.providerCases(ctx, item.ID)
 	if err != nil {
 		return nil, err
 	}
 	result["provider_cases"] = providerCases
 	return result, nil
+}
+
+func recoveryLabel(recoveryState, status string) string {
+	switch strings.ToUpper(recoveryState) {
+	case "CONFIRMED":
+		return "Восстановление подтверждено"
+	case "OBSERVED":
+		return "Восстановление наблюдается; подтверждение ожидается"
+	default:
+		if strings.EqualFold(status, "RESOLVED") {
+			return "Устранён оператором; проверка восстановления ожидается"
+		}
+		return "Восстановление не зафиксировано"
+	}
 }
 
 func (s *Server) incidentListForLine(ctx context.Context, lineID string) ([]map[string]interface{}, error) {
