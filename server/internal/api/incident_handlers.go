@@ -485,7 +485,12 @@ func (s *Server) providerDraft(w http.ResponseWriter, r *http.Request, item inci
 		writeError(w, 500, "could not encode provider contract")
 		return
 	}
-	draft := fmt.Sprintf("Здравствуйте! Просим проверить качество услуги на линии %s (школа %s, %s).\n\nСистема мониторинга подтвердила нарушение %s с %s.\n\nПрименённые пороги: %s.\nДоговорный ориентир и его срок действия на момент наблюдений: %s.\nНаблюдения: %s.\nПакет доказательств: measurement IDs %s; значения и effective policy/contract сохранены в системе без перезаписи истории.\n\nКомментарий заказчика: %s\n\nФормулировка описывает технически наблюдаемое отклонение и требует проверки оператором.", item.LineID, item.SchoolID, item.OrganizationName, item.ViolationType, item.StartedAt.UTC().Format(time.RFC3339), string(policyJSON), string(contractJSON), string(observationsJSON), evidenceJSON, payload.Comment)
+	draft := generateProviderDraft(r.Context(), deterministicDraftGenerator{}, ProviderDraftInput{
+		LineID: item.LineID, SchoolID: item.SchoolID, Organization: item.OrganizationName,
+		ViolationType: item.ViolationType, StartedAt: item.StartedAt.UTC().Format(time.RFC3339),
+		PolicyJSON: string(policyJSON), ContractJSON: string(contractJSON),
+		ObservationsJSON: string(observationsJSON), EvidenceJSON: evidenceJSON, Comment: payload.Comment,
+	})
 	var id int64
 	err = s.DB.Pool.QueryRow(r.Context(), `INSERT INTO provider_cases(incident_id,draft_text,status,delivery_status,created_by,created_at) VALUES ($1,$2,'DRAFT','PENDING',$3,$4) RETURNING id`, item.ID, draft, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
 	if err != nil {
