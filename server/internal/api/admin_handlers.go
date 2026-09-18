@@ -67,6 +67,10 @@ func (s *Server) adminRoute(w http.ResponseWriter, r *http.Request, rest string)
 		s.adminContract(w, r, p)
 		return
 	}
+	if parts[0] == "impact-preview" && r.Method == http.MethodPost {
+		s.impactPreview(w, r, p)
+		return
+	}
 	if parts[0] == "devices" {
 		if len(parts) == 3 && parts[2] == "commands" && r.Method == http.MethodPost {
 			s.adminAgentCommand(w, r, p, parts[1])

@@ -539,6 +539,7 @@
   }
   function renderAdmin() {
     const config = adminResourceConfig[state.adminResource]; if (!config) return;
+    ensureImpactPreviewUI();
     $$("[data-admin-resource]").forEach((tab) => tab.classList.toggle("active", tab.dataset.adminResource === state.adminResource));
     $("#adminFormTitle").textContent = state.adminEditing ? `Изменить ${config.label}` : `Новая ${config.label}`;
     $("#adminFormFields").innerHTML = config.fields.map(([key, label, type, immutable]) => { const value = state.adminEditing ? (state.adminEditing[key] ?? (key === "device_id" ? state.adminEditing.id : key === "scopes_json" ? JSON.stringify(state.adminEditing.scopes || []) : undefined)) : (type === "checkbox" ? true : ""); const disabled = state.adminEditing && immutable ? "disabled" : ""; if (type === "checkbox") return `<label class="admin-check"><input name="${key}" type="checkbox" ${value ? "checked" : ""} ${disabled}/> ${escapeHtml(label)}</label>`; if (type === "textarea") return `<label>${escapeHtml(label)}<textarea name="${key}" rows="3">${escapeHtml(value == null ? "" : value)}</textarea></label>`; return `<label>${escapeHtml(label)}<input name="${key}" type="${type}" value="${escapeHtml(value == null ? "" : value)}" ${disabled}/></label>`; }).join("");
@@ -546,6 +547,23 @@
     root.innerHTML = `<table class="admin-table"><thead><tr>${config.columns.map((key) => `<th>${escapeHtml(key)}</th>`).join("")}<th></th></tr></thead><tbody>${state.adminItems.map((item, index) => { const deviceActions = state.adminResource === "devices" ? `<button type="button" class="row-action" data-admin-action="${item.blocked ? "unblock" : "block"}" data-admin-id="${escapeHtml(item.id)}">${item.blocked ? "Разблокировать" : "Заблокировать"}</button><button type="button" class="row-action" data-admin-action="rotate-token" data-admin-id="${escapeHtml(item.id)}">Новый токен</button>` : ""; return `<tr>${config.columns.map((key) => `<td>${escapeHtml(adminValue(item, key))}</td>`).join("")}<td><button type="button" class="row-action" data-admin-edit="${index}">Изменить</button>${deviceActions}</td></tr>`; }).join("")}</tbody></table>`;
     $$("[data-admin-edit]", root).forEach((button) => button.addEventListener("click", () => { state.adminEditing = state.adminItems[Number(button.dataset.adminEdit)]; renderAdmin(); $("#adminResourceForm").scrollIntoView({ behavior: "smooth", block: "nearest" }); }));
     $$("[data-admin-action]", root).forEach((button) => button.addEventListener("click", () => adminDeviceAction(button.dataset.adminId, button.dataset.adminAction)));
+  }
+  function ensureImpactPreviewUI() {
+    const header = $("#adminView .panel-header"); if (!header || $("#adminImpactPreview")) return;
+    const button = document.createElement("button"); button.id = "adminImpactPreview"; button.className = "button button-quiet"; button.textContent = "Предпросмотр влияния"; button.type = "button";
+    header.appendChild(button);
+    const panel = document.createElement("section"); panel.id = "impactPreviewPanel"; panel.className = "admin-preview-panel"; panel.hidden = true; panel.innerHTML = `<div class="panel-kicker">СИМУЛЯЦИЯ · БЕЗ ПРИМЕНЕНИЯ</div><p>Результат рассчитан по историческим snapshots и не меняет текущие пороги, LineState или инциденты.</p><label>Новый Download min <input id="impactPreviewDownload" type="number" min="0" step="0.1" value="20"></label><button id="impactPreviewRun" class="button button-primary" type="button">Рассчитать</button><div id="impactPreviewResult" class="table-empty">Предпросмотр не запускался.</div>`;
+    $("#adminView .admin-console").before(panel);
+    $("#impactPreviewRun").addEventListener("click", runImpactPreview);
+    button.addEventListener("click", () => { panel.hidden = !panel.hidden; });
+  }
+  async function runImpactPreview() {
+    const result = $("#impactPreviewResult"); const lines = state.lines.filter((line) => line.id).slice(0, 20); const end = new Date(); const start = new Date(end.getTime() - 7 * 24 * 60 * 60 * 1000); const download = Number($("#impactPreviewDownload").value);
+    result.textContent = "Считаем историческую симуляцию…";
+    try {
+      const payload = await apiTry(["/api/admin/impact-preview", "/api/v1/admin/impact-preview"], { method: "POST", body: JSON.stringify({ line_ids: lines.map((line) => line.id), from: start.toISOString(), to: end.toISOString(), idempotency_key: `ui-${Date.now()}`, policy: { download_min: download } }) });
+      const summary = payload.result || {}; result.innerHTML = `<strong>Предпросмотр, не применено</strong><br>Линий: ${escapeHtml(String(summary.affected_lines?.length || 0))} · Изменённых наблюдений: ${escapeHtml(String(summary.changed_measurements || 0))} · Проектируемых нарушений: ${escapeHtml(String(summary.projected_incident_measurements || 0))}<br><small>Источник: ${escapeHtml(payload.source_period?.from || "—")} — ${escapeHtml(payload.source_period?.to || "—")}; production truth: ${escapeHtml(payload.actual_truth || "UNKNOWN")}</small>`;
+    } catch (error) { result.textContent = error.status === 403 ? "Предпросмотр доступен только администратору." : "Предпросмотр не выполнен; текущая конфигурация не изменена."; }
   }
   async function adminDeviceAction(id, action) {
     try { const response = await apiTry([`/api/admin/devices/${encodeURIComponent(id)}/${action}`, `/api/v1/admin/devices/${encodeURIComponent(id)}/${action}`], { method: "POST" }); if (response?.device_token) toast(`Новый токен: ${response.device_token}`, "warn"); await loadAdminResource("devices"); } catch (error) { $("#adminFormError").textContent = error.status === 403 ? "Действие запрещено текущей ролью или scope." : "Операция устройства не выполнена."; }
