@@ -36,10 +36,7 @@ func decodeSignedAgentManifest(raw []byte) (agentReleasePayload, []byte, string,
 	if json.Unmarshal(raw, &manifest) != nil || manifest.SignedPayload == "" || manifest.Signature == "" || manifest.KeyID == "" {
 		return agentReleasePayload{}, nil, "", errors.New("manifest must contain signed_payload, signature and key_id")
 	}
-	payloadBytes, err := base64.RawURLEncoding.DecodeString(manifest.SignedPayload)
-	if err != nil {
-		payloadBytes, err = base64.StdEncoding.DecodeString(manifest.SignedPayload)
-	}
+	payloadBytes, err := decodeManifestBase64(manifest.SignedPayload)
 	if err != nil {
 		return agentReleasePayload{}, nil, "", errors.New("manifest signed_payload is not base64")
 	}
@@ -68,18 +65,21 @@ func decodeSignedAgentManifest(raw []byte) (agentReleasePayload, []byte, string,
 			}
 		}
 	}
-	pub, err := base64.RawStdEncoding.DecodeString(pubRaw)
-	if err != nil {
-		pub, err = base64.StdEncoding.DecodeString(pubRaw)
-	}
-	sig, sigErr := base64.RawStdEncoding.DecodeString(manifest.Signature)
-	if sigErr != nil {
-		sig, sigErr = base64.StdEncoding.DecodeString(manifest.Signature)
-	}
+	pub, err := decodeManifestBase64(pubRaw)
+	sig, sigErr := decodeManifestBase64(manifest.Signature)
 	if err != nil || len(pub) != ed25519.PublicKeySize || sigErr != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(ed25519.PublicKey(pub), payloadBytes, sig) {
 		return agentReleasePayload{}, nil, "", errors.New("manifest signature verification failed")
 	}
 	return payload, payloadBytes, manifest.KeyID, nil
+}
+
+func decodeManifestBase64(value string) ([]byte, error) {
+	for _, encoding := range []*base64.Encoding{base64.RawURLEncoding, base64.URLEncoding, base64.RawStdEncoding, base64.StdEncoding} {
+		if decoded, err := encoding.DecodeString(value); err == nil {
+			return decoded, nil
+		}
+	}
+	return nil, errors.New("invalid base64")
 }
 
 func (s *Server) adminAgentUpdate(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
