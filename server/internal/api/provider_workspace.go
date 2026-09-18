@@ -35,7 +35,7 @@ func (s *Server) listProviderCases(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	params = append(params, limit)
-	query := `SELECT c.id,c.incident_id,c.line_id,c.source_context,c.ticket_no,c.status,c.delivery_status,c.delivery_attempts,c.delivery_error,c.delivery_retryable,c.next_attempt_at,c.created_at,COALESCE(i.number,''),o.school_id,o.name,COALESCE(p.name,''),COALESCE(l.provider_id,'') FROM provider_cases c LEFT JOIN incidents i ON i.id=c.incident_id JOIN lines l ON l.id=COALESCE(c.line_id,i.line_id) JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE ` + strings.Join(filters, " AND ") + ` ORDER BY CASE WHEN c.delivery_status IN ('FAILED','DELIVERING') THEN 0 ELSE 1 END,c.created_at DESC,c.id DESC LIMIT $` + itoa(len(params))
+	query := `SELECT c.id,c.incident_id,COALESCE(c.line_id,''),c.source_context,COALESCE(c.ticket_no,''),c.status,c.delivery_status,c.delivery_attempts,COALESCE(c.delivery_error,''),c.delivery_retryable,c.next_attempt_at,c.created_at,COALESCE(i.incident_no,''),o.school_id,o.name,COALESCE(p.name,''),COALESCE(l.provider_id,'') FROM provider_cases c LEFT JOIN incidents i ON i.id=c.incident_id JOIN lines l ON l.id=COALESCE(c.line_id,i.line_id) JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE ` + strings.Join(filters, " AND ") + ` ORDER BY CASE WHEN c.delivery_status IN ('FAILED','DELIVERING') THEN 0 ELSE 1 END,c.created_at DESC,c.id DESC LIMIT $` + itoa(len(params))
 	rows, err := s.DB.Pool.Query(r.Context(), query, params...)
 	if err != nil {
 		writeError(w, 500, "could not query provider workspace")
