@@ -83,3 +83,18 @@ func TestEvidenceChainLinksRemainScopedToKnownLine(t *testing.T) {
 		t.Fatalf("missing line must not receive guessed links: %#v", got)
 	}
 }
+
+func TestConfigurationHierarchyIsDeterministicAndPreservesUnknowns(t *testing.T) {
+	historical := configurationHierarchy(map[string]interface{}{"scope_type": "LINE", "scope_id": "L-1", "version": float64(2)}, map[string]interface{}{"line_id": "L-1", "id": float64(8)}, map[string]interface{}{"version": float64(3)}, true)
+	if historical["historical"] != true {
+		t.Fatal("historical hierarchy flag missing")
+	}
+	precedence := historical["precedence"].([]string)
+	if len(precedence) != 4 || precedence[0] != "LINE_POLICY" || precedence[1] != "GLOBAL_POLICY" {
+		t.Fatalf("unexpected precedence: %#v", precedence)
+	}
+	current := configurationHierarchy(map[string]interface{}{}, map[string]interface{}{}, map[string]interface{}{}, false)
+	if current["policy"].(map[string]interface{})["scope_type"] != "UNKNOWN" || current["context_reason"] == nil {
+		t.Fatalf("missing hierarchy inputs must remain unknown: %#v", current)
+	}
+}

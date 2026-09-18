@@ -64,6 +64,7 @@ func evidenceChainFromSnapshots(id int64, observedAt time.Time, baseline, contra
 				"policy":       provenanceSnapshot("policy", policyMap),
 				"contract":     provenanceSnapshot("contract", contractMap),
 				"line_context": provenanceSnapshot("line_context", contextMap),
+				"hierarchy":    configurationHierarchy(policyMap, contractMap, contextMap, true),
 			},
 			"current_operational": map[string]interface{}{"status": "NOT_INCLUDED", "reason": "current configuration is intentionally not used for historical evidence"},
 		},

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"linkwatch/server/internal/auth"
+	"linkwatch/server/internal/measurements"
 )
 
 type lineRecord struct {
@@ -452,13 +453,19 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 		}
 	}
 	result["evidence_chain"] = evidenceChainForRecords(selected)
+	currentContext := map[string]interface{}{}
+	if resolved, contextErr := measurements.ResolveContext(ctx, s.DB.Pool, line.ID, time.Now().UTC()); contextErr == nil {
+		currentContext = contextMap(resolved)
+	}
 	result["configuration_governance"] = map[string]interface{}{
 		"historical": result["evidence_chain"],
 		"current_operational": map[string]interface{}{
-			"source":   "current operational configuration tables",
-			"policy":   policy,
-			"contract": contract,
-			"warning":  "current values are not used to explain historical evidence",
+			"source":    "current operational configuration tables",
+			"policy":    policy,
+			"contract":  contract,
+			"context":   currentContext,
+			"hierarchy": configurationHierarchy(snapshotMap(policy), snapshotMap(contract), currentContext, false),
+			"warning":   "current values are not used to explain historical evidence",
 		},
 	}
 	monitoring, err := s.monitoringPoints(ctx, line.ID)
