@@ -133,9 +133,9 @@ func reportDeviceIDs(query map[string][]string) []string {
 	return result
 }
 
-var rawExportFields = []string{"observed_at", "received_at", "line_id", "school_id", "organization_name", "district", "provider", "device_id", "mode", "connection_status", "download", "upload", "ping", "jitter", "packet_loss", "availability", "baseline_state", "contract_state", "reason"}
+var rawExportFields = []string{"observed_at", "received_at", "line_id", "school_id", "organization_name", "district", "provider", "device_id", "mode", "connection_status", "download", "upload", "ping", "jitter", "packet_loss", "availability", "availability_status", "baseline_state", "contract_state", "reason"}
 
-var aggregateExportFields = []string{"line_id", "measurement_count", "average_download", "min_download", "max_download", "average_upload", "average_ping", "average_availability", "problem_measurement_count", "problem_measurement_percent"}
+var aggregateExportFields = []string{"line_id", "measurement_count", "average_download", "min_download", "max_download", "average_upload", "average_ping", "average_availability", "availability_valid_count", "availability_invalid_count", "availability_unknown_count", "availability_known_count", "availability_observation_count", "availability_percent", "problem_measurement_count", "problem_measurement_percent"}
 
 func selectedExportFields(query map[string][]string, kind string) ([]string, error) {
 	allowed := rawExportFields
@@ -229,7 +229,19 @@ func (s *Server) aggregateReport(w http.ResponseWriter, r *http.Request) {
 	byLine := groupRows(rows, func(row reportRow) string { return row.LineID })
 	byDistrict := groupRows(rows, func(row reportRow) string { return row.District })
 	byProvider := groupRows(rows, func(row reportRow) string { return row.ProviderName })
-	writeJSON(w, 200, map[string]interface{}{"from": start, "to": end, "measurement_count": len(rows), "problem_measurement_count": problem, "aggregate": aggregate, "by_line": byLine, "by_district": byDistrict, "by_provider": byProvider})
+	periodAvailability := availabilitySummaryForRows(rows)
+	if availability, ok := aggregate["availability"].(map[string]interface{}); ok {
+		availability["valid_count"] = periodAvailability.Valid
+		availability["invalid_count"] = periodAvailability.Invalid
+		availability["unknown_count"] = periodAvailability.Unknown
+		availability["known_count"] = periodAvailability.known()
+		availability["percent"] = periodAvailability.percent()
+	}
+	response := map[string]interface{}{"from": start, "to": end, "measurement_count": len(rows), "problem_measurement_count": problem, "aggregate": aggregate, "by_line": byLine, "by_district": byDistrict, "by_provider": byProvider}
+	for key, value := range availabilitySummaryFields(periodAvailability) {
+		response[key] = value
+	}
+	writeJSON(w, 200, response)
 }
 
 func groupRows(rows []reportRow, key func(reportRow) string) map[string]interface{} {
@@ -263,7 +275,11 @@ func groupRows(rows []reportRow, key func(reportRow) string) map[string]interfac
 				bad++
 			}
 		}
-		result[name] = map[string]interface{}{"measurement_count": len(items), "average_download": sum(func(item reportRow) *float64 { return item.Download }), "average_upload": sum(func(item reportRow) *float64 { return item.Upload }), "average_ping": sum(func(item reportRow) *float64 { return item.Ping }), "average_availability": sum(func(item reportRow) *float64 { return item.Availability }), "problem_measurement_count": bad}
+		group := map[string]interface{}{"measurement_count": len(items), "average_download": sum(func(item reportRow) *float64 { return item.Download }), "average_upload": sum(func(item reportRow) *float64 { return item.Upload }), "average_ping": sum(func(item reportRow) *float64 { return item.Ping }), "average_availability": sum(func(item reportRow) *float64 { return item.Availability }), "problem_measurement_count": bad}
+		for key, value := range availabilitySummaryFields(availabilitySummaryForRows(items)) {
+			group[key] = value
+		}
+		result[name] = group
 	}
 	return result
 }
@@ -320,7 +336,12 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 			complete = 100
 		}
 	}
-	writeJSON(w, 200, map[string]interface{}{"from": start, "to": end, "line_id": r.URL.Query().Get("line_id"), "measurements_received": len(rows), "measurements_expected": expected, "data_completeness": complete, "baseline_compliance": ratio(baselineOK, baselineKnown), "contract_compliance": ratio(contractOK, contractKnown), "incidents": map[string]interface{}{"count": incidentCount, "total_duration_minutes": duration}, "sufficient_data": expected > 0 && float64(len(rows)) >= float64(expected)*.8})
+	periodAvailability := availabilitySummaryForRows(rows)
+	response := map[string]interface{}{"from": start, "to": end, "line_id": r.URL.Query().Get("line_id"), "measurements_received": len(rows), "measurements_expected": expected, "data_completeness": complete, "baseline_compliance": ratio(baselineOK, baselineKnown), "contract_compliance": ratio(contractOK, contractKnown), "incidents": map[string]interface{}{"count": incidentCount, "total_duration_minutes": duration}, "sufficient_data": expected > 0 && float64(len(rows)) >= float64(expected)*.8}
+	for key, value := range availabilitySummaryFields(periodAvailability) {
+		response[key] = value
+	}
+	writeJSON(w, 200, response)
 }
 
 func (s *Server) reportLineCount(ctx context.Context, r *http.Request, p *auth.Principal) (int, error) {
@@ -581,6 +602,9 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 			}
 			problemPercent := reportProblemPercent(bad, len(items))
 			values := map[string]interface{}{"line_id": lineID, "measurement_count": len(items), "average_download": average(func(item reportRow) *float64 { return item.Download }), "min_download": min(func(item reportRow) *float64 { return item.Download }), "max_download": max(func(item reportRow) *float64 { return item.Download }), "average_upload": average(func(item reportRow) *float64 { return item.Upload }), "average_ping": average(func(item reportRow) *float64 { return item.Ping }), "average_availability": average(func(item reportRow) *float64 { return item.Availability }), "problem_measurement_count": bad, "problem_measurement_percent": problemPercent}
+			for key, value := range availabilitySummaryFields(availabilitySummaryForRows(items)) {
+				values[key] = value
+			}
 			row := make([]interface{}, len(fields))
 			for i, field := range fields {
 				row[i] = values[field]
@@ -589,7 +613,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		for _, row := range rows {
-			values := map[string]interface{}{"observed_at": row.ObservedAt, "received_at": row.ReceivedAt, "line_id": row.LineID, "school_id": row.SchoolID, "organization_name": row.OrganizationName, "district": row.District, "provider": row.ProviderName, "device_id": row.DeviceID, "mode": row.Mode, "connection_status": row.ConnectionStatus, "download": row.Download, "upload": row.Upload, "ping": row.Ping, "jitter": row.Jitter, "packet_loss": row.PacketLoss, "availability": row.Availability, "baseline_state": row.BaselineState, "contract_state": row.ContractState, "reason": row.Reason}
+			values := map[string]interface{}{"observed_at": row.ObservedAt, "received_at": row.ReceivedAt, "line_id": row.LineID, "school_id": row.SchoolID, "organization_name": row.OrganizationName, "district": row.District, "provider": row.ProviderName, "device_id": row.DeviceID, "mode": row.Mode, "connection_status": row.ConnectionStatus, "download": row.Download, "upload": row.Upload, "ping": row.Ping, "jitter": row.Jitter, "packet_loss": row.PacketLoss, "availability": row.Availability, "availability_status": string(availabilityStatusForRow(row)), "baseline_state": row.BaselineState, "contract_state": row.ContractState, "reason": row.Reason}
 			item := make([]interface{}, len(fields))
 			for i, field := range fields {
 				item[i] = values[field]

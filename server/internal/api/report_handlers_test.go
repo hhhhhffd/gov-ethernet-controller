@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -36,5 +37,42 @@ func TestReportProblemPercentUsesMeasurementsAsDenominator(t *testing.T) {
 	}
 	if got := reportProblemPercent(1, 0); got != 0 {
 		t.Fatalf("reportProblemPercent() empty = %v, want 0", got)
+	}
+}
+
+func TestAvailabilitySummaryUsesStoredThresholdAndExplicitUnknowns(t *testing.T) {
+	threshold := func(value float64) []byte {
+		payload, _ := json.Marshal(map[string]interface{}{"availability_min": value})
+		return payload
+	}
+	value := func(number float64) *float64 { return &number }
+	rows := []reportRow{
+		{measurementRecord: measurementRecord{Availability: value(100), Quality: "VALID", Valid: true, PolicySnapshot: threshold(99)}},
+		{measurementRecord: measurementRecord{Availability: value(98), Quality: "VALID", Valid: true, PolicySnapshot: threshold(99)}},
+		{measurementRecord: measurementRecord{Availability: nil, Quality: "VALID", Valid: true, PolicySnapshot: threshold(99)}},
+		{measurementRecord: measurementRecord{Availability: value(100), Quality: "SUSPECT", Valid: false, PolicySnapshot: threshold(99)}},
+		{measurementRecord: measurementRecord{Availability: value(100), Quality: "VALID", Valid: true}},
+		{measurementRecord: measurementRecord{Availability: value(100), Quality: "VALID", Valid: true, PolicySnapshot: threshold(99), ContractSnapshot: threshold(98)}},
+	}
+	summary := availabilitySummaryForRows(rows)
+	if summary.Valid != 1 || summary.Invalid != 1 || summary.Unknown != 4 {
+		t.Fatalf("summary = %#v, want valid=1 invalid=1 unknown=4", summary)
+	}
+	if got := *summary.percent(); got != 50 {
+		t.Fatalf("percent = %v, want 50", got)
+	}
+}
+
+func TestAvailabilitySummaryPercentIsUnknownWithoutKnownObservations(t *testing.T) {
+	if got := (availabilitySummary{Unknown: 2}).percent(); got != nil {
+		t.Fatalf("percent = %v, want nil for unknown-only observations", *got)
+	}
+}
+
+func TestAvailabilityThresholdAcceptsMatchingPolicyAndContractSnapshots(t *testing.T) {
+	policy := []byte(`{"availability_min":99}`)
+	contract := []byte(`{"availability_min":99}`)
+	if value, ok := availabilityThreshold(policy, contract); !ok || value != 99 {
+		t.Fatalf("threshold = (%v, %v), want (99, true)", value, ok)
 	}
 }
