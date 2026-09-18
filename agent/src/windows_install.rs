@@ -150,19 +150,9 @@ pub fn install() -> Result<(), String> {
     run_reg_run(&install_root.join("linkwatch-agent.exe"))?;
     run_sc_args(&["start", "LINKWATCH"])?;
 
-    let tray_command = format!(
-        "& '{}' tray",
-        installed.display().to_string().replace('\'', "''")
-    );
-    let _ = Command::new("powershell.exe")
-        .args([
-            "-NoProfile",
-            "-WindowStyle",
-            "Hidden",
-            "-Command",
-            &tray_command,
-        ])
-        .spawn();
+    // Start the tray directly. The tray detaches from its inherited console
+    // on Windows, so no PowerShell/cmd window becomes part of the user UI.
+    let _ = Command::new(&installed).arg("tray").spawn();
     crate::logging::event("Windows installation completed; service and tray started");
     // Windows keeps the current image open until process exit. Schedule a
     // small, hidden helper only for deleting this trusted bootstrap path; no
@@ -267,11 +257,10 @@ fn run_sc_args(args: &[&str]) -> Result<(), String> {
 }
 
 fn run_reg_run(binary: &Path) -> Result<(), String> {
-    let escaped = binary.display().to_string().replace('\'', "''");
-    let command = format!(
-        "powershell.exe -NoProfile -WindowStyle Hidden -Command \"& '{}' tray\"",
-        escaped
-    );
+    // Explorer starts Run entries from the interactive session. Keep the
+    // value as the agent executable itself rather than routing through a
+    // shell; tray mode detaches its console immediately.
+    let command = format!("\"{}\" tray", binary.display());
     let status = Command::new("reg.exe")
         .args([
             "ADD",

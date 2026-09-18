@@ -186,6 +186,7 @@ mod win {
         fn GlobalAlloc(flags: Dword, bytes: usize) -> Handle;
         fn GlobalLock(handle: Handle) -> *mut c_void;
         fn GlobalUnlock(handle: Handle) -> Bool;
+        fn FreeConsole() -> Bool;
     }
 
     static mut TRAY: Option<NotifyIconDataW> = None;
@@ -194,6 +195,10 @@ mod win {
 
     pub fn run() {
         unsafe {
+            // Keep the console-subsystem binary for the existing CLI modes,
+            // but make tray a quiet session UI. FreeConsole detaches only
+            // this process, so a shell that launched `tray` stays intact.
+            FreeConsole();
             let class = wide("LINKWATCH_TRAY_WINDOW");
             let instance = GetModuleHandleW(null());
             let icon = LoadIconW(null_mut(), IDI_APPLICATION as *const u16);
