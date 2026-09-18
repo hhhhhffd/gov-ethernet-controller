@@ -90,7 +90,11 @@ func SendProviderCase(ctx context.Context, item ProviderCase, incident Incident,
 		if err != nil {
 			return Result{}, err
 		}
-		return Result{Channel: "WEBHOOK", ExternalID: responseID(response), Detail: endpoint}, nil
+		externalID := responseID(response)
+		if externalID == "" {
+			return Result{}, &DeliveryError{Message: "webhook response missing external reference", Retryable: false}
+		}
+		return Result{Channel: "WEBHOOK", ExternalID: externalID, Detail: "webhook delivery accepted"}, nil
 	default:
 		return Result{}, &DeliveryError{Message: "LINKWATCH_PROVIDER_TRANSPORT must be internal or webhook", Retryable: false}
 	}
@@ -140,14 +144,14 @@ func postJSON(ctx context.Context, endpoint string, payload interface{}, tokenEn
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, &DeliveryError{Message: "encode webhook payload: " + err.Error(), Retryable: false}
+		return nil, &DeliveryError{Message: "encode webhook payload failed", Retryable: false}
 	}
 	timeout := 10 * time.Second
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, &DeliveryError{Message: "create webhook request: " + err.Error(), Retryable: false}
+		return nil, &DeliveryError{Message: "create webhook request failed", Retryable: false}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
@@ -167,12 +171,12 @@ func postJSON(ctx context.Context, endpoint string, payload interface{}, tokenEn
 	}
 	response, err := client.Do(req)
 	if err != nil {
-		return nil, &DeliveryError{Message: "webhook request failed: " + err.Error(), Retryable: true}
+		return nil, &DeliveryError{Message: "webhook request failed", Retryable: true}
 	}
 	defer response.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 	if err != nil {
-		return nil, &DeliveryError{Message: "read webhook response: " + err.Error(), Retryable: true}
+		return nil, &DeliveryError{Message: "read webhook response failed", Retryable: true}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, &DeliveryError{Message: fmt.Sprintf("webhook returned HTTP %d", response.StatusCode), Retryable: response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500}
@@ -182,7 +186,7 @@ func postJSON(ctx context.Context, endpoint string, payload interface{}, tokenEn
 	}
 	var decoded map[string]interface{}
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return nil, &DeliveryError{Message: "decode webhook response: " + err.Error(), Retryable: true}
+		return nil, &DeliveryError{Message: "decode webhook response failed", Retryable: true}
 	}
 	if decoded == nil {
 		return nil, &DeliveryError{Message: "webhook response must be a JSON object", Retryable: true}
