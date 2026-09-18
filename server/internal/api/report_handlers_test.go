@@ -1,7 +1,11 @@
 package api
 
 import (
+	"archive/zip"
+	"bytes"
+	"encoding/csv"
 	"encoding/json"
+	"io"
 	"reflect"
 	"testing"
 	"time"
@@ -77,6 +81,14 @@ func TestSelectedExportFieldsRejectsUnknownAndDeduplicates(t *testing.T) {
 	if _, err := selectedExportFields(map[string][]string{"fields[]": {"raw_json"}}, "raw"); err == nil {
 		t.Fatal("selectedExportFields() accepted an unauthorized field")
 	}
+	got, err = selectedExportFields(map[string][]string{"columns[]": {"device_display_name", "monitoring_point_location"}}, "raw")
+	if err != nil || !reflect.DeepEqual(got, []string{"device_display_name", "monitoring_point_location"}) {
+		t.Fatalf("selectedExportFields() columns = %#v, err=%v", got, err)
+	}
+	defaults, err := selectedExportFields(map[string][]string{}, "raw")
+	if err != nil || reflect.DeepEqual(defaults, rawExportFields) {
+		t.Fatal("legacy raw defaults unexpectedly changed")
+	}
 }
 
 func TestReportProblemPercentUsesMeasurementsAsDenominator(t *testing.T) {
@@ -85,6 +97,53 @@ func TestReportProblemPercentUsesMeasurementsAsDenominator(t *testing.T) {
 	}
 	if got := reportProblemPercent(1, 0); got != 0 {
 		t.Fatalf("reportProblemPercent() empty = %v, want 0", got)
+	}
+}
+
+func TestCSVAndXLSXUseTheSameSelectedDataset(t *testing.T) {
+	headers := []string{"device_id", "download"}
+	rows := [][]interface{}{{"dev-1", 42.5}, {"dev-2", nil}}
+	var csvBuffer bytes.Buffer
+	csvWriter := csv.NewWriter(&csvBuffer)
+	if err := csvWriter.Write(headers); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		cells := make([]string, len(row))
+		for i, value := range row {
+			cells[i] = csvCell(value)
+		}
+		if err := csvWriter.Write(cells); err != nil {
+			t.Fatal(err)
+		}
+	}
+	csvWriter.Flush()
+	parsed, err := csv.NewReader(bytes.NewReader(csvBuffer.Bytes())).ReadAll()
+	if err != nil || len(parsed) != 3 || parsed[1][0] != "dev-1" || parsed[1][1] != "42.5" {
+		t.Fatalf("csv dataset = %#v, err=%v", parsed, err)
+	}
+	xlsxBytes, err := xlsx(headers, rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := zip.NewReader(bytes.NewReader(xlsxBytes), int64(len(xlsxBytes)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sheet []byte
+	for _, file := range archive.File {
+		if file.Name == "xl/worksheets/sheet1.xml" {
+			reader, openErr := file.Open()
+			if openErr != nil {
+				t.Fatal(openErr)
+			}
+			sheet, err = io.ReadAll(reader)
+			reader.Close()
+			break
+		}
+	}
+	if !bytes.Contains(sheet, []byte("dev-1")) || !bytes.Contains(sheet, []byte("42.5")) || !bytes.Contains(sheet, []byte("dev-2")) {
+		t.Fatalf("xlsx sheet does not contain same dataset: %s", sheet)
 	}
 }
 

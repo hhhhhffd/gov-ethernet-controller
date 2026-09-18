@@ -129,6 +129,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.aggregateReport(w, r)
 	case normalized == "/reports/quality-passport" && r.Method == http.MethodGet:
 		s.passport(w, r)
+	case normalized == "/exports/preview" && r.Method == http.MethodGet:
+		query := r.URL.Query()
+		query.Set("preview", "1")
+		r.URL.RawQuery = query.Encode()
+		s.export(w, r)
 	case normalized == "/exports" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
 		s.export(w, r)
 	case normalized == "/audit" && r.Method == http.MethodGet:
