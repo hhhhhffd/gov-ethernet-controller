@@ -80,18 +80,21 @@ impl Probe for NetworkProbe {
             for _ in 0..PING_SAMPLES {
                 attempts += 1;
                 ping_attempts += 1;
-                let started = Instant::now();
-                let method = if icmp_check(host, timeout).is_ok() {
-                    Some("icmp")
-                } else if tcp_check(&address, timeout).is_ok() {
-                    Some("tcp_connect")
+                // Keep method timers independent. An ICMP timeout is not part
+                // of the TCP-connect latency when ICMP is filtered.
+                let icmp_started = Instant::now();
+                let result = if icmp_check(host, timeout).is_ok() {
+                    Some(("ICMP", icmp_started.elapsed()))
                 } else {
-                    None
+                    let tcp_started = Instant::now();
+                    tcp_check(&address, timeout)
+                        .ok()
+                        .map(|_| ("TCP_CONNECT", tcp_started.elapsed()))
                 };
-                if let Some(method) = method {
+                if let Some((method, elapsed)) = result {
                     successes += 1;
                     ping_successes += 1;
-                    ping_samples.push(started.elapsed().as_secs_f64() * 1000.0);
+                    ping_samples.push(elapsed.as_secs_f64() * 1000.0);
                     ping_methods.push(method);
                 }
             }
@@ -121,7 +124,7 @@ impl Probe for NetworkProbe {
         };
         let mut raw = Map::new();
         raw.insert("probe".into(), Value::String("network".into()));
-        raw.insert("method_version".into(), Value::String("network-v5".into()));
+        raw.insert("method_version".into(), Value::String("network-v6".into()));
         raw.insert("reachability".into(), Value::Array(reachability));
         raw.insert("ping_samples_ms".into(), json!(ping_samples));
         // Keep the historical successful-sample fields for compatibility, but
@@ -142,6 +145,16 @@ impl Probe for NetworkProbe {
         );
         raw.insert("ping_method".into(), Value::String(latency_method.into()));
         raw.insert(
+            "latency_evidence".into(),
+            json!({
+                "method": latency_method,
+                "sample_count": ping_samples.len(),
+                "attempt_count": ping_attempts,
+                "successful_count": ping_successes,
+                "samples_ms": ping_samples,
+            }),
+        );
+        raw.insert(
             "sample_count".into(),
             json!({"ping": ping_samples.len(), "download": 0, "upload": 0}),
         );
@@ -156,11 +169,15 @@ impl Probe for NetworkProbe {
             Value::String("reachability_targets_and_ping".into()),
         );
         raw.insert("warmup".into(), json!({"download": false, "upload": false}));
-        let availability = if attempts == 0 {
-            0.0
-        } else {
-            successes as f64 / attempts as f64 * 100.0
-        };
+        // Availability is a sampled observation, not a percentage calculated
+        // from the sub-attempts of one probe. The server aggregates these
+        // reachability observations over its reporting period. Counts remain
+        // in raw evidence so the observation is auditable.
+        let availability = availability_observation(attempts, successes);
+        let performance_partial = mode.eq_ignore_ascii_case("performance")
+            && connection_ok
+            && (output_metric_missing(&self.config.throughput_url)
+                || output_metric_missing(&self.config.upload_url));
         let mut output = json!({
             "mode": if mode.eq_ignore_ascii_case("light") { "LIGHT" } else { "PERFORMANCE" },
             "download": null,
@@ -172,6 +189,25 @@ impl Probe for NetworkProbe {
             "connection_status": if connection_ok { "OK" } else { "NO_INTERNET" },
             "raw": raw,
         });
+        output["latency_method"] = Value::String(latency_method.into());
+        output["quality"] = Value::String(
+            if performance_partial {
+                "SUSPECT"
+            } else {
+                "VALID"
+            }
+            .into(),
+        );
+        output["raw"]["availability_observation"] = match availability {
+            Some(value) if value == 100.0 => json!("REACHABLE"),
+            Some(_) => json!("UNREACHABLE"),
+            None => json!("NOT_SAMPLED"),
+        };
+        output["raw"]["availability_aggregation"] = json!("server_period_sampled_observations");
+        if performance_partial {
+            output["raw"]["verification_required"] = json!(true);
+            output["raw"]["verification_reason"] = json!("partial_performance");
+        }
         if mode.eq_ignore_ascii_case("performance") && connection_ok {
             let target_duration =
                 Duration::from_secs(self.config.throughput_duration_seconds.clamp(3, 5));
@@ -191,7 +227,12 @@ impl Probe for NetworkProbe {
                         output["raw"]["warmup"]["download"] = json!(value.warmed_up);
                         output["raw"]["sample_count"]["download"] = json!(value.requests);
                     }
-                    Err(error) => output["raw"]["download_error"] = json!(error),
+                    Err(error) => {
+                        output["raw"]["download_error"] = json!(error);
+                        output["raw"]["verification_required"] = json!(true);
+                        output["raw"]["verification_reason"] = json!("download_failed");
+                        output["quality"] = json!("SUSPECT");
+                    }
                 }
             }
             if let Some(url) = &self.config.upload_url {
@@ -205,7 +246,12 @@ impl Probe for NetworkProbe {
                         output["raw"]["warmup"]["upload"] = json!(value.warmed_up);
                         output["raw"]["sample_count"]["upload"] = json!(value.requests);
                     }
-                    Err(error) => output["raw"]["upload_error"] = json!(error),
+                    Err(error) => {
+                        output["raw"]["upload_error"] = json!(error);
+                        output["raw"]["verification_required"] = json!(true);
+                        output["raw"]["verification_reason"] = json!("upload_failed");
+                        output["quality"] = json!("SUSPECT");
+                    }
                 }
             }
         }
@@ -292,21 +338,44 @@ fn icmp_check(host: &str, timeout: Duration) -> Result<(), String> {
 
 fn latency_method(methods: &[&str]) -> &'static str {
     if methods.is_empty() {
-        return "unavailable";
+        return "UNAVAILABLE";
     }
-    if methods.iter().all(|method| *method == "icmp") {
-        "icmp"
-    } else if methods.iter().all(|method| *method == "tcp_connect") {
-        "tcp_connect"
+    if methods.iter().all(|method| *method == "ICMP") {
+        "ICMP"
+    } else if methods.iter().all(|method| *method == "TCP_CONNECT") {
+        "TCP_CONNECT"
     } else {
-        "mixed"
+        "MIXED"
     }
+}
+
+fn availability_observation(attempts: usize, successes: usize) -> Option<f64> {
+    (attempts > 0).then_some(if successes > 0 { 100.0 } else { 0.0 })
+}
+
+fn output_metric_missing(url: &Option<String>) -> bool {
+    url.is_none()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{NetworkProbe, ProbeConfig};
+    use super::{availability_observation, latency_method, NetworkProbe, ProbeConfig};
     use crate::probe::Probe;
+
+    #[test]
+    fn availability_is_a_binary_sample_not_a_sub_attempt_percentage() {
+        assert_eq!(availability_observation(10, 1), Some(100.0));
+        assert_eq!(availability_observation(10, 0), Some(0.0));
+        assert_eq!(availability_observation(0, 0), None);
+    }
+
+    #[test]
+    fn latency_method_is_explicit_and_canonical() {
+        assert_eq!(latency_method(&["ICMP", "ICMP"]), "ICMP");
+        assert_eq!(latency_method(&["TCP_CONNECT"]), "TCP_CONNECT");
+        assert_eq!(latency_method(&["ICMP", "TCP_CONNECT"]), "MIXED");
+        assert_eq!(latency_method(&[]), "UNAVAILABLE");
+    }
 
     #[test]
     fn raw_counts_expose_ping_and_availability_denominators() {

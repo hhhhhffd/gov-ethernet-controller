@@ -308,7 +308,7 @@ fn run_once(
 }
 
 const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
-const LIGHT_CHECK_DELAY: Duration = Duration::from_secs(5 * 60);
+const LIGHT_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 fn run_loop(
     mut config: Config,
@@ -322,7 +322,11 @@ fn run_loop(
     let mut state = scheduler::State::load(&state_path)
         .map_err(|error| format!("load scheduler state: {error}"))?;
     let mut last_maintenance: Option<SystemTime> = None;
-    let mut light_due: Option<SystemTime> = None;
+    // LIGHT is an independent, repeating reachability sample. It must not be
+    // a single follow-up probe attached to the preceding PERFORMANCE run.
+    let mut light_due = config
+        .light_checks_between
+        .then(|| SystemTime::now() + LIGHT_CHECK_INTERVAL);
     let mut telemetry = RuntimeTelemetry::new();
     persist_runtime_state(&config, &telemetry, &queue);
 
@@ -407,10 +411,17 @@ fn run_loop(
             return Ok(());
         }
 
+        if !config.light_checks_between {
+            light_due = None;
+        } else if light_due.is_none() {
+            light_due = Some(now + LIGHT_CHECK_INTERVAL);
+        }
+
         if let Some(deadline) = light_due {
             if now >= deadline {
-                light_due = None;
-                if config.light_checks_between {
+                let run_light = config.light_checks_between;
+                light_due = run_light.then(|| SystemTime::now() + LIGHT_CHECK_INTERVAL);
+                if run_light {
                     if stop.is_requested() {
                         println!("shutdown requested; pending measurements remain queued");
                         return Ok(());
@@ -489,9 +500,9 @@ fn run_loop(
                         }
                     }
                 }
-                if config.light_checks_between {
-                    light_due = Some(SystemTime::now() + LIGHT_CHECK_DELAY);
-                }
+                // Keep an already scheduled LIGHT cadence intact. If the
+                // previous configuration disabled it, the loop above starts
+                // a fresh interval on the next iteration after re-enable.
                 continue;
             }
 
