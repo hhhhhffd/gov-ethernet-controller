@@ -47,7 +47,9 @@ func SeedDemo(ctx context.Context, db *database.DB) error {
 		{"line-07-primary", "org-07", "provider-a", "PRIMARY", "FIBER"}, {"line-99-primary", "org-99", "provider-a", "PRIMARY", "LTE"},
 	}
 	for _, item := range lines {
-		if _, err := db.Pool.Exec(ctx, `INSERT INTO lines(id,organization_id,provider_id,role,technology,status,created_at) VALUES ($1,$2,$3,$4,$5,'ACTIVE',$6) ON CONFLICT DO NOTHING`, item.id, item.org, item.provider, item.role, item.technology, now); err != nil {
+		// PRIMARY lines are activated only after their monitoring point exists;
+		// this keeps every committed seed step within the line invariant.
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO lines(id,organization_id,provider_id,role,technology,status,created_at) VALUES ($1,$2,$3,$4,$5,'INACTIVE',$6) ON CONFLICT DO NOTHING`, item.id, item.org, item.provider, item.role, item.technology, now); err != nil {
 			return err
 		}
 	}
@@ -62,6 +64,11 @@ func SeedDemo(ctx context.Context, db *database.DB) error {
 	points := []struct{ id, line, location string }{{"point-42-primary", "line-42-primary", "серверная, Ethernet"}, {"point-42-reserve", "line-42-reserve", "серверная, резервный шлюз"}, {"point-07-primary", "line-07-primary", "серверная, Ethernet"}, {"point-99-primary", "line-99-primary", "кабинет связи, Ethernet"}}
 	for _, item := range points {
 		if _, err := db.Pool.Exec(ctx, `INSERT INTO monitoring_points(id,line_id,location,is_primary,created_at) VALUES ($1,$2,$3,TRUE,$4) ON CONFLICT DO NOTHING`, item.id, item.line, item.location, now); err != nil {
+			return err
+		}
+	}
+	for _, item := range lines {
+		if _, err := db.Pool.Exec(ctx, `UPDATE lines SET status='ACTIVE' WHERE id=$1`, item.id); err != nil {
 			return err
 		}
 	}

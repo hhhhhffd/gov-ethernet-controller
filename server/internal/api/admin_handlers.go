@@ -507,6 +507,33 @@ type linePayload struct {
 	Status         string  `json:"status"`
 }
 
+var errActivePrimaryMonitoringPointRequired = errors.New("active primary line requires an active monitoring point")
+
+// ensureActivePrimaryHasPoint is called while the line row is locked by the
+// surrounding transaction. The row lock serializes line and point mutations
+// that could otherwise each observe a different last active point.
+func ensureActivePrimaryHasPoint(ctx context.Context, tx pgx.Tx, lineID string) error {
+	var role, status string
+	var activePoints int
+	if err := tx.QueryRow(ctx, `SELECT l.role,l.status,COUNT(mp.id) FILTER (WHERE mp.active)
+        FROM lines l LEFT JOIN monitoring_points mp ON mp.line_id=l.id
+        WHERE l.id=$1 GROUP BY l.id`, lineID).Scan(&role, &status, &activePoints); err != nil {
+		return err
+	}
+	if role == "PRIMARY" && status == "ACTIVE" && activePoints == 0 {
+		return errActivePrimaryMonitoringPointRequired
+	}
+	return nil
+}
+
+func writeLineInvariantError(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, errActivePrimaryMonitoringPointRequired) {
+		writeError(w, http.StatusConflict, err.Error())
+		return true
+	}
+	return false
+}
+
 func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Principal, parts []string) {
 	if !requireAdmin(w, p) {
 		return
@@ -580,8 +607,25 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if r.Method == http.MethodPost {
-		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO lines(id,organization_id,provider_id,role,technology,technology_id,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, payload.ID, payload.OrganizationID, payload.ProviderID, payload.Role, payload.Technology, payload.TechnologyID, payload.Status, now); err != nil {
+		tx, err := s.DB.Pool.Begin(r.Context())
+		if err != nil {
+			writeError(w, 500, "could not start line transaction")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		if _, err := tx.Exec(r.Context(), `INSERT INTO lines(id,organization_id,provider_id,role,technology,technology_id,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, payload.ID, payload.OrganizationID, payload.ProviderID, payload.Role, payload.Technology, payload.TechnologyID, payload.Status, now); err != nil {
 			writeError(w, 409, "line already exists or references are invalid")
+			return
+		}
+		if err := ensureActivePrimaryHasPoint(r.Context(), tx, payload.ID); err != nil {
+			if writeLineInvariantError(w, err) {
+				return
+			}
+			writeError(w, 500, "could not validate line monitoring points")
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, 500, "could not commit line")
 			return
 		}
 		writeAudit(r.Context(), s, p, "line.created", "line", payload.ID, nil, payload)
@@ -594,12 +638,29 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 	}
 	var previous linePayload
 	var created time.Time
-	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT id,organization_id,provider_id,role,technology,technology_id,status,created_at FROM lines WHERE id=$1`, parts[0]).Scan(&previous.ID, &previous.OrganizationID, &previous.ProviderID, &previous.Role, &previous.Technology, &previous.TechnologyID, &previous.Status, &created); err != nil {
+	tx, err := s.DB.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "could not start line transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	if err := tx.QueryRow(r.Context(), `SELECT id,organization_id,provider_id,role,technology,technology_id,status,created_at FROM lines WHERE id=$1 FOR UPDATE`, parts[0]).Scan(&previous.ID, &previous.OrganizationID, &previous.ProviderID, &previous.Role, &previous.Technology, &previous.TechnologyID, &previous.Status, &created); err != nil {
 		writeError(w, 404, "line not found")
 		return
 	}
-	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE lines SET organization_id=$1,provider_id=$2,role=$3,technology=$4,technology_id=$5,status=$6 WHERE id=$7`, payload.OrganizationID, payload.ProviderID, payload.Role, payload.Technology, payload.TechnologyID, payload.Status, parts[0]); err != nil {
+	if _, err := tx.Exec(r.Context(), `UPDATE lines SET organization_id=$1,provider_id=$2,role=$3,technology=$4,technology_id=$5,status=$6 WHERE id=$7`, payload.OrganizationID, payload.ProviderID, payload.Role, payload.Technology, payload.TechnologyID, payload.Status, parts[0]); err != nil {
 		writeError(w, 409, "line update failed or references are invalid")
+		return
+	}
+	if err := ensureActivePrimaryHasPoint(r.Context(), tx, parts[0]); err != nil {
+		if writeLineInvariantError(w, err) {
+			return
+		}
+		writeError(w, 500, "could not validate line monitoring points")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "could not commit line")
 		return
 	}
 	writeAudit(r.Context(), s, p, "line.updated", "line", parts[0], previous, payload)
@@ -636,21 +697,42 @@ func (s *Server) adminMonitoringPoints(w http.ResponseWriter, r *http.Request, p
 		writeError(w, 422, "invalid monitoring point payload")
 		return
 	}
-	var lineExists bool
-	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM lines WHERE id=$1)`, payload.LineID).Scan(&lineExists); err != nil || !lineExists {
-		writeError(w, 422, "line not found")
-		return
-	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if r.Method == http.MethodPost {
+		tx, err := s.DB.Pool.Begin(r.Context())
+		if err != nil {
+			writeError(w, 500, "could not start monitoring point transaction")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		var lineExists bool
+		if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM lines WHERE id=$1)`, payload.LineID).Scan(&lineExists); err != nil || !lineExists {
+			writeError(w, 422, "line not found")
+			return
+		}
+		if _, err := tx.Exec(r.Context(), `SELECT id FROM lines WHERE id=$1 FOR UPDATE`, payload.LineID); err != nil {
+			writeError(w, 404, "line not found")
+			return
+		}
 		if payload.Primary {
-			if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE monitoring_points SET is_primary=FALSE WHERE line_id=$1`, payload.LineID); err != nil {
+			if _, err := tx.Exec(r.Context(), `UPDATE monitoring_points SET is_primary=FALSE WHERE line_id=$1`, payload.LineID); err != nil {
 				writeError(w, 500, "could not update monitoring point primary state")
 				return
 			}
 		}
-		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO monitoring_points(id,line_id,location,is_primary,active,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, payload.ID, payload.LineID, payload.Location, payload.Primary, payload.Active, now); err != nil {
+		if _, err := tx.Exec(r.Context(), `INSERT INTO monitoring_points(id,line_id,location,is_primary,active,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, payload.ID, payload.LineID, payload.Location, payload.Primary, payload.Active, now); err != nil {
 			writeError(w, 409, "monitoring point already exists or line is invalid")
+			return
+		}
+		if err := ensureActivePrimaryHasPoint(r.Context(), tx, payload.LineID); err != nil {
+			if writeLineInvariantError(w, err) {
+				return
+			}
+			writeError(w, 500, "could not validate line monitoring points")
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, 500, "could not commit monitoring point")
 			return
 		}
 		writeAudit(r.Context(), s, p, "monitoring_point.created", "monitoring_point", payload.ID, nil, payload)
@@ -663,18 +745,56 @@ func (s *Server) adminMonitoringPoints(w http.ResponseWriter, r *http.Request, p
 	}
 	var previous pointPayload
 	var created time.Time
-	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT id,line_id,location,is_primary,active,created_at FROM monitoring_points WHERE id=$1`, parts[0]).Scan(&previous.ID, &previous.LineID, &previous.Location, &previous.Primary, &previous.Active, &created); err != nil {
+	tx, err := s.DB.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "could not start monitoring point transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var currentLineID string
+	if err := tx.QueryRow(r.Context(), `SELECT line_id FROM monitoring_points WHERE id=$1`, parts[0]).Scan(&currentLineID); err != nil {
+		writeError(w, 404, "monitoring point not found")
+		return
+	}
+	lineIDs := []string{currentLineID}
+	if payload.LineID != currentLineID {
+		lineIDs = append(lineIDs, payload.LineID)
+	}
+	if lineIDs[0] > lineIDs[len(lineIDs)-1] {
+		lineIDs[0], lineIDs[len(lineIDs)-1] = lineIDs[len(lineIDs)-1], lineIDs[0]
+	}
+	for _, lineID := range lineIDs {
+		var lockedLine string
+		if err := tx.QueryRow(r.Context(), `SELECT id FROM lines WHERE id=$1 FOR UPDATE`, lineID).Scan(&lockedLine); err != nil {
+			writeError(w, 422, "line not found")
+			return
+		}
+	}
+	if err := tx.QueryRow(r.Context(), `SELECT id,line_id,location,is_primary,active,created_at FROM monitoring_points WHERE id=$1 FOR UPDATE`, parts[0]).Scan(&previous.ID, &previous.LineID, &previous.Location, &previous.Primary, &previous.Active, &created); err != nil {
 		writeError(w, 404, "monitoring point not found")
 		return
 	}
 	if payload.Primary {
-		if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE monitoring_points SET is_primary=FALSE WHERE line_id=$1 AND id<>$2`, payload.LineID, parts[0]); err != nil {
+		if _, err := tx.Exec(r.Context(), `UPDATE monitoring_points SET is_primary=FALSE WHERE line_id=$1 AND id<>$2`, payload.LineID, parts[0]); err != nil {
 			writeError(w, 500, "could not update monitoring point primary state")
 			return
 		}
 	}
-	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE monitoring_points SET line_id=$1,location=$2,is_primary=$3,active=$4 WHERE id=$5`, payload.LineID, payload.Location, payload.Primary, payload.Active, parts[0]); err != nil {
+	if _, err := tx.Exec(r.Context(), `UPDATE monitoring_points SET line_id=$1,location=$2,is_primary=$3,active=$4 WHERE id=$5`, payload.LineID, payload.Location, payload.Primary, payload.Active, parts[0]); err != nil {
 		writeError(w, 409, "monitoring point update failed")
+		return
+	}
+	for _, lineID := range lineIDs {
+		if err := ensureActivePrimaryHasPoint(r.Context(), tx, lineID); err != nil {
+			if writeLineInvariantError(w, err) {
+				return
+			}
+			writeError(w, 500, "could not validate line monitoring points")
+			return
+		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, 500, "could not commit monitoring point")
 		return
 	}
 	writeAudit(r.Context(), s, p, "monitoring_point.updated", "monitoring_point", parts[0], previous, payload)
