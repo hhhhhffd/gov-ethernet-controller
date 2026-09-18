@@ -95,11 +95,7 @@ pub fn install() -> Result<(), String> {
     // that may not be the owner of the protected token file. Preserve the
     // existing credential and ACL; token rotation is an explicit operation,
     // not a side effect of replacing the binary.
-    if !token_path.exists() {
-        fs::write(&token_path, format!("{}\n", config.device_token.trim()))
-            .map_err(|error| format!("write protected device token: {error}"))?;
-        protect_token(&token_path)?;
-    }
+    ensure_token(&token_path, config.device_token.trim(), protect_token)?;
 
     let config_path = data_root.join("config.json");
     let dashboard = config
@@ -170,6 +166,20 @@ pub fn install() -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_token(
+    path: &Path,
+    token: &str,
+    protect: fn(&Path) -> Result<(), String>,
+) -> Result<bool, String> {
+    if path.exists() {
+        return Ok(false);
+    }
+    fs::write(path, format!("{token}\n"))
+        .map_err(|error| format!("write protected device token: {error}"))?;
+    protect(path)?;
+    Ok(true)
+}
+
 pub fn uninstall(purge_data: bool) -> Result<(), String> {
     let program_files =
         env::var("ProgramFiles").map_err(|_| "ProgramFiles is not set".to_string())?;
@@ -223,6 +233,27 @@ fn protect_token(path: &Path) -> Result<(), String> {
         return Err(format!("icacls failed with {status}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ensure_token;
+    use std::fs;
+
+    #[test]
+    fn reinstall_preserves_existing_token() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("device-token");
+        fs::write(&path, "original-token\n").expect("seed token");
+
+        let created = ensure_token(&path, "replacement-token", |_| Ok(())).expect("preserve token");
+
+        assert!(!created);
+        assert_eq!(
+            fs::read_to_string(path).expect("read token"),
+            "original-token\n"
+        );
+    }
 }
 
 fn run_sc(command: &str, name: &str) {
