@@ -14,23 +14,35 @@
 - Static browser contract: `/`, `/static/app.js`, `/static/styles.css` — HTTP
   200; canonical `NO_DATA`/notifications vocabulary present.
 
-## Browser blocker
+Run the authenticated browser runner in an environment that provides
+Playwright:
 
-Playwright package is available only outside this repository and was invoked
-against the system Chromium (`/usr/sbin/chromium`). Chromium exits before
-creating a page with:
-
-```text
-ERROR: third_party/crashpad/crashpad/util/linux/socket.cc:45:
-setsockopt: Operation not permitted
-process did exit ... signal=SIGTRAP
+```bash
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs \
+BROWSER_E2E_BASE_URL=http://127.0.0.1:8080 \
+node scripts/browser-e2e.mjs
 ```
 
-The same failure occurs with headless Chromium and `--no-sandbox
---disable-crash-reporter`. Consequently no authenticated DOM, screenshot,
-keyboard, or visual assertions are claimed. No Playwright dependency or
-parallel frontend harness was added; rerun the browser matrix in an
-environment with a working Chromium sandbox/crashpad runtime.
+## Browser E2E result
+
+After rerunning with the required escalated local-runtime permission,
+Playwright executed `scripts/browser-e2e.mjs` against system Chromium
+(`/usr/sbin/chromium`) successfully:
+
+```text
+BROWSER E2E PASS: admin/provider authenticated journeys
+```
+
+The runner covers authenticated admin and provider login, line/history/report
+surfaces, notifications/audit, export download, ProviderCase review gate and
+provider workspace visibility/scope, provider admin `403`, plus a mobile
+viewport shell check. It uses the existing Playwright installation supplied by
+the execution environment through `PLAYWRIGHT_MODULE`; no frontend dependency
+was added to the repository.
+
+An un-escalated launch still fails with the environment's crashpad permission
+error (`setsockopt: Operation not permitted`, `SIGTRAP`); the passing run used
+the required escalated runtime permission.
 
 ## Not claimed
 
