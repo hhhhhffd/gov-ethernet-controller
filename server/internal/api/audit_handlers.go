@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -123,6 +124,21 @@ func redactAuditValue(value interface{}) interface{} {
 	default:
 		return value
 	}
+}
+
+// marshalAuditSnapshot normalizes structs and maps through JSON before applying
+// the key-based redaction. This keeps credentials out of storage as well as
+// out of the read API when a future audit caller passes a struct payload.
+func marshalAuditSnapshot(value interface{}) ([]byte, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var decoded interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, err
+	}
+	return json.Marshal(redactAuditValue(decoded))
 }
 
 func (s *Server) audit(w http.ResponseWriter, r *http.Request) {

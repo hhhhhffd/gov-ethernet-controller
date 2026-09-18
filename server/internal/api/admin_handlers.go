@@ -902,12 +902,12 @@ func (s *Server) adminMonitoringPoints(w http.ResponseWriter, r *http.Request, p
 }
 
 func writeAudit(ctx context.Context, s *Server, p *auth.Principal, action, objectType, objectID string, before, after interface{}) {
-	beforeJSON, err := json.Marshal(before)
+	beforeJSON, err := marshalAuditSnapshot(before)
 	if err != nil {
 		s.Logger.Error("could not encode audit before snapshot", "action", action, "object_type", objectType, "object_id", objectID, "error", err)
 		return
 	}
-	afterJSON, err := json.Marshal(after)
+	afterJSON, err := marshalAuditSnapshot(after)
 	if err != nil {
 		s.Logger.Error("could not encode audit after snapshot", "action", action, "object_type", objectType, "object_id", objectID, "error", err)
 		return

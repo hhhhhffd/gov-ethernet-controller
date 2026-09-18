@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"testing"
 
@@ -56,6 +57,24 @@ func TestRedactAuditValueRemovesSensitiveHistoricalFields(t *testing.T) {
 	nested := value["nested"].(map[string]interface{})
 	if nested["password_hash"] != "[REDACTED]" || nested["safe"] != "ok" {
 		t.Fatalf("nested redaction failed: %#v", nested)
+	}
+}
+
+func TestMarshalAuditSnapshotRedactsStructFieldsBeforePersistence(t *testing.T) {
+	type payload struct {
+		DeviceToken string `json:"device_token"`
+		Safe        string `json:"safe"`
+	}
+	raw, err := marshalAuditSnapshot(payload{DeviceToken: "secret-token", Safe: "ok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]interface{}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded["device_token"] != "[REDACTED]" || decoded["safe"] != "ok" {
+		t.Fatalf("snapshot = %#v", decoded)
 	}
 }
 
