@@ -416,7 +416,7 @@
       $("#drawerTitle").textContent = detail.title || "Связанная ситуация";
       $("#drawerSubtitle").textContent = `${detail.status || "OPEN"} · ${detail.affected_count || incidents.length} доступных участников · только чтение`;
       const situationActions = detail.actions || {};
-      const actionButtons = situationActions.merge || situationActions.split ? `<div class="incident-action">${situationActions.merge ? `<button class="button button-quiet" data-situation-action="merge">Объединить</button>` : ""}${situationActions.split ? `<button class="button button-quiet" data-situation-action="split">Разделить</button>` : ""}</div>` : "";
+      const actionButtons = `<div class="incident-action"><button class="button button-quiet" data-situation-comparison="1">Сравнить controls</button>${situationActions.merge ? `<button class="button button-quiet" data-situation-action="merge">Объединить</button>` : ""}${situationActions.split ? `<button class="button button-quiet" data-situation-action="split">Разделить</button>` : ""}</div>`;
       $("#drawerStatus").innerHTML = `<span class="status-badge ${statusClass(detail.status)}"><i></i>${escapeHtml(detail.status || "OPEN")}</span><p>Это корреляционная группировка, а не вывод о единой причине.</p>${actionButtons}<button type="button" class="button button-secondary" id="liveVerifyButton">Проверить выбранные устройства сейчас</button><div id="liveVerifyStatus" class="table-empty">LIVE_VERIFY: готово к запросу</div>`;
       const liveVerifyButton = $("#liveVerifyButton");
       liveVerifyButton.onclick = async () => {
@@ -431,6 +431,7 @@
         }
       };
       $$('[data-situation-action]', drawer).forEach((button) => button.addEventListener("click", () => performSituationAction(detail, button.dataset.situationAction)));
+      $$('[data-situation-comparison]', drawer).forEach((button) => button.addEventListener("click", () => openSituationComparison(detail)));
       const factors = detail.factors || detail.reason || {};
       $("#drawerAxes").innerHTML = [["Провайдер", factors.provider_id || detail.provider_id], ["Район", factors.district || detail.district], ["Тип нарушения", factors.violation_type || detail.violation_type], ["Начало окна", time(detail.start_at, true)]].map(([label, value]) => `<div class="axis-card"><span>${label}</span><b>${escapeHtml(value || "UNKNOWN")}</b><small>Фактор группировки</small></div>`).join("");
       $("#drawerVerdict").textContent = "Группировка построена существующим materialization worker по сохранённым факторам; она не доказывает общую первопричину.";
@@ -461,6 +462,18 @@
       closeDrawer();
     } catch (error) {
       toast(error.status === 409 ? "Ситуация изменилась — действие отклонено, обновите данные" : "Действие ситуации не выполнено", "warn");
+    }
+  }
+  async function openSituationComparison(situation) {
+    try {
+      const payload = await apiTry([`/api/situations/${encodeURIComponent(situation.id)}/comparison`, `/api/v1/situations/${encodeURIComponent(situation.id)}/comparison`]);
+      const result = payload.data || payload;
+      const controls = result.controls || [];
+      $("#drawerVerdict").innerHTML = `<b>Сравнительная проверка · correlation-only</b><br>${escapeHtml(result.explanation || "Общая причина не устанавливается.")}`;
+      $("#drawerAxes").innerHTML = [["Период", `${time(result.period?.from, true)} — ${time(result.period?.to, true)}`], ["Критерии", (result.selection?.same_provider ? "provider · " : "") + (result.selection?.same_district ? "district" : "explicit factors unavailable")], ["Controls", `${controls.length} · ${result.control_completeness?.status || "NO_DATA"}`]].map(([label, value]) => `<div class="axis-card"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b><small>Server-derived historical projection</small></div>`).join("");
+      $("#drawerTimeline").innerHTML = controls.length ? controls.map((control) => `<div class="timeline-row"><time>${escapeHtml(control.line_id)}</time><span class="timeline-dot"></span><p><b>${escapeHtml(control.school_id || control.organization_name || "Control")}</b><br>${escapeHtml(control.completeness?.status || "NO_DATA")} · observations ${escapeHtml(String(control.measurement_count || 0))} · valid evidence ${escapeHtml(String(control.valid_evidence_count || 0))}</p></div>`).join("") : `<div class="table-empty">NO_DATA: eligible controls not found in the authorized scope.</div>`;
+    } catch (error) {
+      toast(error.status === 404 ? "Сравнение недоступно для текущего scope" : "Сравнительная проверка недоступна", "warn");
     }
   }
   async function openDeviceCard(deviceID) {

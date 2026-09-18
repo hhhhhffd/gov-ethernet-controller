@@ -46,6 +46,10 @@ func (s *Server) situationRoute(w http.ResponseWriter, r *http.Request, rest str
 		s.situationDetail(w, r, parts[0])
 		return
 	}
+	if len(parts) == 2 && r.Method == http.MethodGet && parts[1] == "comparison" {
+		s.situationComparison(w, r, id)
+		return
+	}
 	if len(parts) == 2 && r.Method == http.MethodPost && parts[1] == "live-verify" {
 		s.issueLiveVerify(w, r, parts[0])
 		return
