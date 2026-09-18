@@ -19,6 +19,20 @@ func TestReportDeviceIDs(t *testing.T) {
 	}
 }
 
+func TestPeriodBoundsUsesExclusiveEndAndCanonicalPeriods(t *testing.T) {
+	start, end, err := periodBounds(map[string]string{"period": "week"}, 1)
+	if err != nil || end.Sub(start) != 7*24*time.Hour {
+		t.Fatalf("week bounds = %v..%v err=%v", start, end, err)
+	}
+	start, end, err = periodBounds(map[string]string{"from": "2026-01-01T00:00:00Z", "to": "2026-01-02T00:00:00Z"}, 1)
+	if err != nil || !start.Equal(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)) || !end.Equal(time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("custom bounds = %v..%v err=%v", start, end, err)
+	}
+	if _, _, err := periodBounds(map[string]string{"from": "2026-01-02T00:00:00Z", "to": "2026-01-01T00:00:00Z"}, 1); err == nil {
+		t.Fatal("reversed period accepted")
+	}
+}
+
 func TestSummarizeAvailabilityClassifiesNoDataAndThreshold(t *testing.T) {
 	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(10 * time.Hour)

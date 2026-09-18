@@ -94,7 +94,7 @@ func (s *Server) mapPoints(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		result = append(result, map[string]interface{}{"line_id": line.ID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "district": line.District, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "role": line.Role, "technology": line.Technology, "state": stateMap(*line.State)})
+		result = append(result, map[string]interface{}{"line_id": line.ID, "school_id": line.SchoolID, "organization_name": line.OrganizationName, "district": line.District, "latitude": line.Latitude, "longitude": line.Longitude, "provider_id": line.ProviderID, "provider_name": line.ProviderName, "role": line.Role, "technology": line.Technology, "state": stateMap(*line.State), "status_mode": "CURRENT_OPERATIONAL", "period_summary_available": false})
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, 500, "could not read map")
