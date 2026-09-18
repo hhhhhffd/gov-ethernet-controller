@@ -231,6 +231,11 @@ func (s *Server) aggregateReport(w http.ResponseWriter, r *http.Request) {
 	byDistrict := groupRows(rows, func(row reportRow) string { return row.District })
 	byProvider := groupRows(rows, func(row reportRow) string { return row.ProviderName })
 	periodAvailability := availabilitySummaryForRows(rows)
+	historical, historicalErr := s.historicalPeriodAvailability(r.Context(), r, p, start, end)
+	if historicalErr != nil {
+		writeError(w, 500, "could not calculate historical availability")
+		return
+	}
 	if availability, ok := aggregate["availability"].(map[string]interface{}); ok {
 		availability["valid_count"] = periodAvailability.Valid
 		availability["invalid_count"] = periodAvailability.Invalid
@@ -242,6 +247,13 @@ func (s *Server) aggregateReport(w http.ResponseWriter, r *http.Request) {
 	for key, value := range availabilitySummaryFields(periodAvailability) {
 		response[key] = value
 	}
+	response["availability_pct"] = historical.AvailabilityPct
+	response["availability_threshold"] = historical.Threshold
+	response["availability_status"] = historical.Status
+	response["data_completeness_pct"] = historical.DataCompletenessPct
+	response["observed_duration_minutes"] = historical.ObservedDuration.Minutes()
+	response["unavailable_duration_minutes"] = historical.UnavailableDuration.Minutes()
+	response["no_data_duration_minutes"] = historical.NoDataDuration.Minutes()
 	writeJSON(w, 200, response)
 }
 
@@ -358,7 +370,25 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 			noDataMinutes = 0
 		}
 	}
-	response := map[string]interface{}{"from": start, "to": end, "period_start": start, "period_end": end, "line_id": r.URL.Query().Get("line_id"), "measurements_received": len(rows), "measurements_expected": expected, "data_completeness": complete, "data_completeness_pct": complete, "baseline_compliance": ratio(baselineOK, baselineKnown), "contract_compliance": ratio(contractOK, contractKnown), "incidents": map[string]interface{}{"count": incidentCount, "total_duration_minutes": duration}, "sufficient_data": expected > 0 && float64(len(rows)) >= float64(expected)*.8, "availability_pct": availabilityPct, "availability_threshold": threshold, "availability_status": periodStatus(periodAvailability, complete, threshold), "observed_duration_minutes": observedMinutes, "unavailable_duration_minutes": unavailableMinutes, "no_data_duration_minutes": noDataMinutes}
+	historical, historicalErr := s.historicalPeriodAvailability(r.Context(), r, p, start, end)
+	if historicalErr != nil {
+		writeError(w, 500, "could not calculate historical availability")
+		return
+	}
+	if historical.Threshold != nil {
+		threshold = historical.Threshold
+	}
+	if historical.AvailabilityPct != nil {
+		availabilityPct = historical.AvailabilityPct
+	}
+	availabilityStatus := periodStatus(periodAvailability, complete, threshold)
+	if historical.AvailabilityPct != nil {
+		availabilityStatus = historical.Status
+		observedMinutes = historical.ObservedDuration.Minutes()
+		unavailableMinutes = historical.UnavailableDuration.Minutes()
+		noDataMinutes = historical.NoDataDuration.Minutes()
+	}
+	response := map[string]interface{}{"from": start, "to": end, "period_start": start, "period_end": end, "line_id": r.URL.Query().Get("line_id"), "measurements_received": len(rows), "measurements_expected": expected, "data_completeness": complete, "data_completeness_pct": complete, "baseline_compliance": ratio(baselineOK, baselineKnown), "contract_compliance": ratio(contractOK, contractKnown), "incidents": map[string]interface{}{"count": incidentCount, "total_duration_minutes": duration}, "sufficient_data": expected > 0 && float64(len(rows)) >= float64(expected)*.8, "availability_pct": availabilityPct, "availability_threshold": threshold, "availability_status": availabilityStatus, "observed_duration_minutes": observedMinutes, "unavailable_duration_minutes": unavailableMinutes, "no_data_duration_minutes": noDataMinutes}
 	for key, value := range availabilitySummaryFields(periodAvailability) {
 		response[key] = value
 	}
