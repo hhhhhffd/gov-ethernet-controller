@@ -1,0 +1,14 @@
+{
+	email {$LINKWATCH_TLS_EMAIL}
+}
+
+{$LINKWATCH_PUBLIC_HOST} {
+	reverse_proxy linkwatch-server:8080
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+}

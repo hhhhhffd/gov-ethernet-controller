@@ -92,7 +92,16 @@ Heartbeat агента сохраняет на устройстве текущи
 Локальные параметры находятся в `.env.example`; production-шаблон —
 `.env.prod.example`. Секреты не должны попадать в git. Для production задайте
 `LINKWATCH_ENV=production`, PostgreSQL credentials, bootstrap admin (пароль не
-короче 12 символов), HTTPS CORS origins и webhook transport.
+короче 12 символов), `LINKWATCH_PUBLIC_HOST`, `LINKWATCH_TLS_EMAIL`, HTTPS CORS
+origins и webhook transport.
+
+В production TLS завершается единственным reverse proxy Caddy из
+`deployment/Caddyfile`: внешний клиент → `80/443` → Caddy → внутренняя
+Compose-сеть → `linkwatch-server:8080`. Go listener не публикуется на host;
+Caddy сам выполняет HTTP→HTTPS redirect и хранит ACME-состояние в named volume.
+После DNS/ACME настройки выполните `LINKWATCH_PUBLIC_URL=https://...`
+`./scripts/production-tls-smoke.sh`: он проверяет redirect, certificate
+validation, readiness и отказ unauthenticated protected endpoint.
 
 Агент принимает `LINKWATCH_*`; старые `VKO_*` имена поддерживаются для плавной
 миграции. Приоритет локальной конфигурации: defaults → JSON-файл → environment.
