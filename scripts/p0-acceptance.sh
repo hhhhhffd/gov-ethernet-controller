@@ -53,6 +53,16 @@ if ! curl -fsS --max-time "${P0_ACCEPTANCE_TIMEOUT:-5}" "$base_url/health/ready"
   exit 2
 fi
 
+if [[ "${P0_RUN_LOCAL_SCENARIOS:-1}" == "1" && "$base_url" == http://127.0.0.1:* ]]; then
+  if scripts/p0-local-acceptance.sh; then
+    record_pass "local reproducible P0 scenarios"
+  else
+    record_fail "local reproducible P0 scenarios"
+  fi
+else
+  record_skip "local reproducible P0 scenarios" "set P0_RUN_LOCAL_SCENARIOS=1 against local Compose runtime"
+fi
+
 login_token=""
 login "$admin_login" "$admin_password"
 login_token="$(sed -n 's/.*"token":"\([^"]*\)".*/\1/p' "$last_body")"
@@ -97,14 +107,6 @@ for role in provider-a district school-42; do
   expect_status "$role export scope ($role)" GET "/api/v1/exports/preview?kind=raw&format=csv" 200 "$role_token"
 done
 
-if [[ "${P0_REQUIRE_OFFLINE:-0}" == "1" ]]; then
-  record_skip "offline spool/resend" "run scripts/smoke.sh in the same environment"
-else
-  record_skip "offline spool/resend" "not asserted by read-only HTTP harness; scripts/smoke.sh is authoritative"
-fi
-record_skip "duration/count confirmation" "requires Compose/PostgreSQL ingest fixture"
-record_skip "AI/provider failure" "requires configured failure endpoint or Ollama failure fixture"
-record_skip "active PRIMARY conflict" "requires concurrent PostgreSQL mutation fixture"
 record_skip "Windows service/tray" "requires supported native Windows target"
 record_skip "live TLS/ACME" "requires DNS, public host and ACME email"
 record_skip "live provider delivery" "requires authorized test webhook endpoint and credentials"
