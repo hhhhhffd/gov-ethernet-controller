@@ -79,6 +79,7 @@ pub fn install() -> Result<(), String> {
     // installed image open, so stop/remove it before replacing the binary.
     if current != installed && installed.exists() {
         stop_service("LINKWATCH");
+        stop_installed_process("linkwatch-agent.exe");
         run_sc("delete", "LINKWATCH");
     }
     if current != installed {
@@ -233,6 +234,12 @@ fn stop_service(name: &str) {
         }
         thread::sleep(Duration::from_millis(500));
     }
+}
+
+fn stop_installed_process(image: &str) {
+    // The tray is a separate process but uses the same image as the service.
+    // Kill any old copy before replacing Program Files\LINKWATCH\*.exe.
+    let _ = Command::new("taskkill").args(["/IM", image, "/F"]).status();
 }
 
 fn remove_after_exit(path: &Path) {
