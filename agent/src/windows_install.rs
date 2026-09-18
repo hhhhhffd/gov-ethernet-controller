@@ -75,6 +75,12 @@ pub fn install() -> Result<(), String> {
     let _ = crate::logging::init(&data_root.join("queue"));
     crate::logging::event("Windows installation started");
 
+    // Make repeated launches idempotent: an existing service holds the
+    // installed image open, so stop/remove it before replacing the binary.
+    if current != installed && installed.exists() {
+        stop_service("LINKWATCH");
+        run_sc("delete", "LINKWATCH");
+    }
     if current != installed {
         fs::copy(&current, &installed)
             .map_err(|error| format!("copy agent into Program Files: {error}"))?;
