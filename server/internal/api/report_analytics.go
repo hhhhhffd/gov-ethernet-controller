@@ -169,6 +169,11 @@ func (s *Server) reportAnalytics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusRequestEntityTooLarge, "analytics period exceeds maximum observations; narrow the period or filters")
 		return
 	}
+	previousRows, previousErr := s.reportRows(r, p, start.Add(-end.Sub(start)), start)
+	if previousErr != nil {
+		writeError(w, http.StatusInternalServerError, "could not query comparison period")
+		return
+	}
 	limit := 50
 	if value := r.URL.Query().Get("limit"); value != "" {
 		if parsed, parseErr := strconv.Atoi(value); parseErr == nil {
@@ -177,6 +182,17 @@ func (s *Server) reportAnalytics(w http.ResponseWriter, r *http.Request) {
 	}
 	result := analyticsRows(rows, limit)
 	result["from"], result["to"] = start, end
+	currentValid, previousValid := countValid(rows), countValid(previousRows)
+	comparison := map[string]interface{}{"historical_only": true, "current_state_used": false, "current": map[string]interface{}{"measurements": len(rows), "valid_evidence": currentValid, "status": analyticsState(len(rows), currentValid)}, "previous": map[string]interface{}{"measurements": len(previousRows), "valid_evidence": previousValid, "status": analyticsState(len(previousRows), previousValid)}}
+	if len(rows) == 0 || len(previousRows) == 0 {
+		comparison["status"] = "NO_DATA"
+		comparison["unknown_reason"] = "both periods require stored observations"
+	} else {
+		comparison["status"] = "AVAILABLE"
+		comparison["valid_evidence_delta"] = currentValid - previousValid
+		comparison["measurement_delta"] = len(rows) - len(previousRows)
+	}
+	result["comparison"] = comparison
 	if r.URL.Query().Get("format") == "csv" {
 		var output bytes.Buffer
 		writer := csv.NewWriter(&output)
