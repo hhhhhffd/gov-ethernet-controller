@@ -47,5 +47,5 @@ the required escalated runtime permission.
 ## Not claimed
 
 Native Windows, public TLS/ACME, and authorized external provider delivery
-remain external acceptance gates. API/static checks above do not substitute for
-those browser or integration journeys.
+remain external acceptance gates. The authenticated browser journeys above are
+real local-runtime evidence and do not claim those separate deployment gates.

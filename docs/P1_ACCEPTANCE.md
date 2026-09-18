@@ -25,6 +25,6 @@ failure); set `P1_ACCEPTANCE_BASE_URL` to a healthy deployed/compose runtime
 to run that section. Exit `1` means an executed check failed.
 
 The gate does not mutate fixtures, recompute historical verdicts, or add a
-parallel truth/configuration model. It is the P1 release evidence required
-before starting P2 implementation; P2 release itself still requires TASK-041
-acceptance.
+parallel truth/configuration model. It records P1 regression evidence; P2
+implementation and acceptance may proceed independently, while P2 release
+still requires TASK-041 acceptance.

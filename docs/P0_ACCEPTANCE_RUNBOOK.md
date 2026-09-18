@@ -75,6 +75,7 @@ The following commands were executed in the current environment:
 - `scripts/p0-acceptance.sh` — **PASS**, 32 API/local checks, 0 failures, 3
   external skips; exits 2 because the remaining Windows scenarios, public
   TLS/ACME, and live provider evidence are not complete.
+- `PLAYWRIGHT_MODULE=/usr/lib/node_modules/playwright/index.mjs BROWSER_E2E_BASE_URL=http://127.0.0.1:8080 node scripts/browser-e2e.mjs` — **PASS**, authenticated admin/provider journeys and mobile shell check.
 
 ## External evidence still required
 
@@ -87,9 +88,6 @@ P0 cannot be declared accepted until the following artifacts are attached:
 2. TASK-017 public DNS/ACME run using `scripts/production-tls-smoke.sh`.
 3. TASK-019 authorized provider test endpoint run, including retry and
    permanent failure output.
-4. Native/browser visual evidence beyond the static browser shell check, if the
-   release gate requires a headed Playwright capture.
-
 These external gates remain required for declaring the P0 release fully
 accepted, but this historical run record does not block subsequent P1/P2
 implementation or acceptance work. P1/P2 acceptance records must continue to
