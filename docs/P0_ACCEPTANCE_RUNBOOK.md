@@ -58,7 +58,7 @@ node --check web/app.js
 | Role×Scope | API gate users `admin`, `provider-a`, `district`, `school-42` | list/read/mutation/export/notification/admin isolation |
 | 401/403/404/409 | API gate plus stale/concurrent mutation fixture | exact status contracts and canonical refresh |
 | Worker regression | Compose restart/retry run | durable outbox/freshness/situation behavior |
-| Windows P0-A01/I08 | authoritative TASK-018 native Windows report | **Verified:** Windows SCM/runtime startup and local offline queue behavior. **Not verified:** admin/elevated setup, reboot recovery, tray UX, authenticated resend against a live server, and reinstall matrix |
+| Windows P0-A01/I08 | authoritative TASK-018 native Windows report | **Verified:** Windows SCM/runtime startup, service recovery, performance probe, local offline queue and resend against the healthy local server; config/token/queue preservation was checked. **Not verified:** reboot recovery (user prohibited reboot), clean install/uninstall/purge (preserved existing installation), tray UX/diagnostics (named-pipe client did not produce an authoritative response), and successful execution of the fixed reinstall artifact (Windows artifact was not rebuilt/deployed because the local cross-build toolchain lacks MinGW) |
 | TLS P0-I04 | `scripts/production-tls-smoke.sh` | real DNS/ACME redirect/certificate/protected endpoint |
 | Provider P0-I09 | configured authorized test webhook | auth/signing/retry/idempotency/external reference/failure visibility |
 
@@ -81,10 +81,15 @@ The following commands were executed in the current environment:
 
 P0 cannot be declared accepted until the following artifacts are attached:
 
-1. TASK-018 follow-up evidence for Windows admin/elevated setup, reboot
-   recovery, tray UX, authenticated resend against the server, and reinstall;
-   the authoritative report already verifies SCM/runtime startup and local
-   offline queue behavior.
+1. TASK-018 follow-up evidence still required for reboot recovery, clean
+   install/uninstall/purge, tray UX/diagnostics, and successful reinstall using
+   the fixed Windows artifact. The native target run verified Administrator/
+   SCM access, service recovery, performance probe, authenticated local
+   offline resend, and preservation of config/token/queue. Reboot was not run
+   by explicit user instruction; clean uninstall/purge was not run to preserve
+   the existing installation; the fixed artifact was not deployed because the
+   local cross-build toolchain lacks MinGW. No Cloudflare tunnel or public TLS
+   endpoint was tested.
 2. TASK-017 public DNS/ACME run using `scripts/production-tls-smoke.sh`.
 3. TASK-019 authorized provider test endpoint run, including retry and
    permanent failure output.
