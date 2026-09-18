@@ -61,7 +61,7 @@
     const dataState = raw.data_state || lineState.data_state || "FRESH";
     const connectionState = dataState === "NO_DATA" ? "NO_DATA" : (lineState.connection_state || raw.connection_state || (raw.status && !["ACTIVE", "INACTIVE", "RESERVE", "PRIMARY"].includes(String(raw.status).toUpperCase()) ? raw.status : null) || "UNKNOWN");
     const role = raw.role_label || raw.line_role || ({ PRIMARY: "Основная", RESERVE: "Резервная", INACTIVE: "Неактивная" }[String(raw.role || "").toUpperCase()] || raw.role || "Основная");
-    return { ...raw, id: raw.id || raw.line_id || `L-${raw.pk}`, school_id: raw.school_id || school.id || "—", school_name: raw.school_name || school.name || raw.organization_name || "Без названия", district: raw.district || school.district || "—", provider: typeof provider === "string" ? provider : raw.provider_name || provider.name || "—", technology: raw.technology || raw.connection_type || "—", role, status: connectionState, line_status: raw.line_status || raw.status || "ACTIVE", quality_state: raw.quality_state || lineState.connection_state || raw.connection_state || connectionState, contract_state: raw.contract_state || lineState.contract_state || "UNKNOWN", data_state: dataState, latest: { download: latest.download ?? latest.download_mbps, upload: latest.upload ?? latest.upload_mbps, ping: latest.ping ?? latest.ping_ms, jitter: latest.jitter ?? latest.jitter_ms, loss: latest.loss ?? latest.packet_loss ?? latest.packet_loss_pct, at: latest.at || latest.observed_at || latest.timestamp }, contract: raw.contract || raw.contract_version || { download: raw.contract_download ?? raw.promised_download, upload: raw.contract_upload ?? raw.promised_upload }, coordinates: coords, reason: raw.reason || lineState.reason || "Состояние рассчитано по последним наблюдениям" };
+    return { ...raw, id: raw.id || raw.line_id || `L-${raw.pk}`, organization_id: raw.organization_id || school.organization_id || school.id || "—", school_id: raw.school_id || school.id || "—", school_name: raw.school_name || school.name || raw.organization_name || "Без названия", district: raw.district || school.district || "—", provider_id: raw.provider_id || provider.id || "—", provider: typeof provider === "string" ? provider : raw.provider_name || provider.name || "—", technology: raw.technology || raw.connection_type || "—", role, status: connectionState, line_status: raw.line_status || raw.status || "ACTIVE", quality_state: raw.quality_state || lineState.connection_state || raw.connection_state || connectionState, contract_state: raw.contract_state || lineState.contract_state || "UNKNOWN", data_state: dataState, latest: { download: latest.download ?? latest.download_mbps, upload: latest.upload ?? latest.upload_mbps, ping: latest.ping ?? latest.ping_ms, jitter: latest.jitter ?? latest.jitter_ms, loss: latest.loss ?? latest.packet_loss ?? latest.packet_loss_pct, at: latest.at || latest.observed_at || latest.timestamp }, contract: raw.contract || raw.contract_version || { download: raw.contract_download ?? raw.promised_download, upload: raw.contract_upload ?? raw.promised_upload }, coordinates: coords, reason: raw.reason || lineState.reason || "Состояние рассчитано по последним наблюдениям" };
   }
 
   async function api(path, options = {}) {
@@ -113,6 +113,7 @@
       state.usingDemoData = false;
       hideLogin();
       updateUser();
+      await loadUserProfile();
       return true;
     } catch (error) {
       state.usingDemoData = state.demoMode;
@@ -122,7 +123,30 @@
       return false;
     }
   }
-  function updateUser() { if (!state.user) return; $("#userName").textContent = state.user.name || state.user.full_name || "Айдана К."; $("#userRole").textContent = state.user.role_label || state.user.role || "Областной уровень"; }
+  function updateUser() { if (!state.user) return; $("#userName").textContent = state.user.name || state.user.full_name || state.user.username || "Айдана К."; $("#userRole").textContent = state.user.role_label || state.user.role || "Областной уровень"; applyCapabilities(); }
+  function role() { return String(state.user?.role || "").toUpperCase(); }
+  function demoCapabilities() { return state.usingDemoData && !state.user; }
+  function scopeEntries() { return Array.isArray(state.user?.scopes) ? state.user.scopes : []; }
+  function lineInScope(line) {
+    if (demoCapabilities() || ["ADMIN", "OBLAST"].includes(role())) return true;
+    return scopeEntries().some((scope) => {
+      const type = String(scope.scope_type || scope.type || "").toUpperCase();
+      const id = String(scope.scope_id || scope.id || "");
+      return (type === "LINE" && id === String(line.id)) || (type === "ORGANIZATION" && [line.organization_id, line.school_id].map(String).includes(id)) || (type === "DISTRICT" && role() === "DISTRICT" && id === String(line.district)) || (type === "PROVIDER" && role() === "PROVIDER" && id === String(line.provider_id || line.provider));
+    });
+  }
+  function canAdmin() { return demoCapabilities() || role() === "ADMIN"; }
+  function canSendProvider(line) { return (demoCapabilities() || ["ADMIN", "OBLAST", "DISTRICT", "PROVIDER"].includes(role())) && (!line || lineInScope(line)); }
+  function applyCapabilities() {
+    const admin = $("[data-view='admin']"); if (admin) admin.hidden = !canAdmin();
+    const replay = $("#demoButton"); if (replay) replay.hidden = !canAdmin();
+    const manual = $("#manualIncidentButton"); if (manual) manual.hidden = !state.user && !demoCapabilities();
+    $$("[data-provider-action]").forEach((button) => { button.hidden = !canSendProvider(button._line || null); });
+  }
+  async function loadUserProfile() {
+    if (!state.token) return;
+    try { const response = await apiTry(["/api/auth/me", "/api/v1/auth/me", "/api/me", "/api/v1/me"]); state.user = response.user || response; updateUser(); } catch (_) { /* login user shape is still enough for the coarse gate */ }
+  }
 
   async function loadData() {
     let lines, incidents, situations, overview, audit;
@@ -152,6 +176,7 @@
       $("#noticeText").textContent = state.demoMode ? "Показаны учебные данные. Не используйте их для операционных решений или официальной выгрузки." : "Текущая картина и официальные выгрузки недоступны. Проверьте соединение и повторите обновление.";
     }
     populateFilters();
+    applyCapabilities();
     renderAll();
     $("#lastSync").textContent = time(new Date().toISOString());
   }
@@ -226,7 +251,7 @@
   }
   function renderIncidents() {
     const root = $("#incidentBoard"); if (!state.incidents.length) { root.innerHTML = `<div class="table-empty">Инцидентов нет</div>`; return; }
-    root.innerHTML = state.incidents.map((incident) => { const closed = String(incident.status).toUpperCase() === "CLOSED"; return `<article class="incident-card ${statusClass(incident.severity)}"><div class="incident-top"><span class="incident-number">${escapeHtml(incident.number || incident.id)} · ${escapeHtml(incident.source === "MANUAL" ? "создан вручную" : "автоматически")}</span><span class="status-badge ${closed ? "healthy" : statusClass(incident.severity)}"><i></i>${escapeHtml(incidentStatusLabel(incident.status))}</span></div><h3>${escapeHtml(incident.title || incident.description || "Инцидент на линии")}</h3><p>${escapeHtml(incident.school_name)} · ${escapeHtml(incident.provider)} · ${escapeHtml(incident.description || "")}</p><div class="incident-meta"><span class="axis-chip">Начало ${escapeHtml(time(incident.started_at || incident.start_time))}</span><span class="axis-chip">${incident.duration_minutes ? `Длительность ${number(incident.duration_minutes, " мин")}` : "В работе"}</span></div><div class="incident-action"><button class="button button-quiet" data-incident-id="${escapeHtml(incident.id)}" data-incident-action="open">Открыть timeline</button>${closed ? "" : `<button class="button button-primary" data-incident-id="${escapeHtml(incident.id)}" data-incident-action="draft">Обращение →</button>`}</div></article>`; }).join("");
+    root.innerHTML = state.incidents.map((incident) => { const closed = String(incident.status).toUpperCase() === "CLOSED"; const line = state.lines.find((item) => item.id === incident.line_id); const providerAction = !closed && canSendProvider(line) ? `<button class="button button-primary" data-incident-id="${escapeHtml(incident.id)}" data-incident-action="draft">Обращение →</button>` : ""; return `<article class="incident-card ${statusClass(incident.severity)}"><div class="incident-top"><span class="incident-number">${escapeHtml(incident.number || incident.id)} · ${escapeHtml(incident.source === "MANUAL" ? "создан вручную" : "автоматически")}</span><span class="status-badge ${closed ? "healthy" : statusClass(incident.severity)}"><i></i>${escapeHtml(incidentStatusLabel(incident.status))}</span></div><h3>${escapeHtml(incident.title || incident.description || "Инцидент на линии")}</h3><p>${escapeHtml(incident.school_name)} · ${escapeHtml(incident.provider)} · ${escapeHtml(incident.description || "")}</p><div class="incident-meta"><span class="axis-chip">Начало ${escapeHtml(time(incident.started_at || incident.start_time))}</span><span class="axis-chip">${incident.duration_minutes ? `Длительность ${number(incident.duration_minutes, " мин")}` : "В работе"}</span></div><div class="incident-action"><button class="button button-quiet" data-incident-id="${escapeHtml(incident.id)}" data-incident-action="open">Открыть timeline</button>${providerAction}</div></article>`; }).join("");
     $$("[data-incident-action]", root).forEach((button) => button.addEventListener("click", () => { const incident = state.incidents.find((item) => item.id === button.dataset.incidentId); if (!incident) return; if (button.dataset.incidentAction === "draft") openCaseModal(incident); else { const line = state.lines.find((item) => item.id === incident.line_id); if (line) openLine(line.id); else toast("Timeline инцидента доступна в API", "warn"); } }));
   }
   function incidentStatusLabel(status) { return ({ NEW: "Новый", SENT_TO_PROVIDER: "Передан провайдеру", IN_PROGRESS: "В работе", WAITING_INFO: "Ожидает информации", RESOLVED: "Устранён · проверка", CLOSED: "Закрыт" }[String(status || "").toUpperCase()] || status || "Новый"); }
@@ -252,14 +277,18 @@
     const related = state.incidents.filter((incident) => incident.line_id === detail.id); const events = related.flatMap((incident) => (incident.actions || []).map((item) => ({ at: item.at, text: item.text }))).slice(-4); if (!events.length) events.push({ at: m.at, text: "Последнее наблюдение получено" }, { at: new Date(new Date(m.at || Date.now()).getTime() - 3600000).toISOString(), text: "Состояние рассчитано по серии observations" });
     $("#drawerTimeline").innerHTML = events.map((item) => `<div class="timeline-row"><time>${time(item.at)}</time><span class="timeline-dot"></span><p><b>${escapeHtml(item.text)}</b></p></div>`).join("");
     $("#drawerBackdrop").classList.remove("hidden"); $("#detailDrawer").classList.add("open"); $("#detailDrawer").setAttribute("aria-hidden", "false");
-    $("#drawerIncident").onclick = () => createManualIncident(detail);
-    $("#drawerProvider").onclick = () => { const incident = related.find((item) => item.status !== "CLOSED") || related[0] || { line_id: detail.id, school_name: detail.school_name, provider: detail.provider, description: detail.reason, status: "NEW" }; openCaseModal(incident); };
+    $("#drawerIncident").hidden = !state.user && !demoCapabilities();
+    $("#drawerProvider").hidden = !canSendProvider(detail);
+    $("#drawerIncident").onclick = () => { if (state.user || demoCapabilities()) createManualIncident(detail); };
+    $("#drawerProvider").onclick = () => { if (!canSendProvider(detail)) return; const incident = related.find((item) => item.status !== "CLOSED") || related[0] || { line_id: detail.id, school_name: detail.school_name, provider: detail.provider, description: detail.reason, status: "NEW" }; openCaseModal(incident); };
   }
   function closeDrawer() { $("#detailDrawer").classList.remove("open"); $("#detailDrawer").setAttribute("aria-hidden", "true"); $("#drawerBackdrop").classList.add("hidden"); }
   async function createManualIncident(line) {
     try { const response = await apiTry(["/api/incidents", "/api/v1/incidents"], { method: "POST", body: JSON.stringify({ line_id: line.id, description: "Инцидент создан оператором для проверки состояния линии", source: "MANUAL" }) }); const incident = response.data || response; state.incidents.unshift({ ...incident, line_id: line.id, school_name: line.school_name, provider: line.provider, status: incident.status || "NEW", source: "MANUAL" }); toast("Инцидент создан и добавлен в timeline"); renderIncidents(); } catch (_) { if (!state.usingDemoData) { toast("Сервер создания инцидента недоступен — объект не создан", "warn"); return; } state.incidents.unshift({ id: `MAN-${Date.now()}`, number: "MAN-NEW", line_id: line.id, school_name: line.school_name, provider: line.provider, status: "NEW", source: "MANUAL", title: "Ручной инцидент", description: "Создан оператором для проверки состояния линии", started_at: new Date().toISOString() }); toast("Инцидент добавлен только в демонстрационный журнал", "warn"); renderIncidents(); }
   }
   async function openCaseModal(incident) {
+    const line = state.lines.find((item) => item.id === incident.line_id);
+    if (!canSendProvider(line)) return;
     state.currentIncident = incident; $("#caseModalBackdrop").classList.remove("hidden"); $("#reviewConfirm").checked = false; $("#caseSend").disabled = true; $("#draftText").value = "Формируем черновик на основании подтверждённых фактов…";
     $("#caseFacts").innerHTML = [["Инцидент", incident.number || incident.id], ["Школа", incident.school_name], ["Линия", incident.line_id], ["Провайдер", incident.provider]].map(([label, value]) => `<div class="case-fact"><span>${label}</span><b>${escapeHtml(value || "—")}</b></div>`).join("");
     try { const response = await apiTry([`/api/incidents/${encodeURIComponent(incident.id)}/provider-case/draft`, `/api/v1/incidents/${encodeURIComponent(incident.id)}/provider-case/draft`], { method: "POST", body: JSON.stringify({}) }); state.currentCaseId = response.id || response.case_id || response.data?.id || null; const draft = response.draft || response.draft_text || response.text || response.message || response.data?.draft || response.data?.draft_text; $("#draftText").value = draft || templateDraft(incident); } catch (_) { state.currentCaseId = null; $("#draftText").value = state.usingDemoData ? templateDraft(incident) : "Серверный черновик недоступен. Обновите данные и повторите попытку."; $("#caseSend").disabled = true; toast(state.usingDemoData ? "Серверный черновик недоступен — показан локальный шаблон" : "Серверный черновик недоступен — отправка заблокирована", "warn"); }
@@ -286,6 +315,7 @@
   async function loadPassport() { if (!validCustomPeriod()) return; const query = currentReportParams(); try { const payload = await apiTry([`/api/reports/quality-passport?${query}`, `/api/v1/reports/quality-passport?${query}`]); const data = payload.data || payload; renderPassport({ baseline_rate: data.baseline_compliance, contract_rate: data.contract_compliance, received: data.measurements_received, expected: data.measurements_expected, incident_count: data.incidents?.count, problem_minutes: data.incidents?.total_duration_minutes, completeness: data.data_completeness, sufficient_data: data.sufficient_data }); } catch (_) { renderPassport(state.usingDemoData ? {} : { sufficient_data: false }); if (!state.usingDemoData) toast("Паспорт качества недоступен — серверный отчёт не получен", "warn"); } }
 
   function showView(view) {
+    if (view === "admin" && !canAdmin()) return;
     const isOverview = view === "overview" || view === "lines";
     ["incidents", "reports", "admin"].forEach((name) => { const element = $(`#${name}View`); if (element) element.classList.toggle("hidden", view !== name); });
     $("#linesSection").classList.toggle("hidden", !isOverview);
@@ -311,6 +341,6 @@
     const loginForm = $("#loginForm"); if (loginForm) loginForm.addEventListener("submit", async (event) => { event.preventDefault(); const submit = $("#loginSubmit"); submit.disabled = true; try { await login(false, { username: $("#loginUsername").value.trim(), password: $("#loginPassword").value }); if (state.apiOnline) { await loadData(); await loadPassport(); } } finally { submit.disabled = false; } });
     ["mapZoomIn", "mapZoomOut", "mapReset"].forEach((id) => { const button = $(`#${id}`); if (button) button.addEventListener("click", () => { const svg = $(".vko-map"); const current = Number(svg.dataset.zoom || 1); const next = id === "mapZoomIn" ? Math.min(1.45, current + .1) : id === "mapZoomOut" ? Math.max(.8, current - .1) : 1; svg.dataset.zoom = next; svg.style.transform = `scale(${next})`; }); });
   }
-  async function boot() { bindEvents(); if (!state.token && !state.demoMode) showLogin(); await loadData(); await loadPassport(); }
+  async function boot() { bindEvents(); if (state.token) await loadUserProfile(); if (!state.token && !state.demoMode) showLogin(); applyCapabilities(); await loadData(); await loadPassport(); }
   document.addEventListener("DOMContentLoaded", boot);
 })();
