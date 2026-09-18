@@ -68,6 +68,14 @@ func (s *Server) reportRows(r *http.Request, p *auth.Principal, start, end time.
 	}
 	add("district", "o.district")
 	add("device_id", "m.device_id")
+	if deviceIDs := reportDeviceIDs(r.URL.Query()); len(deviceIDs) > 0 {
+		placeholders := make([]string, len(deviceIDs))
+		for i, deviceID := range deviceIDs {
+			params = append(params, deviceID)
+			placeholders[i] = "$" + itoa(len(params)+2)
+		}
+		filters = append(filters, "m.device_id IN ("+strings.Join(placeholders, ",")+")")
+	}
 	add("role", "l.role")
 	add("technology", "l.technology")
 	add("organization_id", "l.organization_id")
@@ -104,6 +112,70 @@ func (s *Server) reportRows(r *http.Request, p *auth.Principal, start, end time.
 		result = append(result, item)
 	}
 	return result, rows.Err()
+}
+
+// reportDeviceIDs accepts the repeated device_ids[] contract and the comma-separated
+// device_ids variant used by some clients; the scalar device_id remains supported.
+func reportDeviceIDs(query map[string][]string) []string {
+	seen := map[string]bool{}
+	result := []string{}
+	for _, key := range []string{"device_ids[]", "device_ids"} {
+		for _, value := range query[key] {
+			for _, item := range strings.Split(value, ",") {
+				item = strings.TrimSpace(item)
+				if item != "" && !seen[item] {
+					seen[item] = true
+					result = append(result, item)
+				}
+			}
+		}
+	}
+	return result
+}
+
+var rawExportFields = []string{"observed_at", "received_at", "line_id", "school_id", "organization_name", "district", "provider", "device_id", "mode", "connection_status", "download", "upload", "ping", "jitter", "packet_loss", "availability", "baseline_state", "contract_state", "reason"}
+
+var aggregateExportFields = []string{"line_id", "measurement_count", "average_download", "min_download", "max_download", "average_upload", "average_ping", "average_availability", "problem_measurement_count", "problem_measurement_percent"}
+
+func selectedExportFields(query map[string][]string, kind string) ([]string, error) {
+	allowed := rawExportFields
+	if kind == "aggregate" {
+		allowed = aggregateExportFields
+	}
+	requested := append([]string{}, query["fields[]"]...)
+	requested = append(requested, query["fields"]...)
+	if len(requested) == 0 {
+		return append([]string{}, allowed...), nil
+	}
+	valid := map[string]bool{}
+	for _, field := range allowed {
+		valid[field] = true
+	}
+	result := []string{}
+	seen := map[string]bool{}
+	for _, field := range requested {
+		field = strings.TrimSpace(field)
+		if field == "" || !valid[field] {
+			return nil, fmt.Errorf("unsupported export field %q", field)
+		}
+		if !seen[field] {
+			seen[field] = true
+			result = append(result, field)
+		}
+	}
+	if len(result) == 0 {
+		return nil, fmt.Errorf("fields must not be empty")
+	}
+	return result, nil
+}
+
+// reportProblemPercent uses observations, rather than non-null metric cells, as
+// its denominator so partial measurements cannot make the rate look worse/better.
+func reportProblemPercent(problem, measurements int) float64 {
+	if measurements == 0 {
+		return 0
+	}
+	return float64(problem) / float64(measurements) * 100
 }
 
 func (s *Server) aggregateReport(w http.ResponseWriter, r *http.Request) {
@@ -372,20 +444,22 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	if r.Method == http.MethodPost && r.Body != nil {
 		var payload struct {
-			Kind           string `json:"kind"`
-			Type           string `json:"type"`
-			Format         string `json:"format"`
-			Period         string `json:"period"`
-			LineID         string `json:"line_id"`
-			District       string `json:"district"`
-			Provider       string `json:"provider"`
-			DeviceID       string `json:"device_id"`
-			Status         string `json:"status"`
-			Role           string `json:"role"`
-			Technology     string `json:"technology"`
-			OrganizationID string `json:"organization_id"`
-			From           string `json:"from"`
-			To             string `json:"to"`
+			Kind           string   `json:"kind"`
+			Type           string   `json:"type"`
+			Format         string   `json:"format"`
+			Period         string   `json:"period"`
+			LineID         string   `json:"line_id"`
+			District       string   `json:"district"`
+			Provider       string   `json:"provider"`
+			DeviceID       string   `json:"device_id"`
+			Status         string   `json:"status"`
+			Role           string   `json:"role"`
+			Technology     string   `json:"technology"`
+			OrganizationID string   `json:"organization_id"`
+			DeviceIDs      []string `json:"device_ids"`
+			Fields         []string `json:"fields"`
+			From           string   `json:"from"`
+			To             string   `json:"to"`
 		}
 		if err := decodeJSON(r, &payload); err != nil && err != io.EOF {
 			writeError(w, 422, "invalid export payload")
@@ -405,6 +479,12 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		setIfMissing("district", payload.District)
 		setIfMissing("provider", payload.Provider)
 		setIfMissing("device_id", payload.DeviceID)
+		for _, deviceID := range payload.DeviceIDs {
+			query.Add("device_ids[]", deviceID)
+		}
+		for _, field := range payload.Fields {
+			query.Add("fields[]", field)
+		}
 		setIfMissing("status", payload.Status)
 		setIfMissing("role", payload.Role)
 		setIfMissing("technology", payload.Technology)
@@ -439,10 +519,14 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 422, "format must be csv or xlsx")
 		return
 	}
-	headers := []string{"observed_at", "received_at", "line_id", "school_id", "organization_name", "district", "provider", "device_id", "mode", "connection_status", "download", "upload", "ping", "jitter", "packet_loss", "availability", "baseline_state", "contract_state", "reason"}
+	fields, err := selectedExportFields(query, kind)
+	if err != nil {
+		writeError(w, 422, err.Error())
+		return
+	}
+	headers := append([]string{}, fields...)
 	data := [][]interface{}{}
 	if kind == "aggregate" {
-		headers = []string{"line_id", "measurement_count", "average_download", "min_download", "max_download", "average_upload", "average_ping", "average_availability", "problem_measurement_count"}
 		groups := map[string][]reportRow{}
 		for _, row := range rows {
 			groups[row.LineID] = append(groups[row.LineID], row)
@@ -495,11 +579,22 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 					bad++
 				}
 			}
-			data = append(data, []interface{}{lineID, len(items), average(func(item reportRow) *float64 { return item.Download }), min(func(item reportRow) *float64 { return item.Download }), max(func(item reportRow) *float64 { return item.Download }), average(func(item reportRow) *float64 { return item.Upload }), average(func(item reportRow) *float64 { return item.Ping }), average(func(item reportRow) *float64 { return item.Availability }), bad})
+			problemPercent := reportProblemPercent(bad, len(items))
+			values := map[string]interface{}{"line_id": lineID, "measurement_count": len(items), "average_download": average(func(item reportRow) *float64 { return item.Download }), "min_download": min(func(item reportRow) *float64 { return item.Download }), "max_download": max(func(item reportRow) *float64 { return item.Download }), "average_upload": average(func(item reportRow) *float64 { return item.Upload }), "average_ping": average(func(item reportRow) *float64 { return item.Ping }), "average_availability": average(func(item reportRow) *float64 { return item.Availability }), "problem_measurement_count": bad, "problem_measurement_percent": problemPercent}
+			row := make([]interface{}, len(fields))
+			for i, field := range fields {
+				row[i] = values[field]
+			}
+			data = append(data, row)
 		}
 	} else {
 		for _, row := range rows {
-			data = append(data, []interface{}{row.ObservedAt, row.ReceivedAt, row.LineID, row.SchoolID, row.OrganizationName, row.District, row.ProviderName, row.DeviceID, row.Mode, row.ConnectionStatus, row.Download, row.Upload, row.Ping, row.Jitter, row.PacketLoss, row.Availability, row.BaselineState, row.ContractState, row.Reason})
+			values := map[string]interface{}{"observed_at": row.ObservedAt, "received_at": row.ReceivedAt, "line_id": row.LineID, "school_id": row.SchoolID, "organization_name": row.OrganizationName, "district": row.District, "provider": row.ProviderName, "device_id": row.DeviceID, "mode": row.Mode, "connection_status": row.ConnectionStatus, "download": row.Download, "upload": row.Upload, "ping": row.Ping, "jitter": row.Jitter, "packet_loss": row.PacketLoss, "availability": row.Availability, "baseline_state": row.BaselineState, "contract_state": row.ContractState, "reason": row.Reason}
+			item := make([]interface{}, len(fields))
+			for i, field := range fields {
+				item[i] = values[field]
+			}
+			data = append(data, item)
 		}
 	}
 	if format == "xlsx" {
