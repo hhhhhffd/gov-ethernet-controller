@@ -127,8 +127,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.incidentRoute(w, r, strings.TrimPrefix(normalized, "/incidents/"))
 	case normalized == "/situations" && r.Method == http.MethodGet:
 		s.listSituations(w, r)
-	case strings.HasPrefix(normalized, "/situations/") && r.Method == http.MethodGet:
-		s.situationDetail(w, r, strings.TrimPrefix(normalized, "/situations/"))
+	case strings.HasPrefix(normalized, "/situations/") && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		s.situationRoute(w, r, strings.TrimPrefix(normalized, "/situations/"))
 	case normalized == "/reports/aggregate" && r.Method == http.MethodGet:
 		s.aggregateReport(w, r)
 	case normalized == "/reports/quality-passport" && r.Method == http.MethodGet:

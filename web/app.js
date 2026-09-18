@@ -415,7 +415,22 @@
       const detail = response.data || response; const incidents = Array.isArray(detail.incidents) ? detail.incidents : [];
       $("#drawerTitle").textContent = detail.title || "Связанная ситуация";
       $("#drawerSubtitle").textContent = `${detail.status || "OPEN"} · ${detail.affected_count || incidents.length} доступных участников · только чтение`;
-      $("#drawerStatus").innerHTML = `<span class="status-badge ${statusClass(detail.status)}"><i></i>${escapeHtml(detail.status || "OPEN")}</span><p>Это корреляционная группировка, а не вывод о единой причине.</p>`;
+      const situationActions = detail.actions || {};
+      const actionButtons = situationActions.merge || situationActions.split ? `<div class="incident-action">${situationActions.merge ? `<button class="button button-quiet" data-situation-action="merge">Объединить</button>` : ""}${situationActions.split ? `<button class="button button-quiet" data-situation-action="split">Разделить</button>` : ""}</div>` : "";
+      $("#drawerStatus").innerHTML = `<span class="status-badge ${statusClass(detail.status)}"><i></i>${escapeHtml(detail.status || "OPEN")}</span><p>Это корреляционная группировка, а не вывод о единой причине.</p>${actionButtons}<button type="button" class="button button-secondary" id="liveVerifyButton">Проверить выбранные устройства сейчас</button><div id="liveVerifyStatus" class="table-empty">LIVE_VERIFY: готово к запросу</div>`;
+      const liveVerifyButton = $("#liveVerifyButton");
+      liveVerifyButton.onclick = async () => {
+        liveVerifyButton.disabled = true;
+        $("#liveVerifyStatus").textContent = "LIVE_VERIFY: отправляем bounded sample…";
+        try {
+          const result = await apiTry([`/api/situations/${encodeURIComponent(id)}/live-verify`, `/api/v1/situations/${encodeURIComponent(id)}/live-verify`], { method: "POST" });
+          $("#liveVerifyStatus").textContent = `LIVE_VERIFY: ${result.status || result.data?.status || "REQUESTED"} · устройств ${result.sample_size || result.data?.sample_size || 0}. Результат остаётся обычным measurement evidence; причинность не установлена.`;
+        } catch (error) {
+          liveVerifyButton.disabled = false;
+          $("#liveVerifyStatus").textContent = error.status === 403 ? "LIVE_VERIFY: действие запрещено текущим scope" : "LIVE_VERIFY: запрос не выполнен; повторите позже";
+        }
+      };
+      $$('[data-situation-action]', drawer).forEach((button) => button.addEventListener("click", () => performSituationAction(detail, button.dataset.situationAction)));
       const factors = detail.factors || detail.reason || {};
       $("#drawerAxes").innerHTML = [["Провайдер", factors.provider_id || detail.provider_id], ["Район", factors.district || detail.district], ["Тип нарушения", factors.violation_type || detail.violation_type], ["Начало окна", time(detail.start_at, true)]].map(([label, value]) => `<div class="axis-card"><span>${label}</span><b>${escapeHtml(value || "UNKNOWN")}</b><small>Фактор группировки</small></div>`).join("");
       $("#drawerVerdict").textContent = "Группировка построена существующим materialization worker по сохранённым факторам; она не доказывает общую первопричину.";
@@ -427,6 +442,25 @@
     } catch (error) {
       $("#drawerTitle").textContent = "Ситуация недоступна"; $("#drawerSubtitle").textContent = "Ошибка чтения canonical projection";
       $("#drawerStatus").innerHTML = `<p role="alert">Не удалось загрузить детали. Повторите попытку.</p>`; $("#drawerAxes").innerHTML = ""; $("#drawerTimeline").innerHTML = `<div class="table-empty">Данные недоступны.</div>`;
+    }
+  }
+  async function performSituationAction(situation, action) {
+    const reason = window.prompt(`Причина действия ${action} (аудируется, причинность не устанавливается):`, "Ручная корректировка корреляционной группировки") || "";
+    if (!reason.trim()) return;
+    let body = { reason };
+    if (action === "split") {
+      const selected = window.prompt("ID incident для новой группы через запятую:", (situation.incident_ids || []).slice(0, 1).join(",")) || "";
+      body.incident_ids = selected.split(",").map((value) => Number(value.trim())).filter((value) => Number.isInteger(value) && value > 0);
+    } else {
+      body.situation_ids = [Number(situation.id)];
+    }
+    try {
+      await apiTry([`/api/situations/${encodeURIComponent(situation.id)}/${action}`, `/api/v1/situations/${encodeURIComponent(situation.id)}/${action}`], { method: "POST", headers: { "Idempotency-Key": `situation-${situation.id}-${action}-${Date.now()}` }, body: JSON.stringify(body) });
+      toast(`Ситуация ${action === "merge" ? "объединена" : "разделена"}; история сохранена`);
+      await loadData();
+      closeDrawer();
+    } catch (error) {
+      toast(error.status === 409 ? "Ситуация изменилась — действие отклонено, обновите данные" : "Действие ситуации не выполнено", "warn");
     }
   }
   async function openDeviceCard(deviceID) {

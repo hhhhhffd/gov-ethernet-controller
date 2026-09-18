@@ -71,6 +71,8 @@ func auditVisibilityPredicate(p *auth.Principal, start int) (string, []interface
         LEFT JOIN provider_cases scoped_case ON scoped_case.line_id=scoped_line.id OR scoped_case.incident_id=scoped_incident.id
         LEFT JOIN monitoring_points scoped_point ON scoped_point.line_id=scoped_line.id
         LEFT JOIN devices scoped_device ON scoped_device.monitoring_point_id=scoped_point.id
+        LEFT JOIN situation_members scoped_situation_member ON scoped_situation_member.incident_id=scoped_incident.id
+        LEFT JOIN situations scoped_situation ON scoped_situation.id=scoped_situation_member.situation_id
         WHERE ` + lineScope + ` AND (
             (ae.object_type='line' AND ae.object_id=scoped_line.id)
             OR (ae.object_type='incident' AND ae.object_id=scoped_incident.id::text)
@@ -79,6 +81,7 @@ func auditVisibilityPredicate(p *auth.Principal, start int) (string, []interface
             OR (ae.object_type='provider' AND ae.object_id=scoped_line.provider_id)
             OR (ae.object_type='device' AND ae.object_id=scoped_device.id)
             OR (ae.object_type='monitoring_point' AND ae.object_id=scoped_point.id)
+            OR (ae.object_type='situation' AND ae.object_id=scoped_situation.id::text)
         )
     )`
 	return "(" + lineRelation + ")", params

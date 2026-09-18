@@ -155,16 +155,18 @@ func (s *Server) refreshSituations(ctx context.Context) error {
 		return err
 	}
 	rows.Close()
-	existingRows, err := tx.Query(ctx, `SELECT id,provider_id,district,violation_type,start_at FROM situations WHERE status='OPEN'`)
+	existingRows, err := tx.Query(ctx, `SELECT id,provider_id,district,violation_type,start_at,reason_json FROM situations WHERE status='OPEN'`)
 	if err != nil {
 		return err
 	}
 	existing := map[situationGroupKey]int64{}
+	protected := map[int64]bool{}
 	for existingRows.Next() {
 		var id int64
 		var providerID, district, violation *string
 		var startAt time.Time
-		if err := existingRows.Scan(&id, &providerID, &district, &violation, &startAt); err != nil {
+		var reasonRaw []byte
+		if err := existingRows.Scan(&id, &providerID, &district, &violation, &startAt, &reasonRaw); err != nil {
 			existingRows.Close()
 			return err
 		}
@@ -179,6 +181,11 @@ func (s *Server) refreshSituations(ctx context.Context) error {
 			key.ViolationType = *violation
 		}
 		existing[key] = id
+		if reason, ok := decodeJSONBytes(reasonRaw).(map[string]interface{}); ok {
+			if _, manual := reason["manual_action"]; manual {
+				protected[id] = true
+			}
+		}
 	}
 	if err := existingRows.Err(); err != nil {
 		existingRows.Close()
@@ -186,8 +193,14 @@ func (s *Server) refreshSituations(ctx context.Context) error {
 	}
 	existingRows.Close()
 	active := map[int64]bool{}
+	for id := range protected {
+		active[id] = true
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	for key, members := range groups {
+		if id, manual := existing[key]; manual && protected[id] {
+			continue
+		}
 		if len(members) < minimum {
 			continue
 		}
@@ -320,7 +333,31 @@ func (s *Server) situationDetail(w http.ResponseWriter, r *http.Request, id stri
 		writeError(w, 404, "situation not found")
 		return
 	}
-	writeJSON(w, 200, map[string]interface{}{"id": item.ID, "title": item.Title, "status": item.Status, "read_only": true, "projection": "materialized situation and canonical incident evidence", "provider_id": nullableString(item.ProviderID), "district": nullableString(item.District), "violation_type": nullableString(item.ViolationType), "start_at": item.StartAt, "started_at": item.StartAt, "latest_confirmation_at": latestConfirmation, "incident_ids": visibleMemberIDs, "affected_count": len(visibleMemberIDs), "incidents": incidents, "factors": map[string]interface{}{"provider_id": nullableString(item.ProviderID), "district": nullableString(item.District), "violation_type": nullableString(item.ViolationType), "time_window_minutes": 15}, "evidence": map[string]interface{}{"member_states": evidenceCounts, "state": situationEvidenceAggregate(evidenceCounts)}, "grouping": decodeJSONBytes(item.Reason), "reason": decodeJSONBytes(item.Reason)})
+	relations, relationErr := s.situationRelations(r.Context(), item.ID)
+	if relationErr != nil {
+		writeError(w, 500, "could not read situation lifecycle")
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{"id": item.ID, "title": item.Title, "status": item.Status, "read_only": true, "projection": "materialized situation and canonical incident evidence", "causal_claim": false, "correlation_only": true, "provider_id": nullableString(item.ProviderID), "district": nullableString(item.District), "violation_type": nullableString(item.ViolationType), "start_at": item.StartAt, "started_at": item.StartAt, "latest_confirmation_at": latestConfirmation, "incident_ids": visibleMemberIDs, "affected_count": len(visibleMemberIDs), "incidents": incidents, "lifecycle": relations, "actions": map[string]interface{}{"merge": item.Status == "OPEN" && situationManageAllowed(p), "split": item.Status == "OPEN" && situationManageAllowed(p)}, "factors": map[string]interface{}{"provider_id": nullableString(item.ProviderID), "district": nullableString(item.District), "violation_type": nullableString(item.ViolationType), "time_window_minutes": 15}, "evidence": map[string]interface{}{"member_states": evidenceCounts, "state": situationEvidenceAggregate(evidenceCounts)}, "grouping": decodeJSONBytes(item.Reason), "reason": decodeJSONBytes(item.Reason)})
+}
+
+func (s *Server) situationRelations(ctx context.Context, id int64) ([]map[string]interface{}, error) {
+	rows, err := s.DB.Pool.Query(ctx, `SELECT source_situation_id,target_situation_id,relation_type,event_id,created_at FROM situation_relations WHERE source_situation_id=$1 OR target_situation_id=$1 ORDER BY created_at,source_situation_id,target_situation_id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []map[string]interface{}{}
+	for rows.Next() {
+		var source, target, event int64
+		var relation string
+		var created time.Time
+		if err := rows.Scan(&source, &target, &relation, &event, &created); err != nil {
+			return nil, err
+		}
+		result = append(result, map[string]interface{}{"source_situation_id": source, "target_situation_id": target, "relation_type": relation, "event_id": event, "created_at": created})
+	}
+	return result, rows.Err()
 }
 
 func situationEvidenceState(ids []int64, confirmedAt *time.Time) string {
