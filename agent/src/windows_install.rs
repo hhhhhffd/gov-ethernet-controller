@@ -91,9 +91,15 @@ pub fn install() -> Result<(), String> {
         return Err("device token is required on first run (use a protected config/token file or LINKWATCH_DEVICE_TOKEN)".into());
     }
     let token_path = data_root.join("device-token");
-    fs::write(&token_path, format!("{}\n", config.device_token.trim()))
-        .map_err(|error| format!("write protected device token: {error}"))?;
-    protect_token(&token_path)?;
+    // Reinstall/upgrade runs under the service account or an administrator
+    // that may not be the owner of the protected token file. Preserve the
+    // existing credential and ACL; token rotation is an explicit operation,
+    // not a side effect of replacing the binary.
+    if !token_path.exists() {
+        fs::write(&token_path, format!("{}\n", config.device_token.trim()))
+            .map_err(|error| format!("write protected device token: {error}"))?;
+        protect_token(&token_path)?;
+    }
 
     let config_path = data_root.join("config.json");
     let dashboard = config
