@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestReportDeviceIDs(t *testing.T) {
@@ -15,6 +16,39 @@ func TestReportDeviceIDs(t *testing.T) {
 	want := []string{"dev-a", "dev-b", "dev-c"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("reportDeviceIDs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestSummarizeAvailabilityClassifiesNoDataAndThreshold(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(10 * time.Hour)
+	threshold := 80.0
+	got := summarizeAvailability(start, end, []availabilityInterval{
+		{Start: start, End: start.Add(4 * time.Hour), State: availabilityAvailable},
+		{Start: start.Add(4 * time.Hour), End: start.Add(6 * time.Hour), State: availabilityUnavailable},
+	}, &threshold, 80)
+	if got.ObservedDuration != 6*time.Hour || got.UnavailableDuration != 2*time.Hour || got.NoDataDuration != 4*time.Hour {
+		t.Fatalf("durations = observed %v unavailable %v no_data %v", got.ObservedDuration, got.UnavailableDuration, got.NoDataDuration)
+	}
+	if got.Status != "UNKNOWN" {
+		t.Fatalf("status = %q, want UNKNOWN below completeness gate", got.Status)
+	}
+	if got.DataCompletenessPct != 60 {
+		t.Fatalf("completeness = %v, want 60", got.DataCompletenessPct)
+	}
+}
+
+func TestSummarizeAvailabilityPassFailAndBoundaryClipping(t *testing.T) {
+	start := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(10 * time.Hour)
+	threshold := 75.0
+	got := summarizeAvailability(start, end, []availabilityInterval{{Start: start.Add(-2 * time.Hour), End: end, State: availabilityAvailable}}, &threshold, 80)
+	if got.Status != "PASS" || got.AvailabilityPct == nil || *got.AvailabilityPct != 100 || got.NoDataDuration != 0 {
+		t.Fatalf("summary = %#v, want clipped full PASS", got)
+	}
+	got = summarizeAvailability(start, end, []availabilityInterval{{Start: start, End: end, State: availabilityUnavailable}}, &threshold, 80)
+	if got.Status != "FAIL" || got.AvailabilityPct == nil || *got.AvailabilityPct != 0 {
+		t.Fatalf("summary = %#v, want full outage FAIL", got)
 	}
 }
 

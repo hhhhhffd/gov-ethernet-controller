@@ -227,6 +227,7 @@ func (s *Server) aggregateReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	byLine := groupRows(rows, func(row reportRow) string { return row.LineID })
+	byOrganization := groupRows(rows, func(row reportRow) string { return row.OrganizationName })
 	byDistrict := groupRows(rows, func(row reportRow) string { return row.District })
 	byProvider := groupRows(rows, func(row reportRow) string { return row.ProviderName })
 	periodAvailability := availabilitySummaryForRows(rows)
@@ -237,7 +238,7 @@ func (s *Server) aggregateReport(w http.ResponseWriter, r *http.Request) {
 		availability["known_count"] = periodAvailability.known()
 		availability["percent"] = periodAvailability.percent()
 	}
-	response := map[string]interface{}{"from": start, "to": end, "measurement_count": len(rows), "problem_measurement_count": problem, "aggregate": aggregate, "by_line": byLine, "by_district": byDistrict, "by_provider": byProvider}
+	response := map[string]interface{}{"from": start, "to": end, "period_start": start, "period_end": end, "measurement_count": len(rows), "problem_measurement_count": problem, "aggregate": aggregate, "by_line": byLine, "by_organization": byOrganization, "by_school": byOrganization, "by_district": byDistrict, "by_provider": byProvider}
 	for key, value := range availabilitySummaryFields(periodAvailability) {
 		response[key] = value
 	}
@@ -275,7 +276,11 @@ func groupRows(rows []reportRow, key func(reportRow) string) map[string]interfac
 				bad++
 			}
 		}
-		group := map[string]interface{}{"measurement_count": len(items), "average_download": sum(func(item reportRow) *float64 { return item.Download }), "average_upload": sum(func(item reportRow) *float64 { return item.Upload }), "average_ping": sum(func(item reportRow) *float64 { return item.Ping }), "average_availability": sum(func(item reportRow) *float64 { return item.Availability }), "problem_measurement_count": bad}
+		lineIDs := map[string]struct{}{}
+		for _, item := range items {
+			lineIDs[item.LineID] = struct{}{}
+		}
+		group := map[string]interface{}{"measurement_count": len(items), "line_count": len(lineIDs), "average_download": sum(func(item reportRow) *float64 { return item.Download }), "average_upload": sum(func(item reportRow) *float64 { return item.Upload }), "average_ping": sum(func(item reportRow) *float64 { return item.Ping }), "average_availability": sum(func(item reportRow) *float64 { return item.Availability }), "problem_measurement_count": bad, "problem_measurement_share": reportProblemPercent(bad, len(items))}
 		for key, value := range availabilitySummaryFields(availabilitySummaryForRows(items)) {
 			group[key] = value
 		}
@@ -337,7 +342,23 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	periodAvailability := availabilitySummaryForRows(rows)
-	response := map[string]interface{}{"from": start, "to": end, "line_id": r.URL.Query().Get("line_id"), "measurements_received": len(rows), "measurements_expected": expected, "data_completeness": complete, "baseline_compliance": ratio(baselineOK, baselineKnown), "contract_compliance": ratio(contractOK, contractKnown), "incidents": map[string]interface{}{"count": incidentCount, "total_duration_minutes": duration}, "sufficient_data": expected > 0 && float64(len(rows)) >= float64(expected)*.8}
+	threshold := commonAvailabilityThreshold(rows)
+	availabilityPct := periodAvailability.percent()
+	observedMinutes, unavailableMinutes, noDataMinutes := 0.0, 0.0, end.Sub(start).Minutes()
+	if expected > 0 {
+		slotMinutes := end.Sub(start).Minutes() / float64(expected)
+		observedCount := len(rows)
+		if observedCount > expected {
+			observedCount = expected
+		}
+		observedMinutes = float64(observedCount) * slotMinutes
+		unavailableMinutes = float64(periodAvailability.Invalid) * slotMinutes
+		noDataMinutes = end.Sub(start).Minutes() - observedMinutes
+		if noDataMinutes < 0 {
+			noDataMinutes = 0
+		}
+	}
+	response := map[string]interface{}{"from": start, "to": end, "period_start": start, "period_end": end, "line_id": r.URL.Query().Get("line_id"), "measurements_received": len(rows), "measurements_expected": expected, "data_completeness": complete, "data_completeness_pct": complete, "baseline_compliance": ratio(baselineOK, baselineKnown), "contract_compliance": ratio(contractOK, contractKnown), "incidents": map[string]interface{}{"count": incidentCount, "total_duration_minutes": duration}, "sufficient_data": expected > 0 && float64(len(rows)) >= float64(expected)*.8, "availability_pct": availabilityPct, "availability_threshold": threshold, "availability_status": periodStatus(periodAvailability, complete, threshold), "observed_duration_minutes": observedMinutes, "unavailable_duration_minutes": unavailableMinutes, "no_data_duration_minutes": noDataMinutes}
 	for key, value := range availabilitySummaryFields(periodAvailability) {
 		response[key] = value
 	}
