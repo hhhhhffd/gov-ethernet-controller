@@ -24,6 +24,9 @@
     // Demo data is opt-in per URL, never persisted across environments.
     demoMode: new URLSearchParams(window.location.search).get("demo") === "1",
     lineLimit: 30,
+    adminResource: "organizations",
+    adminItems: [],
+    adminEditing: null,
   };
 
   const sampleLines = [
@@ -340,6 +343,41 @@
   async function consumeDownload(response, type, format) { const blob = await response.blob(); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `vko-${type}-${new Date().toISOString().slice(0, 10)}.${format}`; link.click(); URL.revokeObjectURL(url); toast(`Выгрузка ${format.toUpperCase()} подготовлена`); }
   async function loadPassport() { if (!validCustomPeriod()) return; const query = currentReportParams(); try { const payload = await apiTry([`/api/reports/quality-passport?${query}`, `/api/v1/reports/quality-passport?${query}`]); const data = payload.data || payload; renderPassport({ baseline_rate: data.baseline_compliance, contract_rate: data.contract_compliance, received: data.measurements_received, expected: data.measurements_expected, incident_count: data.incidents?.count, problem_minutes: data.incidents?.total_duration_minutes, completeness: data.data_completeness, sufficient_data: data.sufficient_data }); } catch (_) { renderPassport(state.usingDemoData ? {} : { sufficient_data: false }); if (!state.usingDemoData) toast("Паспорт качества недоступен — серверный отчёт не получен", "warn"); } }
 
+  const adminResourceConfig = {
+    organizations: { label: "организацию", fields: [["id", "ID", "text", true], ["school_id", "School ID", "text"], ["name", "Название", "text"], ["district", "Район / город", "text"], ["address", "Адрес", "text"], ["contact_name", "Ответственный", "text"], ["contact_phone", "Рабочий телефон", "text"], ["contact_role", "Должность", "text"], ["contact_email", "Рабочий email", "email"], ["active", "Активна", "checkbox"]], columns: ["school_id", "name", "district", "contact_name", "contact_updated_at", "active"] },
+    providers: { label: "провайдера", fields: [["id", "ID", "text", true], ["name", "Название", "text"], ["support_contact", "Контакт поддержки", "text"], ["active", "Активен", "checkbox"]], columns: ["name", "support_contact", "active"] },
+    lines: { label: "линию", fields: [["id", "ID", "text", true], ["organization_id", "Organization ID", "text"], ["provider_id", "Provider ID", "text"], ["role", "Роль (PRIMARY/RESERVE/INACTIVE)", "text"], ["technology", "Технология", "text"], ["status", "Статус (ACTIVE/INACTIVE/DELETED)", "text"]], columns: ["id", "organization_id", "provider_id", "role", "technology", "status"] },
+    "monitoring-points": { label: "точку мониторинга", fields: [["id", "ID", "text", true], ["line_id", "Line ID", "text"], ["location", "Расположение", "text"], ["is_primary", "Основная точка", "checkbox"], ["active", "Активна", "checkbox"]], columns: ["id", "line_id", "location", "is_primary", "active"] },
+    devices: { label: "устройство", fields: [["device_id", "Device ID", "text"], ["monitoring_point_id", "Monitoring point ID", "text"], ["display_name", "Отображаемое имя", "text"], ["agent_version", "Версия агента", "text"]], columns: ["id", "display_name", "hostname", "organization_name", "line_id", "monitoring_point_id", "last_seen", "agent_version"] },
+  };
+  function adminValue(item, key) { let value = item[key]; if (key === "display_name" && (value == null || value === "")) value = item.hostname || item.id; if (value == null || value === "") return "—"; if (typeof value === "boolean") return value ? "Да" : "Нет"; return String(value); }
+  async function loadAdminResource(resource = state.adminResource) {
+    if (!canAdmin()) return;
+    state.adminResource = resource; state.adminEditing = null; state.adminItems = []; renderAdmin();
+    try { const payload = await apiTry([`/api/admin/${resource}`, `/api/v1/admin/${resource}`]); state.adminItems = unwrap(payload); renderAdmin(); } catch (error) { $("#adminResourceTable").innerHTML = `<div class="table-empty">Не удалось загрузить реестр. Проверьте права и повторите попытку.</div>`; $("#adminFormError").textContent = error.status === 403 ? "Доступ к реестру запрещён текущей ролью." : "Серверный реестр недоступен."; }
+  }
+  function renderAdmin() {
+    const config = adminResourceConfig[state.adminResource]; if (!config) return;
+    $$("[data-admin-resource]").forEach((tab) => tab.classList.toggle("active", tab.dataset.adminResource === state.adminResource));
+    $("#adminFormTitle").textContent = state.adminEditing ? `Изменить ${config.label}` : `Новая ${config.label}`;
+    $("#adminFormFields").innerHTML = config.fields.map(([key, label, type, immutable]) => { const value = state.adminEditing ? (state.adminEditing[key] ?? (key === "device_id" ? state.adminEditing.id : undefined)) : (type === "checkbox" ? true : ""); const disabled = state.adminEditing && immutable ? "disabled" : ""; return type === "checkbox" ? `<label class="admin-check"><input name="${key}" type="checkbox" ${value ? "checked" : ""} ${disabled}/> ${escapeHtml(label)}</label>` : `<label>${escapeHtml(label)}<input name="${key}" type="${type}" value="${escapeHtml(value == null ? "" : value)}" ${disabled}/></label>`; }).join("");
+    const root = $("#adminResourceTable"); if (!state.adminItems.length) { root.innerHTML = `<div class="table-empty">Записей нет</div>`; return; }
+    root.innerHTML = `<table class="admin-table"><thead><tr>${config.columns.map((key) => `<th>${escapeHtml(key)}</th>`).join("")}<th></th></tr></thead><tbody>${state.adminItems.map((item, index) => { const deviceActions = state.adminResource === "devices" ? `<button type="button" class="row-action" data-admin-action="${item.blocked ? "unblock" : "block"}" data-admin-id="${escapeHtml(item.id)}">${item.blocked ? "Разблокировать" : "Заблокировать"}</button><button type="button" class="row-action" data-admin-action="rotate-token" data-admin-id="${escapeHtml(item.id)}">Новый токен</button>` : ""; return `<tr>${config.columns.map((key) => `<td>${escapeHtml(adminValue(item, key))}</td>`).join("")}<td><button type="button" class="row-action" data-admin-edit="${index}">Изменить</button>${deviceActions}</td></tr>`; }).join("")}</tbody></table>`;
+    $$("[data-admin-edit]", root).forEach((button) => button.addEventListener("click", () => { state.adminEditing = state.adminItems[Number(button.dataset.adminEdit)]; renderAdmin(); $("#adminResourceForm").scrollIntoView({ behavior: "smooth", block: "nearest" }); }));
+    $$("[data-admin-action]", root).forEach((button) => button.addEventListener("click", () => adminDeviceAction(button.dataset.adminId, button.dataset.adminAction)));
+  }
+  async function adminDeviceAction(id, action) {
+    try { const response = await apiTry([`/api/admin/devices/${encodeURIComponent(id)}/${action}`, `/api/v1/admin/devices/${encodeURIComponent(id)}/${action}`], { method: "POST" }); if (response?.device_token) toast(`Новый токен: ${response.device_token}`, "warn"); await loadAdminResource("devices"); } catch (error) { $("#adminFormError").textContent = error.status === 403 ? "Действие запрещено текущей ролью или scope." : "Операция устройства не выполнена."; }
+  }
+  async function saveAdminResource(event) {
+    event.preventDefault(); const config = adminResourceConfig[state.adminResource]; const form = event.currentTarget; const payload = {};
+    config.fields.forEach(([key, , type]) => { const input = form.elements[key]; if (!input || (state.adminEditing && key === "id")) return; payload[key] = type === "checkbox" ? input.checked : input.value.trim(); });
+    if (state.adminResource === "lines" && !payload.provider_id) payload.provider_id = null;
+    const resourceID = state.adminEditing?.id || state.adminEditing?.device_id;
+    const path = state.adminResource === "devices" && !state.adminEditing ? "/api/admin/devices/register" : `/api/admin/${state.adminResource}${resourceID ? `/${encodeURIComponent(resourceID)}` : ""}`;
+    try { const response = await apiTry([path, path.replace("/api/", "/api/v1/")], { method: resourceID ? "PUT" : "POST", body: JSON.stringify(payload) }); state.adminEditing = null; $("#adminFormError").textContent = response?.device_token ? "Устройство зарегистрировано; токен показан только сейчас." : ""; await loadAdminResource(state.adminResource); } catch (error) { $("#adminFormError").textContent = error.status === 409 ? "Конфликт состояния. Реестр обновлён; повторите действие по актуальным данным." : error.status === 403 ? "Действие запрещено текущей ролью или scope." : "Не удалось сохранить изменения."; await loadAdminResource(state.adminResource); }
+  }
+
   function showView(view) {
     if (view === "admin" && !canAdmin()) return;
     const isOverview = view === "overview" || view === "lines";
@@ -349,6 +387,7 @@
     if (view === "reports") loadPassport();
     if (view === "incidents") renderIncidents();
     if (view === "notifications") { renderNotifications(); if (!state.notifications.length) loadNotifications(true); }
+    if (view === "admin") loadAdminResource(state.adminResource);
     if (view !== "overview" && window.innerWidth <= 960) $(".rail").classList.remove("open");
   }
   function toast(message, tone = "") { const node = document.createElement("div"); node.className = `toast ${tone}`; node.textContent = message; $("#toastRegion").appendChild(node); setTimeout(() => node.remove(), 4200); }
@@ -358,6 +397,7 @@
     $("#menuToggle").addEventListener("click", () => $(".rail").classList.add("open")); $("#railClose").addEventListener("click", () => $(".rail").classList.remove("open"));
     $("#refreshButton").addEventListener("click", () => loadData()); $("#demoButton").addEventListener("click", createReplay); $("#exportButton").addEventListener("click", () => downloadExport("raw-csv")); $("#noticeDismiss").addEventListener("click", () => $("#noticeBar").classList.add("hidden"));
     $("#notificationRefresh").addEventListener("click", () => loadNotifications(true)); $("#notificationLoadMore").addEventListener("click", () => loadNotifications(false));
+    $("#adminRefresh").addEventListener("click", () => loadAdminResource(state.adminResource)); $("#adminFormReset").addEventListener("click", () => { state.adminEditing = null; $("#adminFormError").textContent = ""; renderAdmin(); }); $("#adminResourceForm").addEventListener("submit", saveAdminResource); $$("[data-admin-resource]").forEach((tab) => tab.addEventListener("click", () => loadAdminResource(tab.dataset.adminResource)));
     $("#passportButton").addEventListener("click", () => showView("reports"));
     $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer); $("#caseModalClose").addEventListener("click", closeCaseModal); $("#caseCancel").addEventListener("click", closeCaseModal); $("#caseSend").addEventListener("click", sendCase);
     $("#reviewConfirm").addEventListener("change", (event) => { $("#caseSend").disabled = !event.target.checked; }); $("#draftText").addEventListener("input", () => { $("#reviewConfirm").checked = false; $("#caseSend").disabled = true; });

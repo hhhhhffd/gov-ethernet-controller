@@ -938,9 +938,9 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 			writeError(w, http.StatusUnprocessableEntity, "display_name is required")
 			return
 		}
-		name := strings.TrimSpace(*payload.DisplayName)
-		if len(name) > 255 {
-			writeError(w, http.StatusUnprocessableEntity, "display_name must contain at most 255 characters")
+		name, nameErr := normalizeDeviceDisplayName(*payload.DisplayName)
+		if nameErr != nil {
+			writeError(w, http.StatusUnprocessableEntity, nameErr.Error())
 			return
 		}
 		var previous *string
@@ -1000,13 +1000,14 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 			DeviceID          string `json:"device_id"`
 			MonitoringPointID string `json:"monitoring_point_id"`
 			AgentVersion      string `json:"agent_version"`
+			DisplayName       string `json:"display_name"`
 		}
 		if err := decodeJSON(r, &payload); err != nil {
 			writeError(w, 422, "invalid device payload")
 			return
 		}
-		if payload.DeviceID == "" || payload.MonitoringPointID == "" {
-			writeError(w, 422, "device_id and monitoring_point_id are required")
+		if payload.DeviceID == "" || payload.MonitoringPointID == "" || strings.TrimSpace(payload.DisplayName) == "" {
+			writeError(w, 422, "device_id, monitoring_point_id and display_name are required")
 			return
 		}
 		var lineID string
@@ -1023,12 +1024,18 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 			return
 		}
 		now := time.Now().UTC().Truncate(time.Second)
-		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO devices(id,monitoring_point_id,auth_token_hash,agent_version,created_at) VALUES ($1,$2,$3,$4,$5)`, payload.DeviceID, payload.MonitoringPointID, auth.TokenHash(token), payload.AgentVersion, now); err != nil {
+		var displayNameErr error
+		payload.DisplayName, displayNameErr = normalizeDeviceDisplayName(payload.DisplayName)
+		if displayNameErr != nil {
+			writeError(w, 422, displayNameErr.Error())
+			return
+		}
+		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO devices(id,monitoring_point_id,auth_token_hash,agent_version,display_name,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, payload.DeviceID, payload.MonitoringPointID, auth.TokenHash(token), payload.AgentVersion, payload.DisplayName, now); err != nil {
 			writeError(w, 409, "device id already registered")
 			return
 		}
 		writeAudit(r.Context(), s, p, "device.registered", "device", payload.DeviceID, nil, map[string]interface{}{"monitoring_point_id": payload.MonitoringPointID, "line_id": lineID, "agent_version": payload.AgentVersion})
-		writeJSON(w, 201, map[string]interface{}{"device_id": payload.DeviceID, "hostname": nil, "monitoring_point_id": payload.MonitoringPointID, "line_id": lineID, "agent_version": payload.AgentVersion, "device_token": token})
+		writeJSON(w, 201, map[string]interface{}{"device_id": payload.DeviceID, "display_name": payload.DisplayName, "hostname": nil, "monitoring_point_id": payload.MonitoringPointID, "line_id": lineID, "agent_version": payload.AgentVersion, "device_token": token})
 		return
 	}
 	if len(parts) > 1 && parts[1] == "block" && r.Method == http.MethodPost {
@@ -1088,6 +1095,17 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		return
 	}
 	writeError(w, 404, "not found")
+}
+
+func normalizeDeviceDisplayName(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", fmt.Errorf("display_name is required")
+	}
+	if len(value) > 255 {
+		return "", fmt.Errorf("display_name must contain at most 255 characters")
+	}
+	return value, nil
 }
 
 func randomSecret() (string, error) {
