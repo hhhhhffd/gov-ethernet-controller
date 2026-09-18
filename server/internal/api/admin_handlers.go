@@ -717,6 +717,10 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 			writeError(w, 409, "line already exists or references are invalid")
 			return
 		}
+		if err := insertLineContext(r.Context(), tx, payload.ID, payload.ProviderID, payload.Technology, payload.TechnologyID, payload.Role, "initial line context", p.ID, now, now); err != nil {
+			writeError(w, 409, "line context version already exists or is invalid")
+			return
+		}
 		if err := ensureActivePrimaryHasPoint(r.Context(), tx, payload.ID); err != nil {
 			if writeLineInvariantError(w, err) {
 				return
@@ -750,6 +754,10 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 	}
 	if _, err := tx.Exec(r.Context(), `UPDATE lines SET organization_id=$1,provider_id=$2,role=$3,technology=$4,technology_id=$5,status=$6 WHERE id=$7`, payload.OrganizationID, payload.ProviderID, payload.Role, payload.Technology, payload.TechnologyID, payload.Status, parts[0]); err != nil {
 		writeError(w, 409, "line update failed or references are invalid")
+		return
+	}
+	if err := advanceLineContext(r.Context(), tx, parts[0], previous, payload, p.ID, time.Now().UTC().Truncate(time.Second)); err != nil {
+		writeError(w, 409, "line context update conflicts with historical interval")
 		return
 	}
 	if err := ensureActivePrimaryHasPoint(r.Context(), tx, parts[0]); err != nil {

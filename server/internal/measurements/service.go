@@ -177,6 +177,10 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agent
 	if err != nil {
 		return Result{}, err
 	}
+	lineContext, err := ResolveContext(ctx, tx, lineID, input.ObservedAt)
+	if err != nil {
+		return Result{}, err
+	}
 	// Capture the watermark before insertion. Looking it up after the insert
 	// would include the new row and incorrectly treat every backfill as current.
 	latestBefore, hasLatest, err := latestObserved(ctx, tx, lineID)
@@ -219,8 +223,12 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agent
 	if err != nil {
 		return Result{}, fmt.Errorf("marshal contract snapshot: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO measurement_evaluations(measurement_id,baseline_state,contract_state,violations_json,valid,reason,policy_snapshot_json,contract_snapshot_json,created_at)
-        VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8::jsonb,$9)`, measurementID, evaluated.BaselineState, evaluated.ContractState, string(violations), evaluated.Valid, evaluated.Reason, string(policySnapshot), string(contractSnapshot), now); err != nil {
+	lineContextSnapshot, err := json.Marshal(SnapshotContext(lineContext))
+	if err != nil {
+		return Result{}, fmt.Errorf("marshal line context snapshot: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO measurement_evaluations(measurement_id,baseline_state,contract_state,violations_json,valid,reason,policy_snapshot_json,contract_snapshot_json,line_context_snapshot_json,created_at)
+        VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10)`, measurementID, evaluated.BaselineState, evaluated.ContractState, string(violations), evaluated.Valid, evaluated.Reason, string(policySnapshot), string(contractSnapshot), string(lineContextSnapshot), now); err != nil {
 		return Result{}, err
 	}
 
