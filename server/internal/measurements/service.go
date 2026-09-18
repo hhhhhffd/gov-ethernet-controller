@@ -228,7 +228,10 @@ func (s *Service) Process(ctx context.Context, deviceID, lineID, pointID, _agent
 		return Result{}, fmt.Errorf("marshal line context snapshot: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO measurement_evaluations(measurement_id,baseline_state,contract_state,violations_json,valid,reason,policy_snapshot_json,contract_snapshot_json,line_context_snapshot_json,created_at)
-        VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10)`, measurementID, evaluated.BaselineState, evaluated.ContractState, string(violations), evaluated.Valid, evaluated.Reason, string(policySnapshot), string(contractSnapshot), string(lineContextSnapshot), now); err != nil {
+	        VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10)`, measurementID, evaluated.BaselineState, evaluated.ContractState, string(violations), evaluated.Valid, evaluated.Reason, string(policySnapshot), string(contractSnapshot), string(lineContextSnapshot), now); err != nil {
+		return Result{}, err
+	}
+	if err := updateVerification(ctx, tx, lineID, measurementID, input, evaluated, policy.Value, contract.Value, now); err != nil {
 		return Result{}, err
 	}
 
@@ -320,6 +323,10 @@ func updateVerification(ctx context.Context, tx pgx.Tx, lineID string, measureme
 		_, err = tx.Exec(ctx, `UPDATE measurement_verifications SET status=$1,verifying_measurement_id=CASE WHEN $1=$2 THEN $3 ELSE NULL END,verifying_snapshot_json=CASE WHEN $1=$2 THEN $4::jsonb ELSE NULL END,reason=$5,updated_at=$6,verified_at=$6 WHERE id=$7 AND status=$8`, next, VerificationExpired, measurementID, string(verifyingSnapshot), reason, now, id, VerificationPending)
 		if err != nil {
 			return fmt.Errorf("update verification: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,after_json,created_at)
+            VALUES ('SYSTEM','system',$1,'measurement_verification',$2,$3::jsonb,$4)`, "measurement.verification_"+strings.ToLower(next), strconv.FormatInt(id, 10), fmt.Sprintf(`{"status":%q,"verifying_measurement_id":%d}`, next, measurementID), now); err != nil {
+			return fmt.Errorf("audit verification transition: %w", err)
 		}
 	}
 	if err := rows.Err(); err != nil {

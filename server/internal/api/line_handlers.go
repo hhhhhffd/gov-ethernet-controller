@@ -326,16 +326,17 @@ type measurementRecord struct {
 	Raw, Violations, PolicySnapshot, ContractSnapshot, LineContextSnapshot    []byte
 	BaselineState, ContractState, Reason                                      string
 	Valid                                                                     bool
+	VerificationStatus                                                        string
 }
 
 func scanMeasurement(scanner interface{ Scan(...interface{}) error }) (measurementRecord, error) {
 	var item measurementRecord
-	err := scanner.Scan(&item.ID, &item.DeviceID, &item.LineID, &item.PointID, &item.ClientEventID, &item.ObservedAt, &item.ReceivedAt, &item.Mode, &item.Download, &item.Upload, &item.Ping, &item.Jitter, &item.PacketLoss, &item.Availability, &item.ConnectionStatus, &item.Raw, &item.Quality, &item.BaselineState, &item.ContractState, &item.Violations, &item.Valid, &item.Reason, &item.PolicySnapshot, &item.ContractSnapshot, &item.LineContextSnapshot)
+	err := scanner.Scan(&item.ID, &item.DeviceID, &item.LineID, &item.PointID, &item.ClientEventID, &item.ObservedAt, &item.ReceivedAt, &item.Mode, &item.Download, &item.Upload, &item.Ping, &item.Jitter, &item.PacketLoss, &item.Availability, &item.ConnectionStatus, &item.Raw, &item.Quality, &item.BaselineState, &item.ContractState, &item.Violations, &item.Valid, &item.Reason, &item.PolicySnapshot, &item.ContractSnapshot, &item.LineContextSnapshot, &item.VerificationStatus)
 	return item, err
 }
 
 func measurementMap(item measurementRecord) map[string]interface{} {
-	return map[string]interface{}{"id": item.ID, "device_id": item.DeviceID, "line_id": item.LineID, "monitoring_point_id": item.PointID, "client_event_id": item.ClientEventID, "observed_at": item.ObservedAt, "received_at": item.ReceivedAt, "mode": item.Mode, "download": item.Download, "upload": item.Upload, "ping": item.Ping, "jitter": item.Jitter, "packet_loss": item.PacketLoss, "loss": item.PacketLoss, "availability": item.Availability, "connection_status": item.ConnectionStatus, "quality": item.Quality, "raw": decodeJSONBytes(item.Raw), "baseline_state": item.BaselineState, "contract_state": item.ContractState, "violations": decodeJSONBytes(item.Violations), "valid": item.Valid, "reason": item.Reason, "policy_snapshot": decodeJSONBytes(item.PolicySnapshot), "contract_snapshot": decodeJSONBytes(item.ContractSnapshot), "line_context_snapshot": decodeJSONBytes(item.LineContextSnapshot)}
+	return map[string]interface{}{"id": item.ID, "device_id": item.DeviceID, "line_id": item.LineID, "monitoring_point_id": item.PointID, "client_event_id": item.ClientEventID, "observed_at": item.ObservedAt, "received_at": item.ReceivedAt, "mode": item.Mode, "download": item.Download, "upload": item.Upload, "ping": item.Ping, "jitter": item.Jitter, "packet_loss": item.PacketLoss, "loss": item.PacketLoss, "availability": item.Availability, "connection_status": item.ConnectionStatus, "quality": item.Quality, "raw": decodeJSONBytes(item.Raw), "baseline_state": item.BaselineState, "contract_state": item.ContractState, "violations": decodeJSONBytes(item.Violations), "valid": item.Valid, "reason": item.Reason, "policy_snapshot": decodeJSONBytes(item.PolicySnapshot), "contract_snapshot": decodeJSONBytes(item.ContractSnapshot), "line_context_snapshot": decodeJSONBytes(item.LineContextSnapshot), "verification_status": item.VerificationStatus}
 }
 
 func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string]interface{}, error) {
@@ -412,7 +413,7 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 	} else {
 		return nil, deviceErr
 	}
-	rows, err := s.DB.Pool.Query(ctx, `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json,e.line_context_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE m.line_id=$1 ORDER BY m.observed_at DESC,m.id DESC LIMIT 50`, line.ID)
+	rows, err := s.DB.Pool.Query(ctx, `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json,e.line_context_snapshot_json,COALESCE(v.status,'') FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id LEFT JOIN measurement_verifications v ON v.candidate_measurement_id=m.id WHERE m.line_id=$1 ORDER BY m.observed_at DESC,m.id DESC LIMIT 50`, line.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -545,7 +546,7 @@ func (s *Server) lineMeasurements(w http.ResponseWriter, r *http.Request, lineID
 		}
 	}
 	params = append(params, limit+1, offset)
-	query := `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json,e.line_context_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE ` + strings.Join(where, " AND ") + ` ORDER BY m.observed_at DESC,m.id DESC LIMIT $` + itoa(len(params)-1) + ` OFFSET $` + itoa(len(params))
+	query := `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json,e.line_context_snapshot_json,COALESCE(v.status,'') FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id LEFT JOIN measurement_verifications v ON v.candidate_measurement_id=m.id WHERE ` + strings.Join(where, " AND ") + ` ORDER BY m.observed_at DESC,m.id DESC LIMIT $` + itoa(len(params)-1) + ` OFFSET $` + itoa(len(params))
 	rows, err := s.DB.Pool.Query(r.Context(), query, params...)
 	if err != nil {
 		writeError(w, 500, "could not query measurements")
@@ -645,7 +646,7 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request, deviceID s
 		}
 		deviceOffset = parsed
 	}
-	rows, rowsErr := s.DB.Pool.Query(r.Context(), `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json,e.line_context_snapshot_json FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE m.device_id=$1 ORDER BY m.observed_at DESC,m.id DESC LIMIT $2 OFFSET $3`, deviceID, deviceLimit+1, deviceOffset)
+	rows, rowsErr := s.DB.Pool.Query(r.Context(), `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json,e.line_context_snapshot_json,COALESCE(v.status,'') FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id LEFT JOIN measurement_verifications v ON v.candidate_measurement_id=m.id WHERE m.device_id=$1 ORDER BY m.observed_at DESC,m.id DESC LIMIT $2 OFFSET $3`, deviceID, deviceLimit+1, deviceOffset)
 	if rowsErr == nil {
 		for rows.Next() {
 			if measurement, scanErr := scanMeasurement(rows); scanErr == nil {
