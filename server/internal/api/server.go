@@ -131,6 +131,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.situationRoute(w, r, strings.TrimPrefix(normalized, "/situations/"))
 	case normalized == "/reports/aggregate" && r.Method == http.MethodGet:
 		s.aggregateReport(w, r)
+	case (normalized == "/reports/quality-passport/evidence" || normalized == "/reports/evidence-report") && r.Method == http.MethodGet:
+		s.evidenceReport(w, r)
 	case normalized == "/reports/quality-passport" && r.Method == http.MethodGet:
 		s.passport(w, r)
 	case normalized == "/exports/preview" && r.Method == http.MethodGet:

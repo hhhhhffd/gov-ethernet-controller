@@ -7,6 +7,7 @@ mod logging;
 mod probe;
 mod queue;
 mod scheduler;
+mod update;
 #[cfg(windows)]
 mod windows_install;
 #[cfg(windows)]
@@ -595,6 +596,34 @@ fn process_commands(
                     );
                 }
             }
+            continue;
+        }
+        if command.command_type == "AGENT_UPDATE" {
+            let result = match update::apply_command(
+                &command.payload,
+                &config.agent_version,
+                &config.queue_dir,
+            ) {
+                Ok(status) => {
+                    config.agent_version = status.version.clone();
+                    json!({"status":"SUCCEEDED","version":status.version,"artifact_sha256":status.artifact_sha256})
+                }
+                Err(error) => {
+                    let status = if error.contains("rollback") {
+                        "ROLLED_BACK"
+                    } else {
+                        "FAILED"
+                    };
+                    let _ = client.acknowledge_command(
+                        command.id,
+                        "FAILED",
+                        json!({"status":status}),
+                        Some(&error),
+                    );
+                    continue;
+                }
+            };
+            let _ = client.acknowledge_command(command.id, "DONE", result, None);
             continue;
         }
         if command.command_type != "LIVE_VERIFY" {

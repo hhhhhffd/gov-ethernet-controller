@@ -469,10 +469,12 @@ checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 name = "linkwatch-agent"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "ctrlc",
  "fs2",
  "rand 0.8.8",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "tempfile",

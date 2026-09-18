@@ -59,6 +59,10 @@ func (s *Server) adminRoute(w http.ResponseWriter, r *http.Request, rest string)
 		s.adminAgentVersions(w, r, p, parts[1:])
 		return
 	}
+	if parts[0] == "agent-updates" && r.Method == http.MethodPost {
+		s.adminAgentUpdate(w, r, p)
+		return
+	}
 	if parts[0] == "policies" {
 		s.adminPolicy(w, r, p)
 		return

@@ -218,6 +218,14 @@ func (s *Server) agentCommandAck(w http.ResponseWriter, r *http.Request, id stri
 			_ = s.agentConfigStateAck(r.Context(), device.ID, resultPayload.ConfigVersion, state, request.Error)
 		}
 	}
+	if command.CommandType == "AGENT_UPDATE" {
+		var payload struct {
+			ReleaseID string `json:"release_id"`
+		}
+		if json.Unmarshal(command.Payload, &payload) == nil && payload.ReleaseID != "" {
+			_, _ = s.DB.Pool.Exec(r.Context(), `UPDATE agent_update_attempts SET status=$1,attempt_count=attempt_count+1,detail_json=$2::jsonb,last_error=NULLIF($3,''),updated_at=now() WHERE release_id=$4 AND device_id=$5 AND command_id=$6`, updateAckStatus(request.Result, request.Status), request.Result, strings.TrimSpace(request.Error), payload.ReleaseID, device.ID, command.ID)
+		}
+	}
 	writeJSON(w, http.StatusOK, command)
 }
 
