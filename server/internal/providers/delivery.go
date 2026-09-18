@@ -75,9 +75,13 @@ func SendProviderCase(ctx context.Context, item ProviderCase, incident Incident,
 			return Result{}, &DeliveryError{Message: "provider webhook endpoint is not configured", Retryable: true}
 		}
 		payload := map[string]interface{}{
-			"event":    "provider_case.created",
-			"case":     map[string]interface{}{"id": item.ID, "ticket_no": item.TicketNo, "text": first(item.FinalText, item.DraftText), "created_at": item.CreatedAt},
-			"incident": map[string]interface{}{"id": incident.ID, "number": incident.Number, "line_id": incident.LineID, "violation_type": incident.ViolationType, "started_at": incident.StartedAt, "opening_snapshot": incident.Opening},
+			"event": "provider_case.created",
+			"case":  map[string]interface{}{"id": item.ID, "ticket_no": item.TicketNo, "text": first(item.FinalText, item.DraftText), "created_at": item.CreatedAt},
+		}
+		if incident.ID == 0 {
+			payload["line"] = map[string]interface{}{"line_id": incident.LineID, "violation_type": incident.ViolationType, "started_at": incident.StartedAt, "evidence_snapshot": incident.Opening}
+		} else {
+			payload["incident"] = map[string]interface{}{"id": incident.ID, "number": incident.Number, "line_id": incident.LineID, "violation_type": incident.ViolationType, "started_at": incident.StartedAt, "opening_snapshot": incident.Opening}
 		}
 		if provider != nil {
 			payload["provider"] = map[string]interface{}{"id": provider.ID, "name": provider.Name}

@@ -590,12 +590,18 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 	}
 	var lineID, orgID, district string
 	var providerID *string
-	var incidentID int64
-	err = s.DB.Pool.QueryRow(r.Context(), `SELECT i.id,i.line_id,l.organization_id,o.district,l.provider_id FROM provider_cases c JOIN incidents i ON i.id=c.incident_id JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id WHERE c.id=$1`, id).Scan(&incidentID, &lineID, &orgID, &district, &providerID)
+	var incidentIDValue *int64
+	var sourceContext string
+	err = s.DB.Pool.QueryRow(r.Context(), `SELECT c.incident_id,COALESCE(c.source_context,'INCIDENT'),l.id,l.organization_id,o.district,l.provider_id FROM provider_cases c LEFT JOIN incidents i ON i.id=c.incident_id JOIN lines l ON l.id=COALESCE(c.line_id,i.line_id) JOIN organizations o ON o.id=l.organization_id WHERE c.id=$1`, id).Scan(&incidentIDValue, &sourceContext, &lineID, &orgID, &district, &providerID)
 	if err != nil || !auth.HasLineScope(p, lineID, orgID, district, stringValue(providerID)) {
 		writeError(w, 404, "provider case not found")
 		return
 	}
+	incidentID := int64(0)
+	if incidentIDValue != nil {
+		incidentID = *incidentIDValue
+	}
+	_ = sourceContext
 	if parts[1] == "ai-draft" && r.Method == http.MethodPost {
 		s.providerAIDraft(w, r, strconv.FormatInt(id, 10), lineID, p)
 		return
@@ -626,7 +632,17 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		return
 	}
 	if currentStatus != nil && *currentStatus == "SENT" {
-		cases, casesErr := s.providerCases(r.Context(), incidentID)
+		var cases []map[string]interface{}
+		var casesErr error
+		if incidentID == 0 {
+			var item map[string]interface{}
+			item, casesErr = s.providerCaseByID(r.Context(), id)
+			if casesErr == nil {
+				cases = []map[string]interface{}{item}
+			}
+		} else {
+			cases, casesErr = s.providerCases(r.Context(), incidentID)
+		}
 		if casesErr != nil {
 			s.Logger.Error("could not read already-sent provider case", "case_id", id, "error", casesErr)
 			writeJSON(w, 200, map[string]interface{}{"id": id, "incident_id": incidentID, "ticket_no": ticket, "status": "SENT", "delivery_status": "SENT", "readback_degraded": true})
@@ -664,10 +680,16 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		return
 	}
 	attempt := attempts + 1
-	incident, visible := s.loadIncident(r.Context(), incidentID, p)
-	if !visible {
-		writeError(w, 404, "provider case not found")
-		return
+	var incident incidentRecord
+	if incidentID != 0 {
+		var visible bool
+		incident, visible = s.loadIncident(r.Context(), incidentID, p)
+		if !visible {
+			writeError(w, 404, "provider case not found")
+			return
+		}
+	} else {
+		incident = incidentRecord{LineID: lineID, OrganizationID: orgID, District: district, ProviderID: stringValue(providerID), Source: "LINE", ViolationType: "LINE_REVIEW", StartedAt: createdAt}
 	}
 	var providerName, providerContact string
 	if providerID != nil {
@@ -700,8 +722,10 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 			writeError(w, 500, "could not persist provider delivery failure")
 			return
 		}
-		if _, eventErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_DELIVERY_FAILED',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"error":"provider delivery failed","retryable":%t}`, id, retryable), now); eventErr != nil {
-			s.Logger.Error("could not record provider case delivery failure event", "case_id", id, "error", eventErr)
+		if incidentID != 0 {
+			if _, eventErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_DELIVERY_FAILED',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"error":"provider delivery failed","retryable":%t}`, id, retryable), now); eventErr != nil {
+				s.Logger.Error("could not record provider case delivery failure event", "case_id", id, "error", eventErr)
+			}
 		}
 		writeAudit(r.Context(), s, p, "provider_case.delivery_failed", "provider_case", fmt.Sprint(id), nil, map[string]interface{}{"status": "FAILED", "attempts": attempt, "retryable": retryable, "error": "provider delivery failed"})
 		writeError(w, http.StatusBadGateway, "provider delivery failed; delivery state was persisted")
@@ -722,15 +746,27 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		writeError(w, 500, "could not send provider case")
 		return
 	}
-	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE incidents SET status=CASE WHEN status='NEW' THEN 'SENT_TO_PROVIDER' ELSE status END WHERE id=$1`, incidentID); err != nil {
-		writeError(w, 500, "could not update incident")
-		return
-	}
-	if _, eventErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_SENT',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"ticket_no":%q,"channel":%q}`, id, ticketNo, delivery.Channel), now); eventErr != nil {
-		s.Logger.Error("could not record provider case sent event", "case_id", id, "error", eventErr)
+	if incidentID != 0 {
+		if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE incidents SET status=CASE WHEN status='NEW' THEN 'SENT_TO_PROVIDER' ELSE status END WHERE id=$1`, incidentID); err != nil {
+			writeError(w, 500, "could not update incident")
+			return
+		}
+		if _, eventErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO incident_events(incident_id,event_type,actor,payload_json,created_at) VALUES ($1,'PROVIDER_CASE_SENT',$2,$3::jsonb,$4)`, incidentID, p.ID, fmt.Sprintf(`{"provider_case_id":%d,"ticket_no":%q,"channel":%q}`, id, ticketNo, delivery.Channel), now); eventErr != nil {
+			s.Logger.Error("could not record provider case sent event", "case_id", id, "error", eventErr)
+		}
 	}
 	writeAudit(r.Context(), s, p, "provider_case.sent", "provider_case", fmt.Sprint(id), nil, map[string]interface{}{"ticket_no": ticketNo, "external_ticket_no": delivery.ExternalID, "delivery_channel": delivery.Channel, "status": "SENT", "reviewed": true})
-	cases, casesErr := s.providerCases(r.Context(), incidentID)
+	var cases []map[string]interface{}
+	var casesErr error
+	if incidentID == 0 {
+		var item map[string]interface{}
+		item, casesErr = s.providerCaseByID(r.Context(), id)
+		if casesErr == nil {
+			cases = []map[string]interface{}{item}
+		}
+	} else {
+		cases, casesErr = s.providerCases(r.Context(), incidentID)
+	}
 	if casesErr != nil {
 		s.Logger.Error("could not read sent provider case", "case_id", id, "error", casesErr)
 		writeJSON(w, 200, map[string]interface{}{"id": id, "incident_id": incidentID, "ticket_no": ticketNo, "external_ticket_no": delivery.ExternalID, "final_text": *final, "status": "SENT", "delivery_channel": delivery.Channel, "delivery_status": "SENT", "readback_degraded": true})

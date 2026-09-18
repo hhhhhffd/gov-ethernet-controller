@@ -135,6 +135,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.audit(w, r)
 	case normalized == "/notifications" && r.Method == http.MethodGet:
 		s.notifications(w, r)
+	case normalized == "/provider-cases" && r.Method == http.MethodPost:
+		s.createProviderCase(w, r)
 	case normalized == "/demo/replay" && r.Method == http.MethodPost:
 		s.demoReplay(w, r)
 	case strings.HasPrefix(normalized, "/provider-cases/"):

@@ -52,8 +52,12 @@ type ProviderDraftInput struct {
 type deterministicDraftGenerator struct{}
 
 func (deterministicDraftGenerator) Generate(_ context.Context, input ProviderDraftInput) (string, error) {
-	return fmt.Sprintf("Здравствуйте! Просим проверить качество услуги на линии %s (школа %s, %s).\n\nСистема мониторинга подтвердила нарушение %s с %s.\n\nПрименённые пороги: %s.\nДоговорный ориентир и его срок действия на момент наблюдений: %s.\nНаблюдения: %s.\nПакет доказательств: measurement IDs %s; значения и effective policy/contract сохранены в системе без перезаписи истории.\n\nКомментарий заказчика: %s\n\nФормулировка описывает технически наблюдаемое отклонение и требует проверки оператором.",
-		input.LineID, input.SchoolID, input.Organization, input.ViolationType, input.StartedAt,
+	status := fmt.Sprintf("Система мониторинга зафиксировала наблюдения для проверки отклонения %s с %s.", input.ViolationType, input.StartedAt)
+	if input.ViolationType != "LINE_REVIEW" {
+		status = fmt.Sprintf("Система мониторинга подтвердила нарушение %s с %s.", input.ViolationType, input.StartedAt)
+	}
+	return fmt.Sprintf("Здравствуйте! Просим проверить качество услуги на линии %s (школа %s, %s).\n\n%s\n\nПрименённые пороги: %s.\nДоговорный ориентир и его срок действия на момент наблюдений: %s.\nНаблюдения: %s.\nПакет доказательств: measurement IDs %s; значения и effective policy/contract сохранены в системе без перезаписи истории.\n\nКомментарий заказчика: %s\n\nФормулировка описывает технически наблюдаемое отклонение и требует проверки оператором.",
+		input.LineID, input.SchoolID, input.Organization, status,
 		input.PolicyJSON, input.ContractJSON, input.ObservationsJSON, input.EvidenceJSON, input.Comment), nil
 }
 

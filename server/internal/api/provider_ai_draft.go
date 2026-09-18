@@ -149,16 +149,28 @@ type providerCaseDraftContext struct {
 }
 
 func (s *Server) loadProviderCaseDraftContext(ctx context.Context, caseID, lineID string) (providerCaseDraftContext, error) {
-	var incidentID int64
+	var incidentID *int64
 	var status string
 	var storedLine string
-	if err := s.DB.Pool.QueryRow(ctx, `SELECT i.id,c.status,i.line_id FROM provider_cases c JOIN incidents i ON i.id=c.incident_id WHERE c.id=$1`, caseID).Scan(&incidentID, &status, &storedLine); err != nil {
+	var source, schoolID, organizationID, organizationName, district, providerID, providerName string
+	var periodFrom, periodTo *time.Time
+	var evidence []byte
+	if err := s.DB.Pool.QueryRow(ctx, `SELECT c.incident_id,c.status,COALESCE(c.source_context,'INCIDENT'),c.period_from,c.period_to,c.evidence_measurement_ids,l.id,l.organization_id,o.school_id,o.name,o.district,COALESCE(l.provider_id,''),COALESCE(p.name,'') FROM provider_cases c LEFT JOIN incidents i ON i.id=c.incident_id JOIN lines l ON l.id=COALESCE(c.line_id,i.line_id) JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id WHERE c.id=$1`, caseID).Scan(&incidentID, &status, &source, &periodFrom, &periodTo, &evidence, &storedLine, &organizationID, &schoolID, &organizationName, &district, &providerID, &providerName); err != nil {
 		return providerCaseDraftContext{}, err
 	}
 	if storedLine != lineID {
 		return providerCaseDraftContext{}, pgx.ErrNoRows
 	}
-	incident, err := mustIncident(ctx, s, incidentID)
+	if source == "LINE" || incidentID == nil {
+		started := time.Now().UTC()
+		if periodFrom != nil {
+			started = *periodFrom
+		}
+		opening := map[string]interface{}{"evidence_measurement_ids": incidentEvidenceIDs(decodeJSONBytes(evidence)), "period_from": periodFrom, "period_to": periodTo}
+		openingJSON, _ := json.Marshal(opening)
+		return providerCaseDraftContext{ID: caseID, Status: status, Incident: incidentRecord{LineID: storedLine, SchoolID: schoolID, OrganizationID: organizationID, OrganizationName: organizationName, District: district, ProviderID: providerID, ProviderName: providerName, Source: "LINE", ViolationType: "LINE_REVIEW", StartedAt: started, Opening: openingJSON}}, nil
+	}
+	incident, err := mustIncident(ctx, s, *incidentID)
 	if err != nil {
 		return providerCaseDraftContext{}, pgx.ErrNoRows
 	}
@@ -168,43 +180,37 @@ func (s *Server) loadProviderCaseDraftContext(ctx context.Context, caseID, lineI
 func (s *Server) providerDraftInput(ctx context.Context, incident incidentRecord, comment string) (ProviderDraftInput, error) {
 	opening := decodeJSONBytes(incident.Opening)
 	evidenceIDs := incidentEvidenceIDs(opening)
-	observations := []map[string]interface{}{}
-	if len(evidenceIDs) > 0 {
-		rows, err := s.DB.Pool.Query(ctx, `SELECT id,observed_at,download,upload,ping,jitter,packet_loss,availability FROM measurements WHERE line_id=$1 AND id=ANY($2) ORDER BY observed_at,id`, incident.LineID, evidenceIDs)
-		if err != nil {
-			return ProviderDraftInput{}, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var id int64
-			var at time.Time
-			var download, upload, ping, jitter, loss, availability *float64
-			if err := rows.Scan(&id, &at, &download, &upload, &ping, &jitter, &loss, &availability); err != nil {
-				return ProviderDraftInput{}, err
+	line := lineRecord{ID: incident.LineID, SchoolID: incident.SchoolID, OrganizationID: incident.OrganizationID, OrganizationName: incident.OrganizationName, ProviderID: incident.ProviderID, ProviderName: incident.ProviderName, District: incident.District}
+	if incident.Source == "LINE" {
+		var from, to *time.Time
+		if snapshot, ok := opening.(map[string]interface{}); ok {
+			if value, ok := snapshot["period_from"].(string); ok && value != "" {
+				parsed, err := parseTime(value, time.Time{})
+				if err != nil {
+					return ProviderDraftInput{}, err
+				}
+				from = &parsed
 			}
-			observations = append(observations, map[string]interface{}{"id": id, "observed_at": at.UTC().Format(time.RFC3339), "download": download, "upload": upload, "ping": ping, "jitter": jitter, "packet_loss": loss, "availability": availability})
+			if value, ok := snapshot["period_to"].(string); ok && value != "" {
+				parsed, err := parseTime(value, time.Time{})
+				if err != nil {
+					return ProviderDraftInput{}, err
+				}
+				to = &parsed
+			}
 		}
-		if err := rows.Err(); err != nil {
-			return ProviderDraftInput{}, err
-		}
+		return s.buildLineProviderDraftInput(ctx, line, evidenceIDs, from, to, comment)
 	}
-	observationsJSON, err := json.Marshal(observations)
+	// Incident evidence is also read through the canonical historical builder;
+	// this keeps line authorization and evaluation snapshots identical for both
+	// roots while preserving the incident's violation and start metadata below.
+	input, err := s.buildLineProviderDraftInput(ctx, line, evidenceIDs, nil, nil, comment)
 	if err != nil {
 		return ProviderDraftInput{}, err
 	}
-	policyJSON, err := json.Marshal(mapValue(opening, "policy"))
-	if err != nil {
-		return ProviderDraftInput{}, err
-	}
-	contractJSON, err := json.Marshal(mapValue(opening, "contract"))
-	if err != nil {
-		return ProviderDraftInput{}, err
-	}
-	evidenceJSON, err := json.Marshal(evidenceIDs)
-	if err != nil {
-		return ProviderDraftInput{}, err
-	}
-	return ProviderDraftInput{LineID: incident.LineID, SchoolID: incident.SchoolID, Organization: incident.OrganizationName, ViolationType: incident.ViolationType, StartedAt: incident.StartedAt.UTC().Format(time.RFC3339), PolicyJSON: string(policyJSON), ContractJSON: string(contractJSON), ObservationsJSON: string(observationsJSON), EvidenceJSON: string(evidenceJSON), Comment: comment}, nil
+	input.ViolationType = incident.ViolationType
+	input.StartedAt = incident.StartedAt.UTC().Format(time.RFC3339)
+	return input, nil
 }
 
 var errProviderCaseSent = errors.New("provider case was sent")
