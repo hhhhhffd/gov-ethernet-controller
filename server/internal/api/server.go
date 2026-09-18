@@ -133,6 +133,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.export(w, r)
 	case normalized == "/audit" && r.Method == http.MethodGet:
 		s.audit(w, r)
+	case normalized == "/agent-versions" && r.Method == http.MethodGet:
+		s.observedAgentVersions(w, r, nil)
+	case strings.HasPrefix(normalized, "/agent-versions/") && r.Method == http.MethodGet:
+		s.observedAgentVersions(w, r, strings.Split(strings.Trim(strings.TrimPrefix(normalized, "/agent-versions/"), "/"), "/"))
 	case normalized == "/notifications" && r.Method == http.MethodGet:
 		s.notifications(w, r)
 	case normalized == "/provider-cases" && r.Method == http.MethodPost:

@@ -309,41 +309,6 @@ func (s *Server) situationDetail(w http.ResponseWriter, r *http.Request, id stri
 	writeJSON(w, 200, map[string]interface{}{"id": item.ID, "title": item.Title, "status": item.Status, "provider_id": nullableString(item.ProviderID), "district": nullableString(item.District), "violation_type": nullableString(item.ViolationType), "start_at": item.StartAt, "started_at": item.StartAt, "incident_ids": memberIDs, "affected_count": len(memberIDs), "incidents": incidents, "reason": decodeJSONBytes(item.Reason)})
 }
 
-func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.principal(w, r)
-	if !ok {
-		return
-	}
-	if p.Role != "ADMIN" && p.Role != "OBLAST" {
-		writeError(w, 403, "administrator role required")
-		return
-	}
-	rows, err := s.DB.Pool.Query(r.Context(), `SELECT id,actor_type,actor_id,action,object_type,object_id,scope_type,scope_id,before_json,after_json,request_id,created_at FROM audit_events ORDER BY id DESC LIMIT 500`)
-	if err != nil {
-		writeError(w, 500, "could not query audit")
-		return
-	}
-	defer rows.Close()
-	result := []map[string]interface{}{}
-	for rows.Next() {
-		var id int64
-		var actorType, actorID, action, objType, objID string
-		var scopeType, scopeID, requestID *string
-		var before, after []byte
-		var created time.Time
-		if err := rows.Scan(&id, &actorType, &actorID, &action, &objType, &objID, &scopeType, &scopeID, &before, &after, &requestID, &created); err != nil {
-			writeError(w, 500, "could not read audit")
-			return
-		}
-		result = append(result, map[string]interface{}{"id": id, "actor_type": actorType, "actor_id": actorID, "action": action, "object_type": objType, "object_id": objID, "scope_type": scopeType, "scope_id": scopeID, "before": decodeJSONBytes(before), "after": decodeJSONBytes(after), "request_id": requestID, "created_at": created})
-	}
-	if err := rows.Err(); err != nil {
-		writeError(w, 500, "could not read audit")
-		return
-	}
-	writeJSON(w, 200, result)
-}
-
 func (s *Server) notifications(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
 	if !ok {

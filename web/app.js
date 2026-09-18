@@ -15,6 +15,10 @@
     notificationError: null,
     situations: [],
     audit: [],
+    auditBeforeId: null,
+    auditHasMore: false,
+    auditFilters: { action: "", object_type: "", object_id: "" },
+    agentVersions: [],
     filters: { search: "", district: "", provider: "", technology: "", status: "", period: "week", from: "", to: "", view: "lines" },
     currentLine: null,
     currentIncident: null,
@@ -143,6 +147,7 @@
     const admin = $("[data-view='admin']"); if (admin) admin.hidden = !canAdmin();
     const notifications = $("[data-view='notifications']"); if (notifications) notifications.hidden = !hasCapability("notification.read");
     const replay = $("#demoButton"); if (replay) replay.hidden = !canAdmin();
+    const audit = $("[data-view='audit']"); if (audit) audit.hidden = !hasCapability("audit.read");
     const manual = $("#manualIncidentButton"); if (manual) manual.hidden = !hasCapability("incident.create");
     $$("[data-provider-action]").forEach((button) => { button.hidden = !canSendProvider(button._line || null); });
   }
@@ -185,6 +190,29 @@
     applyCapabilities();
     renderAll();
     $("#lastSync").textContent = time(new Date().toISOString());
+  }
+
+  function renderAudit() {
+    const root = $("#auditTable"); if (!root) return;
+    if (!state.audit.length) { root.innerHTML = `<div class="table-empty">Записей по выбранным фильтрам нет.</div>`; }
+    else root.innerHTML = `<table class="admin-table"><thead><tr><th>Время</th><th>Действие</th><th>Объект</th><th>Актор</th><th>Детали</th></tr></thead><tbody>${state.audit.map((item) => `<tr><td>${escapeHtml(time(item.created_at, true))}</td><td>${escapeHtml(item.action)}</td><td>${escapeHtml(`${item.object_type || "—"} · ${item.object_id || "—"}`)}</td><td>${escapeHtml(item.actor_id || item.actor_type || "—")}</td><td><details><summary>Открыть</summary><pre>${escapeHtml(JSON.stringify({ before: item.before, after: item.after }, null, 2))}</pre></details></td></tr>`).join("")}</tbody></table>`;
+    $("#auditSummary").textContent = state.audit.length ? `${state.audit.length} записей${state.auditHasMore ? " · доступны ещё" : ""}` : "Нет записей";
+    $("#auditLoadMore").hidden = !state.auditHasMore;
+  }
+  async function loadAudit(reset = true) {
+    if (!hasCapability("audit.read")) return;
+    if (reset) { state.audit = []; state.auditBeforeId = null; }
+    const params = new URLSearchParams({ limit: "50" });
+    Object.entries(state.auditFilters).forEach(([key, value]) => { if (value) params.set(key, value); });
+    if (!reset && state.auditBeforeId) params.set("before_id", state.auditBeforeId);
+    try { const payload = await apiTry([`/api/audit?${params}`, `/api/v1/audit?${params}`]); const items = unwrap(payload); state.audit = reset ? items : state.audit.concat(items); state.auditHasMore = Boolean(payload?.has_more); state.auditBeforeId = payload?.next_before_id || (items.length ? items[items.length - 1].id : null); renderAudit(); } catch (error) { $("#auditTable").innerHTML = `<div class="table-empty">${error.status === 403 ? "Доступ к журналу запрещён текущей ролью." : "Журнал временно недоступен."}</div>`; $("#auditLoadMore").hidden = true; }
+  }
+  async function loadAgentVersions() {
+    if (!hasCapability("audit.read")) return;
+    try { const payload = await apiTry(["/api/agent-versions?limit=50", "/api/v1/agent-versions?limit=50"]); state.agentVersions = unwrap(payload); const root = $("#agentVersionsTable"); root.innerHTML = state.agentVersions.length ? `<table class="admin-table"><thead><tr><th>Версия</th><th>Устройств</th><th>Последняя связь</th></tr></thead><tbody>${state.agentVersions.map((item) => `<tr><td><button class="row-action" data-agent-version="${escapeHtml(item.version)}">${escapeHtml(item.version)}</button></td><td>${escapeHtml(item.device_count)}</td><td>${escapeHtml(time(item.last_seen, true))}</td></tr>`).join("")}</tbody></table>` : `<div class="table-empty">Наблюдаемых версий нет.</div>`; $$('[data-agent-version]', root).forEach((button) => button.addEventListener("click", () => loadAgentVersionDevices(button.dataset.agentVersion))); } catch (_) { $("#agentVersionsTable").innerHTML = `<div class="table-empty">Распределение версий недоступно.</div>`; }
+  }
+  async function loadAgentVersionDevices(version) {
+    try { const payload = await apiTry([`/api/agent-versions/${encodeURIComponent(version)}/devices?limit=100`, `/api/v1/agent-versions/${encodeURIComponent(version)}/devices?limit=100`]); const root = $("#agentVersionDevices"); root.hidden = false; const items = unwrap(payload); root.innerHTML = `<div class="panel-kicker">УСТРОЙСТВА · ${escapeHtml(version)}</div>` + (items.length ? `<table class="admin-table"><thead><tr><th>Устройство</th><th>Школа</th><th>Последняя связь</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.display_name || item.hostname || item.id)}</td><td>${escapeHtml(item.school_name || item.school_id || "—")}</td><td>${escapeHtml(time(item.last_seen, true))}</td></tr>`).join("")}</tbody></table>` : `<div class="table-empty">Устройств не найдено.</div>`); } catch (_) { $("#agentVersionDevices").hidden = false; $("#agentVersionDevices").innerHTML = `<div class="table-empty">Список устройств недоступен.</div>`; }
   }
   function renderOverview(data) {
     const schools = (data.schools ?? data.organization_count ?? data.counts?.schools ?? new Set(state.lines.map((line) => line.school_id)).size) || 0;
@@ -391,10 +419,11 @@
   function showView(view) {
     if (view === "admin" && !canAdmin()) return;
     const isOverview = view === "overview" || view === "lines";
-    ["incidents", "notifications", "reports", "admin"].forEach((name) => { const element = $(`#${name}View`); if (element) element.classList.toggle("hidden", view !== name); });
+    ["incidents", "notifications", "reports", "audit", "admin"].forEach((name) => { const element = $(`#${name}View`); if (element) element.classList.toggle("hidden", view !== name); });
     $("#linesSection").classList.toggle("hidden", !isOverview);
     $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view || (view === "lines" && item.dataset.view === "overview")));
     if (view === "reports") loadPassport();
+    if (view === "audit") { renderAudit(); loadAudit(true); loadAgentVersions(); }
     if (view === "incidents") renderIncidents();
     if (view === "notifications") { renderNotifications(); if (!state.notifications.length) loadNotifications(true); }
     if (view === "admin") loadAdminResource(state.adminResource);
@@ -407,6 +436,7 @@
     $("#menuToggle").addEventListener("click", () => $(".rail").classList.add("open")); $("#railClose").addEventListener("click", () => $(".rail").classList.remove("open"));
     $("#refreshButton").addEventListener("click", () => loadData()); $("#demoButton").addEventListener("click", createReplay); $("#exportButton").addEventListener("click", () => downloadExport("raw-csv")); $("#noticeDismiss").addEventListener("click", () => $("#noticeBar").classList.add("hidden"));
     $("#notificationRefresh").addEventListener("click", () => loadNotifications(true)); $("#notificationLoadMore").addEventListener("click", () => loadNotifications(false));
+    $("#auditRefresh").addEventListener("click", () => { loadAudit(true); loadAgentVersions(); }); $("#auditLoadMore").addEventListener("click", () => loadAudit(false)); $("#auditReset").addEventListener("click", () => { state.auditFilters = { action: "", object_type: "", object_id: "" }; ["auditActionFilter", "auditObjectTypeFilter", "auditObjectIdFilter"].forEach((id) => { $("#" + id).value = ""; }); loadAudit(true); }); ["auditActionFilter", "auditObjectTypeFilter", "auditObjectIdFilter"].forEach((id) => $("#" + id).addEventListener("change", () => { state.auditFilters = { action: $("#auditActionFilter").value.trim(), object_type: $("#auditObjectTypeFilter").value.trim(), object_id: $("#auditObjectIdFilter").value.trim() }; loadAudit(true); }));
     $("#adminRefresh").addEventListener("click", () => loadAdminResource(state.adminResource)); $("#adminFormReset").addEventListener("click", () => { state.adminEditing = null; $("#adminFormError").textContent = ""; renderAdmin(); }); $("#adminResourceForm").addEventListener("submit", saveAdminResource); $$("[data-admin-resource]").forEach((tab) => tab.addEventListener("click", () => loadAdminResource(tab.dataset.adminResource)));
     $("#passportButton").addEventListener("click", () => showView("reports"));
     $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer); $("#caseModalClose").addEventListener("click", closeCaseModal); $("#caseCancel").addEventListener("click", closeCaseModal); $("#caseSend").addEventListener("click", sendCase);
