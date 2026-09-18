@@ -47,21 +47,19 @@ func (s *Server) listSituations(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "could not read situation members")
 			return
 		}
-		visible := true
 		ids := make([]int64, 0, len(members))
 		for _, memberID := range members {
 			var lineID, organizationID, district, providerID string
 			if err := s.DB.Pool.QueryRow(r.Context(), `SELECT i.line_id,l.organization_id,o.district,COALESCE(l.provider_id,'') FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id WHERE i.id=$1`, memberID).Scan(&lineID, &organizationID, &district, &providerID); err != nil {
-				visible = false
-				break
+				writeError(w, 500, "could not read situation member")
+				return
 			}
 			if !auth.HasLineScope(p, lineID, organizationID, district, providerID) {
-				visible = false
-				break
+				continue
 			}
 			ids = append(ids, memberID)
 		}
-		if !visible {
+		if len(ids) == 0 {
 			continue
 		}
 		reason := decodeJSONBytes(item.Reason)
@@ -293,20 +291,56 @@ func (s *Server) situationDetail(w http.ResponseWriter, r *http.Request, id stri
 		return
 	}
 	incidents := make([]map[string]interface{}, 0, len(memberIDs))
+	visibleMemberIDs := make([]int64, 0, len(memberIDs))
+	var latestConfirmation *time.Time
+	evidenceCounts := map[string]int{"AVAILABLE": 0, "NO_DATA": 0, "UNKNOWN": 0}
 	for _, memberID := range memberIDs {
 		incident, visible := s.loadIncident(r.Context(), memberID, p)
 		if !visible {
-			writeError(w, 404, "situation not found")
-			return
+			continue
 		}
 		mapped, mapErr := s.incidentMap(r.Context(), incident)
 		if mapErr != nil {
 			writeError(w, 500, "could not read incident details")
 			return
 		}
+		evidenceIDs := incidentEvidenceIDs(decodeJSONBytes(incident.Opening))
+		evidenceState := situationEvidenceState(evidenceIDs, incident.ConfirmedAt)
+		mapped["line"] = map[string]interface{}{"id": incident.LineID, "url": "/api/lines/" + incident.LineID}
+		mapped["evidence"] = map[string]interface{}{"state": evidenceState, "measurement_ids": evidenceIDs, "incident_url": "/api/incidents/" + strconv.FormatInt(incident.ID, 10)}
+		visibleMemberIDs = append(visibleMemberIDs, memberID)
+		evidenceCounts[evidenceState]++
+		if incident.ConfirmedAt != nil && (latestConfirmation == nil || incident.ConfirmedAt.After(*latestConfirmation)) {
+			confirmed := *incident.ConfirmedAt
+			latestConfirmation = &confirmed
+		}
 		incidents = append(incidents, mapped)
 	}
-	writeJSON(w, 200, map[string]interface{}{"id": item.ID, "title": item.Title, "status": item.Status, "provider_id": nullableString(item.ProviderID), "district": nullableString(item.District), "violation_type": nullableString(item.ViolationType), "start_at": item.StartAt, "started_at": item.StartAt, "incident_ids": memberIDs, "affected_count": len(memberIDs), "incidents": incidents, "reason": decodeJSONBytes(item.Reason)})
+	if len(visibleMemberIDs) == 0 {
+		writeError(w, 404, "situation not found")
+		return
+	}
+	writeJSON(w, 200, map[string]interface{}{"id": item.ID, "title": item.Title, "status": item.Status, "read_only": true, "projection": "materialized situation and canonical incident evidence", "provider_id": nullableString(item.ProviderID), "district": nullableString(item.District), "violation_type": nullableString(item.ViolationType), "start_at": item.StartAt, "started_at": item.StartAt, "latest_confirmation_at": latestConfirmation, "incident_ids": visibleMemberIDs, "affected_count": len(visibleMemberIDs), "incidents": incidents, "factors": map[string]interface{}{"provider_id": nullableString(item.ProviderID), "district": nullableString(item.District), "violation_type": nullableString(item.ViolationType), "time_window_minutes": 15}, "evidence": map[string]interface{}{"member_states": evidenceCounts, "state": situationEvidenceAggregate(evidenceCounts)}, "grouping": decodeJSONBytes(item.Reason), "reason": decodeJSONBytes(item.Reason)})
+}
+
+func situationEvidenceState(ids []int64, confirmedAt *time.Time) string {
+	if len(ids) > 0 {
+		return "AVAILABLE"
+	}
+	if confirmedAt == nil {
+		return "NO_DATA"
+	}
+	return "UNKNOWN"
+}
+
+func situationEvidenceAggregate(counts map[string]int) string {
+	if counts["AVAILABLE"] > 0 {
+		return "AVAILABLE"
+	}
+	if counts["UNKNOWN"] > 0 {
+		return "UNKNOWN"
+	}
+	return "NO_DATA"
 }
 
 func (s *Server) notifications(w http.ResponseWriter, r *http.Request) {

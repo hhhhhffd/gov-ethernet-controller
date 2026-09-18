@@ -264,9 +264,9 @@
     $$(".map-marker", root).forEach((marker) => { marker.addEventListener("click", () => openLine(marker.dataset.lineId)); marker.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openLine(marker.dataset.lineId); } }); });
   }
   function renderSituations() {
-    const root = $("#situationsList"); if (!state.situations.length) { root.innerHTML = `<div class="table-empty">Нет подтверждённых ситуаций</div>`; return; }
-    root.innerHTML = state.situations.slice(0, 4).map((situation) => `<article class="situation-card" data-situation-id="${escapeHtml(situation.id)}"><i class="severity-mark ${statusClass(situation.severity || situation.status)}"></i><div><span class="situation-title">${escapeHtml(situation.title || situation.name || "Связанные нарушения")}</span><span class="situation-meta">${escapeHtml(situation.meta || `${situation.provider || "—"} · ${situation.affected_count || 0} линий`)} · <b>${escapeHtml(situation.reason || "Возможная связь")}</b></span></div><time class="situation-time">${time(situation.started_at || situation.start_at)}</time></article>`).join("");
-    $$(".situation-card", root).forEach((card) => card.addEventListener("click", () => showView("incidents")));
+    const root = $("#situationsList"); if (!state.situations.length) { root.innerHTML = `<div class="table-empty">Нет текущих связанных ситуаций</div>`; return; }
+    root.innerHTML = state.situations.slice(0, 4).map((situation) => `<article class="situation-card" data-situation-id="${escapeHtml(situation.id)}" tabindex="0"><i class="severity-mark ${statusClass(situation.severity || situation.status)}"></i><div><span class="situation-title">${escapeHtml(situation.title || situation.name || "Связанные нарушения")}</span><span class="situation-meta">${escapeHtml(situation.meta || `${situation.provider || "—"} · ${situation.affected_count || 0} линий`)} · <b>${escapeHtml(situation.reason || "Возможная связь")}</b></span></div><time class="situation-time">${time(situation.started_at || situation.start_at)}</time></article>`).join("");
+    $$(".situation-card", root).forEach((card) => { const open = () => openSituation(card.dataset.situationId); card.addEventListener("click", open); card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } }); });
   }
   function renderLines() {
     const rows = filteredLines(); const root = $("#linesTableBody");
@@ -367,6 +367,36 @@
     $("#drawerProvider").hidden = !canSendProvider(detail);
     $("#drawerIncident").onclick = () => { if (state.user || demoCapabilities()) createManualIncident(detail); };
     $("#drawerProvider").onclick = () => { if (!canSendProvider(detail)) return; const incident = related.find((item) => item.status !== "CLOSED") || related[0] || { line_id: detail.id, school_name: detail.school_name, provider: detail.provider, description: detail.reason, status: "NEW" }; openCaseModal(incident); };
+  }
+  async function openSituation(id) {
+    const drawer = $("#detailDrawer");
+    $(".panel-kicker", drawer).textContent = "ДЕТАЛИ СИТУАЦИИ · READ ONLY";
+    $("#drawerTitle").textContent = "Загрузка ситуации…";
+    $("#drawerSubtitle").textContent = "Материализованная связь; причинность не установлена";
+    $("#drawerStatus").innerHTML = `<p>Загружаем канонические инциденты и evidence…</p>`;
+    $("#drawerAxes").innerHTML = `<div class="table-empty">Загрузка…</div>`;
+    $("#drawerVerdict").textContent = "Деталь доступна только для чтения и не изменяет canonical state.";
+    $("#drawerMetrics").innerHTML = ""; $("#drawerContext").innerHTML = ""; $("#drawerTimeline").innerHTML = `<div class="table-empty">Загрузка…</div>`;
+    $("#drawerIncident").hidden = true; $("#drawerProvider").hidden = true;
+    $("#drawerBackdrop").classList.remove("hidden"); drawer.classList.add("open"); drawer.setAttribute("aria-hidden", "false");
+    try {
+      const response = state.usingDemoData ? { ...state.situations.find((item) => String(item.id) === String(id)), incidents: state.incidents } : await apiTry([`/api/situations/${encodeURIComponent(id)}`, `/api/v1/situations/${encodeURIComponent(id)}`]);
+      const detail = response.data || response; const incidents = Array.isArray(detail.incidents) ? detail.incidents : [];
+      $("#drawerTitle").textContent = detail.title || "Связанная ситуация";
+      $("#drawerSubtitle").textContent = `${detail.status || "OPEN"} · ${detail.affected_count || incidents.length} доступных участников · только чтение`;
+      $("#drawerStatus").innerHTML = `<span class="status-badge ${statusClass(detail.status)}"><i></i>${escapeHtml(detail.status || "OPEN")}</span><p>Это корреляционная группировка, а не вывод о единой причине.</p>`;
+      const factors = detail.factors || detail.reason || {};
+      $("#drawerAxes").innerHTML = [["Провайдер", factors.provider_id || detail.provider_id], ["Район", factors.district || detail.district], ["Тип нарушения", factors.violation_type || detail.violation_type], ["Начало окна", time(detail.start_at, true)]].map(([label, value]) => `<div class="axis-card"><span>${label}</span><b>${escapeHtml(value || "UNKNOWN")}</b><small>Фактор группировки</small></div>`).join("");
+      $("#drawerVerdict").textContent = "Группировка построена существующим materialization worker по сохранённым факторам; она не доказывает общую первопричину.";
+      $("#drawerMetrics").innerHTML = [["Начало", time(detail.start_at, true)], ["Последнее подтверждение", time(detail.latest_confirmation_at, true)], ["Evidence", (detail.evidence && detail.evidence.state) || "NO_DATA"]].map(([label, value]) => `<div class="metric-box"><span>${label}</span><b>${escapeHtml(value)}</b></div>`).join("");
+      const lines = incidents.map((item) => item.line_id).filter(Boolean);
+      $("#drawerContext").innerHTML = [["Статус", detail.status], ["Доступные линии", lines.join(", ") || "NO_DATA"], ["Evidence freshness", detail.evidence?.state || "NO_DATA"], ["Grouping explanation", detail.reason?.time_window_minutes ? `${detail.reason.time_window_minutes} минутное окно` : "UNKNOWN"]].map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeHtml(value || "UNKNOWN")}</dd></div>`).join("");
+      $("#drawerTimeline").innerHTML = incidents.length ? incidents.map((item) => `<div class="timeline-row"><time>${time(item.started_at)}</time><span class="timeline-dot"></span><p><button type="button" class="text-button situation-member-link" data-line-id="${escapeHtml(item.line_id || "")}">${escapeHtml(item.school_name || item.line_id || "Участник")}</button><br>${escapeHtml(item.status || "UNKNOWN")} · evidence ${escapeHtml(item.evidence?.state || "NO_DATA")}</p></div>`).join("") : `<div class="table-empty">NO_DATA: доступные участники отсутствуют.</div>`;
+      $$(".situation-member-link", drawer).forEach((button) => button.addEventListener("click", () => { if (button.dataset.lineId) openLine(button.dataset.lineId); }));
+    } catch (error) {
+      $("#drawerTitle").textContent = "Ситуация недоступна"; $("#drawerSubtitle").textContent = "Ошибка чтения canonical projection";
+      $("#drawerStatus").innerHTML = `<p role="alert">Не удалось загрузить детали. Повторите попытку.</p>`; $("#drawerAxes").innerHTML = ""; $("#drawerTimeline").innerHTML = `<div class="table-empty">Данные недоступны.</div>`;
+    }
   }
   async function openDeviceCard(deviceID) {
     try {
