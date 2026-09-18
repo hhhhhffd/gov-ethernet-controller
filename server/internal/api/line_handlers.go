@@ -336,7 +336,7 @@ func scanMeasurement(scanner interface{ Scan(...interface{}) error }) (measureme
 }
 
 func measurementMap(item measurementRecord) map[string]interface{} {
-	return map[string]interface{}{"id": item.ID, "device_id": item.DeviceID, "line_id": item.LineID, "monitoring_point_id": item.PointID, "client_event_id": item.ClientEventID, "observed_at": item.ObservedAt, "received_at": item.ReceivedAt, "mode": item.Mode, "download": item.Download, "upload": item.Upload, "ping": item.Ping, "jitter": item.Jitter, "packet_loss": item.PacketLoss, "loss": item.PacketLoss, "availability": item.Availability, "connection_status": item.ConnectionStatus, "quality": item.Quality, "raw": decodeJSONBytes(item.Raw), "baseline_state": item.BaselineState, "contract_state": item.ContractState, "violations": decodeJSONBytes(item.Violations), "valid": item.Valid, "reason": item.Reason, "policy_snapshot": decodeJSONBytes(item.PolicySnapshot), "contract_snapshot": decodeJSONBytes(item.ContractSnapshot), "line_context_snapshot": decodeJSONBytes(item.LineContextSnapshot), "verification_status": item.VerificationStatus}
+	return map[string]interface{}{"id": item.ID, "device_id": item.DeviceID, "line_id": item.LineID, "monitoring_point_id": item.PointID, "client_event_id": item.ClientEventID, "observed_at": item.ObservedAt, "received_at": item.ReceivedAt, "mode": item.Mode, "download": item.Download, "upload": item.Upload, "ping": item.Ping, "jitter": item.Jitter, "packet_loss": item.PacketLoss, "loss": item.PacketLoss, "availability": item.Availability, "connection_status": item.ConnectionStatus, "quality": item.Quality, "raw": decodeJSONBytes(item.Raw), "baseline_state": item.BaselineState, "contract_state": item.ContractState, "violations": decodeJSONBytes(item.Violations), "valid": item.Valid, "reason": item.Reason, "policy_snapshot": decodeJSONBytes(item.PolicySnapshot), "contract_snapshot": decodeJSONBytes(item.ContractSnapshot), "line_context_snapshot": decodeJSONBytes(item.LineContextSnapshot), "verification_status": item.VerificationStatus, "evidence_chain": evidenceChain(item)}
 }
 
 func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string]interface{}, error) {
@@ -418,6 +418,7 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 		return nil, err
 	}
 	items := []map[string]interface{}{}
+	records := []measurementRecord{}
 	for rows.Next() {
 		item, scanErr := scanMeasurement(rows)
 		if scanErr != nil {
@@ -425,6 +426,7 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 			return nil, scanErr
 		}
 		items = append(items, measurementMap(item))
+		records = append(records, item)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -432,6 +434,24 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 	}
 	rows.Close()
 	result["measurements"] = items
+	stateForEvidence, stateErr := s.state(ctx, line.ID)
+	if stateErr != nil {
+		return nil, stateErr
+	}
+	selected := records
+	if len(stateForEvidence.Evidence) > 0 {
+		wanted := map[int64]bool{}
+		for _, id := range stateForEvidence.Evidence {
+			wanted[id] = true
+		}
+		selected = []measurementRecord{}
+		for _, record := range records {
+			if wanted[record.ID] {
+				selected = append(selected, record)
+			}
+		}
+	}
+	result["evidence_chain"] = evidenceChainForRecords(selected)
 	monitoring, err := s.monitoringPoints(ctx, line.ID)
 	if err != nil {
 		return nil, err
