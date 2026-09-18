@@ -96,6 +96,34 @@ func TestConfirmationModes(t *testing.T) {
 	}
 }
 
+func TestDurationCandidateBreaksOnUnavailableObservation(t *testing.T) {
+	base := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	rows := []recentEvaluation{
+		{ID: 3, ObservedAt: base.Add(40 * time.Minute), Mode: "PERFORMANCE", Valid: true, ConnectionStatus: "OK", Metrics: map[string]bool{"download": true}, Violations: []evaluation.Violation{{Code: "BASELINE_DOWNLOAD"}}},
+		{ID: 2, ObservedAt: base.Add(20 * time.Minute), Mode: "PERFORMANCE", Valid: true, ConnectionStatus: "NO_INTERNET", Metrics: map[string]bool{}},
+		{ID: 1, ObservedAt: base, Mode: "PERFORMANCE", Valid: true, ConnectionStatus: "OK", Metrics: map[string]bool{"download": true}, Violations: []evaluation.Violation{{Code: "BASELINE_DOWNLOAD"}}},
+	}
+	policy := confirmationPolicy{Mode: confirmationDuration, Duration: 30 * time.Minute}
+	if got := confirmedForCode("line-1", rows, "PERFORMANCE", policy, "BASELINE_DOWNLOAD", false); got != nil {
+		t.Fatalf("duration candidate crossed unavailable observation: %#v", got)
+	}
+}
+
+func TestZeroCountWithoutDurationDoesNotConfirm(t *testing.T) {
+	policy := policyConfirmation(&evaluation.Policy{ConfirmCount: 0}, false)
+	if policy.Mode != confirmationDisabled || confirmationSatisfied(policy, 1, 0) {
+		t.Fatalf("zero-count policy unexpectedly confirms: %#v", policy)
+	}
+}
+
+func TestDurationOnlyPolicyUsesCanonicalField(t *testing.T) {
+	duration := 20
+	policy := policyConfirmation(&evaluation.Policy{ConfirmCount: 0, ConfirmMinutes: 1, ConfirmDurationMinutes: &duration}, false)
+	if policy.Mode != confirmationDuration || policy.Duration != 20*time.Minute {
+		t.Fatalf("duration-only policy = %#v, want 20-minute duration", policy)
+	}
+}
+
 func TestConfirmationEvidenceStopsAtSatisfiedCount(t *testing.T) {
 	base := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	rows := make([]recentEvaluation, 1000)

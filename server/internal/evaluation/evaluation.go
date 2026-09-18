@@ -3,23 +3,24 @@ package evaluation
 import "fmt"
 
 type Policy struct {
-	ID              int64
-	ScopeType       string
-	ScopeID         string
-	Version         int
-	ValidFrom       string
-	ValidTo         *string
-	DownloadMin     float64
-	UploadMin       float64
-	PingMax         float64
-	JitterMax       float64
-	PacketLossMax   float64
-	AvailabilityMin float64
-	ConfirmCount    int
-	ConfirmMinutes  int
-	RecoveryCount   int
-	RecoveryMinutes int
-	FreshnessSec    int
+	ID                     int64
+	ScopeType              string
+	ScopeID                string
+	Version                int
+	ValidFrom              string
+	ValidTo                *string
+	DownloadMin            float64
+	UploadMin              float64
+	PingMax                float64
+	JitterMax              float64
+	PacketLossMax          float64
+	AvailabilityMin        float64
+	ConfirmCount           int
+	ConfirmMinutes         int
+	ConfirmDurationMinutes *int
+	RecoveryCount          int
+	RecoveryMinutes        int
+	FreshnessSec           int
 }
 
 type Contract struct {
@@ -75,7 +76,8 @@ func SnapshotPolicy(p *Policy) map[string]interface{} {
 		"upload_min": p.UploadMin, "ping_max": p.PingMax, "jitter_max": p.JitterMax,
 		"packet_loss_max": p.PacketLossMax, "availability_min": p.AvailabilityMin,
 		"confirm_count": p.ConfirmCount, "confirm_minutes": p.ConfirmMinutes,
-		"recovery_count": p.RecoveryCount, "recovery_minutes": p.RecoveryMinutes,
+		"confirm_duration_minutes": p.ConfirmDurationMinutes,
+		"recovery_count":           p.RecoveryCount, "recovery_minutes": p.RecoveryMinutes,
 		"freshness_seconds": p.FreshnessSec,
 	}
 	return result

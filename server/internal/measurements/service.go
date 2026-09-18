@@ -319,11 +319,12 @@ func loadPolicy(ctx context.Context, q interface {
 	row := &evaluation.Policy{}
 	var validFrom time.Time
 	var validTo *time.Time
-	err := q.QueryRow(ctx, `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds
-        FROM threshold_policy_versions WHERE scope_type='LINE' AND scope_id=$1 AND valid_from <= $2 AND (valid_to IS NULL OR valid_to > $2) ORDER BY valid_from DESC LIMIT 1`, lineID, at).Scan(&row.ID, &row.ScopeType, &row.ScopeID, &row.Version, &validFrom, &validTo, &row.DownloadMin, &row.UploadMin, &row.PingMax, &row.JitterMax, &row.PacketLossMax, &row.AvailabilityMin, &row.ConfirmCount, &row.ConfirmMinutes, &row.RecoveryCount, &row.RecoveryMinutes, &row.FreshnessSec)
+	var durationMinutes *int
+	err := q.QueryRow(ctx, `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,confirm_duration_minutes,recovery_count,recovery_minutes,freshness_seconds
+        FROM threshold_policy_versions WHERE scope_type='LINE' AND scope_id=$1 AND valid_from <= $2 AND (valid_to IS NULL OR valid_to > $2) ORDER BY valid_from DESC LIMIT 1`, lineID, at).Scan(&row.ID, &row.ScopeType, &row.ScopeID, &row.Version, &validFrom, &validTo, &row.DownloadMin, &row.UploadMin, &row.PingMax, &row.JitterMax, &row.PacketLossMax, &row.AvailabilityMin, &row.ConfirmCount, &row.ConfirmMinutes, &durationMinutes, &row.RecoveryCount, &row.RecoveryMinutes, &row.FreshnessSec)
 	if errors.Is(err, pgx.ErrNoRows) {
-		err = q.QueryRow(ctx, `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds
-            FROM threshold_policy_versions WHERE scope_type='GLOBAL' AND valid_from <= $1 AND (valid_to IS NULL OR valid_to > $1) ORDER BY valid_from DESC LIMIT 1`, at).Scan(&row.ID, &row.ScopeType, &row.ScopeID, &row.Version, &validFrom, &validTo, &row.DownloadMin, &row.UploadMin, &row.PingMax, &row.JitterMax, &row.PacketLossMax, &row.AvailabilityMin, &row.ConfirmCount, &row.ConfirmMinutes, &row.RecoveryCount, &row.RecoveryMinutes, &row.FreshnessSec)
+		err = q.QueryRow(ctx, `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,confirm_duration_minutes,recovery_count,recovery_minutes,freshness_seconds
+            FROM threshold_policy_versions WHERE scope_type='GLOBAL' AND valid_from <= $1 AND (valid_to IS NULL OR valid_to > $1) ORDER BY valid_from DESC LIMIT 1`, at).Scan(&row.ID, &row.ScopeType, &row.ScopeID, &row.Version, &validFrom, &validTo, &row.DownloadMin, &row.UploadMin, &row.PingMax, &row.JitterMax, &row.PacketLossMax, &row.AvailabilityMin, &row.ConfirmCount, &row.ConfirmMinutes, &durationMinutes, &row.RecoveryCount, &row.RecoveryMinutes, &row.FreshnessSec)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return policyRow{}, nil
@@ -331,6 +332,7 @@ func loadPolicy(ctx context.Context, q interface {
 	if err != nil {
 		return policyRow{}, err
 	}
+	row.ConfirmDurationMinutes = durationMinutes
 	row.ValidFrom = validFrom.UTC().Format(time.RFC3339)
 	if validTo != nil {
 		value := validTo.UTC().Format(time.RFC3339)
@@ -414,6 +416,7 @@ func readRecent(ctx context.Context, q interface {
 type confirmationMode string
 
 const (
+	confirmationDisabled confirmationMode = "DISABLED"
 	confirmationCount    confirmationMode = "COUNT"
 	confirmationDuration confirmationMode = "DURATION"
 	confirmationEither   confirmationMode = "EITHER"
@@ -427,14 +430,17 @@ type confirmationPolicy struct {
 }
 
 // policyConfirmation keeps the existing database contract usable while making
-// count and duration independent. A positive legacy confirm_minutes is an
-// EITHER policy; it is no longer a maximum window for the count streak. A zero
-// confirm_count can be used by callers that need pure DURATION semantics.
+// count and duration independent. confirm_minutes remains the legacy duration
+// rule; the explicit duration field is the independent problem-confirmation
+// rule. A zero count is allowed only for an explicit duration-only policy.
 func policyConfirmation(policy *evaluation.Policy, recovery bool) confirmationPolicy {
 	result := confirmationPolicy{Mode: confirmationCount, Count: 3}
 	if policy != nil {
 		result.Count = policy.ConfirmCount
 		minutes := policy.ConfirmMinutes
+		if !recovery && policy.ConfirmDurationMinutes != nil {
+			minutes = *policy.ConfirmDurationMinutes
+		}
 		if recovery {
 			result.Count = policy.RecoveryCount
 			minutes = policy.RecoveryMinutes
@@ -449,7 +455,8 @@ func policyConfirmation(policy *evaluation.Policy, recovery bool) confirmationPo
 		}
 	}
 	if result.Count < 1 && result.Mode != confirmationDuration {
-		result.Count = 1
+		result.Count = 0
+		result.Mode = confirmationDisabled
 	}
 	return result
 }
@@ -458,6 +465,8 @@ func confirmationSatisfied(policy confirmationPolicy, count int, duration time.D
 	countOK := policy.Count > 0 && count >= policy.Count
 	durationOK := policy.Duration > 0 && duration >= policy.Duration
 	switch policy.Mode {
+	case confirmationDisabled:
+		return false
 	case confirmationDuration:
 		return durationOK
 	case confirmationEither:
@@ -530,6 +539,12 @@ func relevantEvidence(row recentEvaluation, key evidenceKey) bool {
 		return false
 	}
 	if key.ViolationCode == "NO_INTERNET" {
+		return true
+	}
+	// A connectivity failure is an unavailable performance sample. Include it
+	// in the scan so confirmationEvidence can break a continuous candidate
+	// instead of silently skipping over the NO_DATA interval.
+	if row.ConnectionStatus == "NO_INTERNET" {
 		return true
 	}
 	return row.Metrics[metricForViolation(key.ViolationCode)]
@@ -643,7 +658,12 @@ func writeState(ctx context.Context, q interface {
 func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Time, measurementID int64, result evaluation.Result, policy *evaluation.Policy, contract *evaluation.Contract) error {
 	confirmPolicy := policyConfirmation(policy, false)
 	recoveryPolicy := policyConfirmation(policy, true)
-	recent, err := readRecent(ctx, tx, lineID, maxInt(maxInt(confirmPolicy.Count, recoveryPolicy.Count), 1000))
+	// Keep enough durable evidence to reconstruct a candidate after restart.
+	// Duration is expressed in minutes; using that as a lower bound is safe for
+	// the usual one-or-more observations per minute while retaining the bounded
+	// 1000-row baseline for count-only policies.
+	durationRows := int(confirmPolicy.Duration / time.Minute)
+	recent, err := readRecent(ctx, tx, lineID, maxInt(maxInt(maxInt(confirmPolicy.Count, recoveryPolicy.Count), durationRows+1), 1000))
 	if err != nil {
 		return err
 	}

@@ -94,7 +94,8 @@ func TestEvaluateNoInternetAndInvalidMeasurement(t *testing.T) {
 }
 
 func TestSnapshotsRetainEffectiveConfiguration(t *testing.T) {
-	policy := &Policy{ID: 7, ScopeType: "LINE", ScopeID: "line-7", Version: 3, ValidFrom: "2026-01-01T00:00:00Z", DownloadMin: 17}
+	duration := 15
+	policy := &Policy{ID: 7, ScopeType: "LINE", ScopeID: "line-7", Version: 3, ValidFrom: "2026-01-01T00:00:00Z", DownloadMin: 17, ConfirmDurationMinutes: &duration}
 	snapshot := SnapshotPolicy(policy)
 	snapshot["download_min"] = 99
 	if policy.DownloadMin != 17 {
@@ -102,5 +103,8 @@ func TestSnapshotsRetainEffectiveConfiguration(t *testing.T) {
 	}
 	if SnapshotContract(nil) == nil {
 		t.Fatal("nil contract snapshot must be an empty object")
+	}
+	if got, ok := snapshot["confirm_duration_minutes"].(*int); !ok || got == nil || *got != duration {
+		t.Fatalf("duration snapshot = %#v, want pointer to %d", snapshot["confirm_duration_minutes"], duration)
 	}
 }

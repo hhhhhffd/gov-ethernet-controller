@@ -345,9 +345,10 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 	var validTo *time.Time
 	var d, u, ping, jit, loss, av float64
 	var cc, cm, rc, rm, fs int
-	policyErr := s.DB.Pool.QueryRow(ctx, `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds FROM threshold_policy_versions WHERE (scope_type='LINE' AND scope_id=$1 OR scope_type='GLOBAL') AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now()) ORDER BY CASE WHEN scope_type='LINE' THEN 0 ELSE 1 END,valid_from DESC LIMIT 1`, line.ID).Scan(&policyID, &scopeType, &scopeID, &version, &validFrom, &validTo, &d, &u, &ping, &jit, &loss, &av, &cc, &cm, &rc, &rm, &fs)
+	var duration *int
+	policyErr := s.DB.Pool.QueryRow(ctx, `SELECT id,scope_type,COALESCE(scope_id,''),version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,confirm_duration_minutes,recovery_count,recovery_minutes,freshness_seconds FROM threshold_policy_versions WHERE (scope_type='LINE' AND scope_id=$1 OR scope_type='GLOBAL') AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now()) ORDER BY CASE WHEN scope_type='LINE' THEN 0 ELSE 1 END,valid_from DESC LIMIT 1`, line.ID).Scan(&policyID, &scopeType, &scopeID, &version, &validFrom, &validTo, &d, &u, &ping, &jit, &loss, &av, &cc, &cm, &duration, &rc, &rm, &fs)
 	if policyErr == nil {
-		policy = map[string]interface{}{"id": policyID, "scope_type": scopeType, "scope_id": scopeID, "version": version, "valid_from": validFrom, "valid_to": validTo, "download_min": d, "upload_min": u, "ping_max": ping, "jitter_max": jit, "packet_loss_max": loss, "availability_min": av, "confirm_count": cc, "confirm_minutes": cm, "recovery_count": rc, "recovery_minutes": rm, "freshness_seconds": fs}
+		policy = map[string]interface{}{"id": policyID, "scope_type": scopeType, "scope_id": scopeID, "version": version, "valid_from": validFrom, "valid_to": validTo, "download_min": d, "upload_min": u, "ping_max": ping, "jitter_max": jit, "packet_loss_max": loss, "availability_min": av, "confirm_count": cc, "confirm_minutes": cm, "confirm_duration_minutes": duration, "recovery_count": rc, "recovery_minutes": rm, "freshness_seconds": fs}
 	} else if !errors.Is(policyErr, pgx.ErrNoRows) {
 		return nil, policyErr
 	}

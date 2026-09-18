@@ -1118,7 +1118,7 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		return
 	}
 	if r.Method == http.MethodGet {
-		rows, err := s.DB.Pool.Query(r.Context(), `SELECT id,scope_type,scope_id,version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds,created_at FROM threshold_policy_versions ORDER BY valid_from DESC`)
+		rows, err := s.DB.Pool.Query(r.Context(), `SELECT id,scope_type,scope_id,version,valid_from,valid_to,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,confirm_duration_minutes,recovery_count,recovery_minutes,freshness_seconds,created_at FROM threshold_policy_versions ORDER BY valid_from DESC`)
 		if err != nil {
 			writeError(w, 500, "could not query policies")
 			return
@@ -1130,12 +1130,13 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 			var typ string
 			var scope *string
 			var version, cc, cm, rc, rm, fs int
+			var duration *int
 			var from time.Time
 			var to *time.Time
 			var d, u, ping, jit, loss, av float64
 			var created time.Time
-			if rows.Scan(&id, &typ, &scope, &version, &from, &to, &d, &u, &ping, &jit, &loss, &av, &cc, &cm, &rc, &rm, &fs, &created) == nil {
-				result = append(result, map[string]interface{}{"id": id, "scope_type": typ, "scope_id": scope, "version": version, "valid_from": from, "valid_to": to, "download_min": d, "upload_min": u, "ping_max": ping, "jitter_max": jit, "packet_loss_max": loss, "availability_min": av, "confirm_count": cc, "confirm_minutes": cm, "recovery_count": rc, "recovery_minutes": rm, "freshness_seconds": fs, "created_at": created})
+			if rows.Scan(&id, &typ, &scope, &version, &from, &to, &d, &u, &ping, &jit, &loss, &av, &cc, &cm, &duration, &rc, &rm, &fs, &created) == nil {
+				result = append(result, map[string]interface{}{"id": id, "scope_type": typ, "scope_id": scope, "version": version, "valid_from": from, "valid_to": to, "download_min": d, "upload_min": u, "ping_max": ping, "jitter_max": jit, "packet_loss_max": loss, "availability_min": av, "confirm_count": cc, "confirm_minutes": cm, "confirm_duration_minutes": duration, "recovery_count": rc, "recovery_minutes": rm, "freshness_seconds": fs, "created_at": created})
 			}
 		}
 		writeJSON(w, 200, result)
@@ -1146,23 +1147,24 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		return
 	}
 	var payload struct {
-		ScopeType        string     `json:"scope_type"`
-		ScopeID          string     `json:"scope_id"`
-		ValidFrom        *time.Time `json:"valid_from"`
-		ValidTo          *time.Time `json:"valid_to"`
-		Version          int        `json:"version"`
-		DownloadMin      float64    `json:"download_min"`
-		UploadMin        float64    `json:"upload_min"`
-		PingMax          float64    `json:"ping_max"`
-		JitterMax        float64    `json:"jitter_max"`
-		PacketLossMax    float64    `json:"packet_loss_max"`
-		AvailabilityMin  float64    `json:"availability_min"`
-		ConfirmCount     int        `json:"confirm_count"`
-		ConfirmMinutes   int        `json:"confirm_minutes"`
-		RecoveryCount    int        `json:"recovery_count"`
-		RecoveryMinutes  int        `json:"recovery_minutes"`
-		FreshnessSeconds int        `json:"freshness_seconds"`
-		Reason           string     `json:"reason"`
+		ScopeType              string     `json:"scope_type"`
+		ScopeID                string     `json:"scope_id"`
+		ValidFrom              *time.Time `json:"valid_from"`
+		ValidTo                *time.Time `json:"valid_to"`
+		Version                int        `json:"version"`
+		DownloadMin            float64    `json:"download_min"`
+		UploadMin              float64    `json:"upload_min"`
+		PingMax                float64    `json:"ping_max"`
+		JitterMax              float64    `json:"jitter_max"`
+		PacketLossMax          float64    `json:"packet_loss_max"`
+		AvailabilityMin        float64    `json:"availability_min"`
+		ConfirmCount           int        `json:"confirm_count"`
+		ConfirmMinutes         int        `json:"confirm_minutes"`
+		ConfirmDurationMinutes *int       `json:"confirm_duration_minutes"`
+		RecoveryCount          int        `json:"recovery_count"`
+		RecoveryMinutes        int        `json:"recovery_minutes"`
+		FreshnessSeconds       int        `json:"freshness_seconds"`
+		Reason                 string     `json:"reason"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, 422, "invalid policy payload")
@@ -1207,7 +1209,7 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	if payload.AvailabilityMin == 0 {
 		payload.AvailabilityMin = 99
 	}
-	if payload.ConfirmCount == 0 {
+	if payload.ConfirmCount == 0 && payload.ConfirmDurationMinutes == nil {
 		payload.ConfirmCount = 3
 	}
 	if payload.RecoveryCount == 0 {
@@ -1216,7 +1218,7 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	if payload.FreshnessSeconds == 0 {
 		payload.FreshnessSeconds = 86400
 	}
-	if payload.DownloadMin < 0 || payload.UploadMin < 0 || payload.PingMax < 0 || payload.JitterMax < 0 || payload.PacketLossMax < 0 || payload.PacketLossMax > 100 || payload.AvailabilityMin < 0 || payload.AvailabilityMin > 100 || payload.ConfirmCount < 1 || payload.ConfirmCount > 100 || payload.ConfirmMinutes < 0 || payload.ConfirmMinutes > 10080 || payload.RecoveryCount < 1 || payload.RecoveryCount > 100 || payload.RecoveryMinutes < 0 || payload.RecoveryMinutes > 10080 || payload.FreshnessSeconds < 1 || payload.FreshnessSeconds > 604800 {
+	if payload.DownloadMin < 0 || payload.UploadMin < 0 || payload.PingMax < 0 || payload.JitterMax < 0 || payload.PacketLossMax < 0 || payload.PacketLossMax > 100 || payload.AvailabilityMin < 0 || payload.AvailabilityMin > 100 || payload.ConfirmCount < 0 || payload.ConfirmCount > 100 || (payload.ConfirmCount == 0 && payload.ConfirmDurationMinutes == nil) || payload.ConfirmMinutes < 0 || payload.ConfirmMinutes > 10080 || (payload.ConfirmDurationMinutes != nil && (*payload.ConfirmDurationMinutes < 1 || *payload.ConfirmDurationMinutes > 10080)) || payload.RecoveryCount < 1 || payload.RecoveryCount > 100 || payload.RecoveryMinutes < 0 || payload.RecoveryMinutes > 10080 || payload.FreshnessSeconds < 1 || payload.FreshnessSeconds > 604800 {
 		writeError(w, 422, "policy thresholds are outside the allowed range")
 		return
 	}
@@ -1258,7 +1260,7 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 	}
 	createdAt := time.Now().UTC().Truncate(time.Second)
 	var id int64
-	err = tx.QueryRow(r.Context(), `INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,valid_to,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, payload.ScopeType, nullableString(payload.ScopeID), *payload.ValidFrom, payload.ValidTo, payload.Version, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, payload.ConfirmCount, payload.ConfirmMinutes, payload.RecoveryCount, payload.RecoveryMinutes, payload.FreshnessSeconds, p.ID, createdAt).Scan(&id)
+	err = tx.QueryRow(r.Context(), `INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,valid_to,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,confirm_duration_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING id`, payload.ScopeType, nullableString(payload.ScopeID), *payload.ValidFrom, payload.ValidTo, payload.Version, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, payload.ConfirmCount, payload.ConfirmMinutes, payload.ConfirmDurationMinutes, payload.RecoveryCount, payload.RecoveryMinutes, payload.FreshnessSeconds, p.ID, createdAt).Scan(&id)
 	if err != nil {
 		if isVersionConstraintConflict(err) {
 			writeError(w, http.StatusConflict, "policy version or effective interval conflicts with an existing version")
@@ -1272,7 +1274,7 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		"valid_from": *payload.ValidFrom, "valid_to": payload.ValidTo, "download_min": payload.DownloadMin,
 		"upload_min": payload.UploadMin, "ping_max": payload.PingMax, "jitter_max": payload.JitterMax,
 		"packet_loss_max": payload.PacketLossMax, "availability_min": payload.AvailabilityMin,
-		"confirm_count": payload.ConfirmCount, "confirm_minutes": payload.ConfirmMinutes,
+		"confirm_count": payload.ConfirmCount, "confirm_minutes": payload.ConfirmMinutes, "confirm_duration_minutes": payload.ConfirmDurationMinutes,
 		"recovery_count": payload.RecoveryCount, "recovery_minutes": payload.RecoveryMinutes,
 		"freshness_seconds": payload.FreshnessSeconds,
 	}
@@ -1284,7 +1286,7 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		writeError(w, 500, "could not commit policy")
 		return
 	}
-	writeJSON(w, 201, map[string]interface{}{"id": id, "version": payload.Version, "scope_type": payload.ScopeType, "scope_id": payload.ScopeID, "valid_from": payload.ValidFrom, "valid_to": payload.ValidTo, "confirm_count": payload.ConfirmCount, "confirm_minutes": payload.ConfirmMinutes, "recovery_count": payload.RecoveryCount, "recovery_minutes": payload.RecoveryMinutes})
+	writeJSON(w, 201, map[string]interface{}{"id": id, "version": payload.Version, "scope_type": payload.ScopeType, "scope_id": payload.ScopeID, "valid_from": payload.ValidFrom, "valid_to": payload.ValidTo, "confirm_count": payload.ConfirmCount, "confirm_minutes": payload.ConfirmMinutes, "confirm_duration_minutes": payload.ConfirmDurationMinutes, "recovery_count": payload.RecoveryCount, "recovery_minutes": payload.RecoveryMinutes})
 }
 
 func nullableString(value string) *string {
