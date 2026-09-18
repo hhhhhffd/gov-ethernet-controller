@@ -362,6 +362,7 @@ func (s *Server) passport(w http.ResponseWriter, r *http.Request) {
 	}
 	incidentCount, duration, err := s.incidentStats(r, p, start, end)
 	if err != nil {
+		s.Logger.Error("could not calculate incident statistics", "error", err)
 		writeError(w, 500, "could not calculate incident statistics")
 		return
 	}
@@ -495,7 +496,7 @@ func ratio(ok, known int) *float64 {
 func (s *Server) incidentStats(r *http.Request, p *auth.Principal, start, end time.Time) (int, float64, error) {
 	where, params := scopeSQL(p, 1)
 	params = append(params, end, start)
-	rows, err := s.DB.Pool.Query(r.Context(), `SELECT i.started_at,i.closed_at FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id WHERE `+where+` AND i.started_at < $`+itoa(len(params)-1)+` AND (i.closed_at IS NULL OR i.closed_at >= $`+itoa(len(params)), params...)
+	rows, err := s.DB.Pool.Query(r.Context(), `SELECT i.started_at,i.closed_at FROM incidents i JOIN lines l ON l.id=i.line_id JOIN organizations o ON o.id=l.organization_id WHERE `+where+` AND i.started_at < $`+itoa(len(params)-1)+` AND (i.closed_at IS NULL OR i.closed_at >= $`+itoa(len(params))+`)`, params...)
 	if err != nil {
 		return 0, 0, err
 	}

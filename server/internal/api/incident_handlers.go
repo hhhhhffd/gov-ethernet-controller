@@ -98,7 +98,7 @@ func (s *Server) incidentMap(ctx context.Context, item incidentRecord) (map[stri
 		actions = append(actions, map[string]interface{}{"at": event["at"], "text": event["text"], "actor": event["actor"], "payload": event["payload"]})
 	}
 	result["actions"] = actions
-	relatedRows, relatedErr := s.DB.Pool.Query(ctx, `SELECT id,incident_no,status,started_at,closed_at,duration_minutes,recurrence_of FROM incidents WHERE line_id=$1 AND id<>$2 AND started_at >= $3 - INTERVAL '90 days' ORDER BY started_at DESC,id DESC`, item.LineID, item.ID, item.StartedAt)
+	relatedRows, relatedErr := s.DB.Pool.Query(ctx, `SELECT id,incident_no,status,started_at,closed_at,duration_minutes,recurrence_of FROM incidents WHERE line_id=$1 AND id<>$2 AND started_at >= ($3::timestamptz - INTERVAL '90 days') ORDER BY started_at DESC,id DESC`, item.LineID, item.ID, item.StartedAt)
 	if relatedErr != nil {
 		return nil, fmt.Errorf("query related incidents: %w", relatedErr)
 	}
@@ -213,6 +213,7 @@ func (s *Server) listIncidents(w http.ResponseWriter, r *http.Request) {
 	for _, item := range items {
 		mapped, mapErr := s.incidentMap(r.Context(), item)
 		if mapErr != nil {
+			s.Logger.Error("could not map incident", "incident_id", item.ID, "error", mapErr)
 			writeError(w, 500, "could not read incident details")
 			return
 		}
