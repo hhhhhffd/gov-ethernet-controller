@@ -350,7 +350,36 @@ func (s *Server) notifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	where, params := scopeSQL(p, 1)
-	rows, err := s.DB.Pool.Query(r.Context(), `SELECT n.id,n.source_type,n.source_id,n.channel,n.recipient_scope,n.message,n.status,n.delivery_attempts,n.delivery_error,n.delivery_retryable,n.next_attempt_at,n.delivery_started_at,n.generated_at,n.sent_at,n.read_at FROM notifications n JOIN lines l ON l.id=n.recipient_scope JOIN organizations o ON o.id=l.organization_id WHERE `+where+` ORDER BY n.id DESC`, params...)
+	filters := []string{where}
+	if value := strings.TrimSpace(r.URL.Query().Get("source_type")); value != "" {
+		params = append(params, strings.ToUpper(value))
+		filters = append(filters, "n.source_type=$"+itoa(len(params)))
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("status")); value != "" {
+		params = append(params, strings.ToUpper(value))
+		filters = append(filters, "n.status=$"+itoa(len(params)))
+	}
+	if value := strings.TrimSpace(r.URL.Query().Get("before_id")); value != "" {
+		before, parseErr := strconv.ParseInt(value, 10, 64)
+		if parseErr != nil || before < 1 {
+			writeError(w, http.StatusUnprocessableEntity, "before_id must be a positive notification id")
+			return
+		}
+		params = append(params, before)
+		filters = append(filters, "n.id<$"+itoa(len(params)))
+	}
+	limit := notificationLimit(r.URL.Query().Get("limit"))
+	params = append(params, limit)
+	query := `SELECT n.id,n.source_type,n.source_id,n.channel,n.recipient_scope,n.message,n.status,n.delivery_attempts,n.delivery_error,n.delivery_retryable,n.next_attempt_at,n.delivery_started_at,n.generated_at,n.sent_at,n.read_at,
+        l.organization_id,o.school_id,o.name,o.district,l.provider_id,
+        CASE WHEN i.id IS NULL THEN NULL ELSE i.id END,
+        CASE WHEN i.id IS NULL THEN NULL ELSE i.line_id END
+        FROM notifications n
+        JOIN lines l ON l.id=n.recipient_scope
+        JOIN organizations o ON o.id=l.organization_id
+        LEFT JOIN incidents i ON i.id=CASE WHEN n.source_id ~ '^[0-9]+$' THEN n.source_id::bigint ELSE NULL END AND n.source_type='INCIDENT' AND i.line_id=l.id
+        WHERE ` + strings.Join(filters, " AND ") + ` ORDER BY n.id DESC LIMIT $` + itoa(len(params))
+	rows, err := s.DB.Pool.Query(r.Context(), query, params...)
 	if err != nil {
 		writeError(w, 500, "could not query notifications")
 		return
@@ -364,17 +393,38 @@ func (s *Server) notifications(w http.ResponseWriter, r *http.Request) {
 		var delivery *string
 		var retryable bool
 		var nextAttempt, deliveryStarted, generated, sent, read *time.Time
-		if err := rows.Scan(&id, &sourceType, &sourceID, &channel, &scope, &message, &status, &attempts, &delivery, &retryable, &nextAttempt, &deliveryStarted, &generated, &sent, &read); err != nil {
+		var organizationID, schoolID, schoolName, district, providerID string
+		var incidentID *int64
+		var incidentLineID *string
+		if err := rows.Scan(&id, &sourceType, &sourceID, &channel, &scope, &message, &status, &attempts, &delivery, &retryable, &nextAttempt, &deliveryStarted, &generated, &sent, &read, &organizationID, &schoolID, &schoolName, &district, &providerID, &incidentID, &incidentLineID); err != nil {
 			writeError(w, 500, "could not read notifications")
 			return
 		}
-		result = append(result, map[string]interface{}{"id": id, "source_type": sourceType, "source_id": sourceID, "channel": channel, "recipient_scope": scope, "message": message, "status": status, "delivery_attempts": attempts, "delivery_error": delivery, "delivery_retryable": retryable, "next_attempt_at": nextAttempt, "delivery_started_at": deliveryStarted, "generated_at": generated, "sent_at": sent, "read_at": read})
+		item := map[string]interface{}{"id": id, "source_type": sourceType, "source_id": sourceID, "channel": channel, "recipient_scope": scope, "message": message, "status": status, "delivery_attempts": attempts, "delivery_error": delivery, "delivery_retryable": retryable, "next_attempt_at": nextAttempt, "delivery_started_at": deliveryStarted, "generated_at": generated, "sent_at": sent, "read_at": read, "line_id": scope, "organization_id": organizationID, "school_id": schoolID, "school_name": schoolName, "district": district, "provider_id": providerID}
+		if incidentID != nil {
+			item["incident_id"] = *incidentID
+		}
+		if incidentLineID != nil {
+			item["incident_line_id"] = *incidentLineID
+		}
+		result = append(result, item)
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, 500, "could not read notifications")
 		return
 	}
 	writeJSON(w, 200, result)
+}
+
+func notificationLimit(value string) int {
+	limit, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || limit < 1 {
+		return 50
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
 }
 
 func (s *Server) notificationDispatch(w http.ResponseWriter, r *http.Request, p *auth.Principal, id string) {

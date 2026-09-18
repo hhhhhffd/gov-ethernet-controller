@@ -9,6 +9,10 @@
     user: null,
     lines: [],
     incidents: [],
+    notifications: [],
+    notificationBeforeId: null,
+    notificationLoading: false,
+    notificationError: null,
     situations: [],
     audit: [],
     filters: { search: "", district: "", provider: "", technology: "", status: "", period: "week", from: "", to: "", view: "lines" },
@@ -134,6 +138,7 @@
   function canSendProvider() { return hasCapability("provider_case.send"); }
   function applyCapabilities() {
     const admin = $("[data-view='admin']"); if (admin) admin.hidden = !canAdmin();
+    const notifications = $("[data-view='notifications']"); if (notifications) notifications.hidden = !hasCapability("notification.read");
     const replay = $("#demoButton"); if (replay) replay.hidden = !canAdmin();
     const manual = $("#manualIncidentButton"); if (manual) manual.hidden = !hasCapability("incident.create");
     $$("[data-provider-action]").forEach((button) => { button.hidden = !canSendProvider(button._line || null); });
@@ -155,6 +160,7 @@
       // Audit is intentionally optional for scoped users. A 403 here must not
       // discard otherwise valid line/incident data and replace it with demo rows.
       audit = await apiTry(["/api/audit", "/api/v1/audit"]).catch(() => []);
+      await loadNotifications(true);
       state.lines = unwrap(lines).map(normalizeLine);
       state.incidents = unwrap(incidents).map((item) => ({ ...item, number: item.number || item.id, school_name: item.school_name || item.school?.name || "—", provider: item.provider_name || item.provider?.name || "—", district: item.district || item.school?.district || "—" }));
       state.situations = unwrap(situations);
@@ -165,6 +171,8 @@
       state.usingDemoData = state.demoMode;
       state.lines = state.demoMode ? sampleLines.map(normalizeLine) : [];
       state.incidents = state.demoMode ? sampleIncidents.slice() : [];
+      state.notifications = [];
+      state.notificationError = error;
       state.situations = state.demoMode ? sampleSituations.slice() : [];
       renderOverview(state.demoMode ? { schools: 128, active_devices: 117, problem_lines: 9, completeness: 94 } : { counts: { schools: 0, lines: 0, active_devices: 0, problem_lines: 0 }, completeness: 0 });
       $("#noticeTitle").textContent = state.demoMode ? "Демо-срез: сервер мониторинга недоступен" : "Сервер мониторинга недоступен";
@@ -215,7 +223,7 @@
       return matchesQuery && matchesDistrict && matchesProvider && matchesTechnology && matchesStatus && matchesView;
     });
   }
-  function renderAll() { renderMap(); renderSituations(); renderLines(); renderActivity(); renderIncidents(); renderPassport(); $("#situationCount").textContent = state.situations.length; $("#mapVisibleCount").textContent = filteredLines().length; $("#lineCount").textContent = state.lines.length; }
+  function renderAll() { renderMap(); renderSituations(); renderLines(); renderActivity(); renderIncidents(); renderNotifications(); renderPassport(); $("#situationCount").textContent = state.situations.length; $("#mapVisibleCount").textContent = filteredLines().length; $("#lineCount").textContent = state.lines.length; }
   function renderMap() {
     const root = $("#mapMarkers"); if (!root) return;
     const rows = filteredLines();
@@ -250,6 +258,29 @@
     $$("[data-incident-action]", root).forEach((button) => button.addEventListener("click", () => { const incident = state.incidents.find((item) => item.id === button.dataset.incidentId); if (!incident) return; if (button.dataset.incidentAction === "draft") openCaseModal(incident); else { const line = state.lines.find((item) => item.id === incident.line_id); if (line) openLine(line.id); else toast("Timeline инцидента доступна в API", "warn"); } }));
   }
   function incidentStatusLabel(status) { return ({ NEW: "Новый", SENT_TO_PROVIDER: "Передан провайдеру", IN_PROGRESS: "В работе", WAITING_INFO: "Ожидает информации", RESOLVED: "Устранён · проверка", CLOSED: "Закрыт" }[String(status || "").toUpperCase()] || status || "Новый"); }
+  function notificationDeliveryLabel(status) { return ({ PENDING: "Ожидает доставки", GENERATED: "Сформировано", DELIVERING: "Доставляется", SENT: "Доставлено", FAILED: "Ошибка доставки" }[String(status || "").toUpperCase()] || status || "Неизвестно"); }
+  function renderNotifications() {
+    const root = $("#notificationList"); if (!root) return;
+    if (state.notificationLoading && !state.notifications.length) { root.innerHTML = `<div class="table-empty">Загрузка уведомлений…</div>`; return; }
+    if (state.notificationError && !state.notifications.length) { root.innerHTML = `<div class="table-empty">Не удалось загрузить уведомления. Повторите попытку.</div>`; $("#notificationSummary").textContent = "Ошибка сервера"; return; }
+    if (!state.notifications.length) { root.innerHTML = `<div class="table-empty">Уведомлений нет</div>`; $("#notificationSummary").textContent = "Нет доступных уведомлений"; return; }
+    root.innerHTML = state.notifications.map((item) => {
+      const noData = /NO_DATA|нет актуальн|недостаточно данных/i.test(`${item.message || ""} ${item.source_type || ""}`);
+      const link = item.line_id ? `<button class="text-button notification-link" data-notification-line="${escapeHtml(item.line_id)}">Открыть линию →</button>` : "";
+      return `<article class="notification-item"><div class="notification-top"><span class="notification-type">${escapeHtml(item.source_type || "Событие")}</span><span class="status-badge ${statusClass(item.status === "FAILED" ? "CRITICAL" : item.status === "SENT" ? "OK" : "UNKNOWN")}"><i></i>${escapeHtml(notificationDeliveryLabel(item.status))}</span></div><p class="notification-message">${escapeHtml(item.message || "Системное уведомление")}</p><div class="notification-context"><span>${escapeHtml(item.school_name || "Организация не указана")} · ${escapeHtml(item.line_id || "Линия не указана")}</span><time>${escapeHtml(time(item.generated_at, true))}</time></div>${noData ? `<small class="notification-note">Нет актуальных данных — это не подтверждает отсутствие интернета.</small>` : ""}<div class="notification-action">${link}</div></article>`;
+    }).join("");
+    $("#notificationSummary").textContent = `Показано ${state.notifications.length} уведомлений`;
+    const more = $("#notificationLoadMore"); if (more) more.hidden = state.notifications.length < 50 || !state.notificationBeforeId;
+    $$(".notification-link", root).forEach((button) => button.addEventListener("click", () => openLine(button.dataset.notificationLine)));
+  }
+  async function loadNotifications(reset = false) {
+    if (!hasCapability("notification.read")) { state.notifications = []; state.notificationError = null; renderNotifications(); return; }
+    if (state.notificationLoading) return;
+    if (reset) { state.notifications = []; state.notificationBeforeId = null; state.notificationError = null; }
+    state.notificationLoading = true; renderNotifications();
+    const params = new URLSearchParams({ limit: "50" }); if (state.notificationBeforeId) params.set("before_id", state.notificationBeforeId);
+    try { const payload = await apiTry([`/api/notifications?${params}`, `/api/v1/notifications?${params}`]); const items = unwrap(payload); state.notifications = reset ? items : state.notifications.concat(items); state.notificationBeforeId = items.length ? items[items.length - 1].id : null; state.notificationError = null; } catch (error) { state.notificationError = error; } finally { state.notificationLoading = false; renderNotifications(); }
+  }
   function renderPassport(data = {}) { const root = $("#passportGrid"); const values = Object.keys(data).length || !state.usingDemoData ? data : { baseline_rate: 91, contract_rate: 68, received: 121, expected: 124, incident_count: 2, problem_minutes: 460, trend: "Стабильно", completeness: 94, ...data }; if (values.completeness != null) $("#qualityScore").textContent = number(values.completeness); if (values.baseline_rate != null) $("#baselineRate").textContent = `${number(values.baseline_rate)}%`; if (values.contract_rate != null) $("#contractRate").textContent = `${number(values.contract_rate)}%`; $("#recoveryRate").textContent = state.usingDemoData ? "87%" : "—"; const noteTitle = $(".quality-note b"); const noteText = $(".quality-note small"); if (noteTitle) noteTitle.textContent = values.sufficient_data === false ? "Недостаточно данных для вывода" : "Данных достаточно для вывода"; if (noteText) noteText.textContent = values.received != null && values.expected != null ? `${values.received} из ${values.expected} ожидаемых наблюдений за период` : "Ожидаемые и полученные наблюдения пока не рассчитаны"; const cards = [{ label: "Базовый норматив", value: `${values.baseline_rate ?? 0}%`, note: "наблюдений соответствуют" }, { label: "Договорный ориентир", value: `${values.contract_rate ?? 0}%`, note: "наблюдений соответствуют" }, { label: "Полнота данных", value: values.received != null && values.expected != null ? `${values.received} / ${values.expected}` : "Нет данных", note: "ожидаемых наблюдений" }, { label: "Подтверждённые случаи", value: values.incident_count ?? 0, note: "за выбранный период" }, { label: "Суммарная длительность", value: values.problem_minutes != null ? `${Math.round(values.problem_minutes)} мин` : "Нет данных", note: "подтверждённых нарушений" }, { label: "Динамика", value: values.trend || (values.sufficient_data === false ? "Недостаточно данных" : "Стабильно"), note: "к предыдущему периоду" }]; root.innerHTML = cards.map((card) => `<div class="passport-item"><span>${escapeHtml(card.label)}</span><b>${escapeHtml(card.value)}</b><small>${escapeHtml(card.note)}</small></div>`).join(""); }
 
   async function openLine(id) {
@@ -312,11 +343,12 @@
   function showView(view) {
     if (view === "admin" && !canAdmin()) return;
     const isOverview = view === "overview" || view === "lines";
-    ["incidents", "reports", "admin"].forEach((name) => { const element = $(`#${name}View`); if (element) element.classList.toggle("hidden", view !== name); });
+    ["incidents", "notifications", "reports", "admin"].forEach((name) => { const element = $(`#${name}View`); if (element) element.classList.toggle("hidden", view !== name); });
     $("#linesSection").classList.toggle("hidden", !isOverview);
     $$(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.view === view || (view === "lines" && item.dataset.view === "overview")));
     if (view === "reports") loadPassport();
     if (view === "incidents") renderIncidents();
+    if (view === "notifications") { renderNotifications(); if (!state.notifications.length) loadNotifications(true); }
     if (view !== "overview" && window.innerWidth <= 960) $(".rail").classList.remove("open");
   }
   function toast(message, tone = "") { const node = document.createElement("div"); node.className = `toast ${tone}`; node.textContent = message; $("#toastRegion").appendChild(node); setTimeout(() => node.remove(), 4200); }
@@ -325,6 +357,7 @@
     $$("[data-view]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.view)));
     $("#menuToggle").addEventListener("click", () => $(".rail").classList.add("open")); $("#railClose").addEventListener("click", () => $(".rail").classList.remove("open"));
     $("#refreshButton").addEventListener("click", () => loadData()); $("#demoButton").addEventListener("click", createReplay); $("#exportButton").addEventListener("click", () => downloadExport("raw-csv")); $("#noticeDismiss").addEventListener("click", () => $("#noticeBar").classList.add("hidden"));
+    $("#notificationRefresh").addEventListener("click", () => loadNotifications(true)); $("#notificationLoadMore").addEventListener("click", () => loadNotifications(false));
     $("#passportButton").addEventListener("click", () => showView("reports"));
     $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer); $("#caseModalClose").addEventListener("click", closeCaseModal); $("#caseCancel").addEventListener("click", closeCaseModal); $("#caseSend").addEventListener("click", sendCase);
     $("#reviewConfirm").addEventListener("change", (event) => { $("#caseSend").disabled = !event.target.checked; }); $("#draftText").addEventListener("input", () => { $("#reviewConfirm").checked = false; $("#caseSend").disabled = true; });

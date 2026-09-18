@@ -38,10 +38,13 @@ func TestPasswordHashVerification(t *testing.T) {
 
 func TestEffectiveCapabilitiesUseBackendActionContract(t *testing.T) {
 	admin := EffectiveCapabilities(&Principal{Role: "ADMIN"})
-	if !containsCapability(admin, "admin.users") || !containsCapability(admin, "notification.dispatch") {
+	if !containsCapability(admin, "admin.users") || !containsCapability(admin, "notification.dispatch") || !containsCapability(admin, "notification.read") {
 		t.Fatalf("admin capabilities = %v", admin)
 	}
 	school := EffectiveCapabilities(&Principal{Role: "SCHOOL"})
+	if !containsCapability(school, "notification.read") {
+		t.Fatalf("school lacks notification.read: %v", school)
+	}
 	if containsCapability(school, "incident.create") || containsCapability(school, "provider_case.send") {
 		t.Fatalf("school received mutation capabilities: %v", school)
 	}

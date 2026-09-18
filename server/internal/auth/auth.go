@@ -38,7 +38,7 @@ func EffectiveCapabilities(p *Principal) []string {
 	if p == nil {
 		return nil
 	}
-	capabilities := []string{"line.read", "incident.read", "report.read", "report.export"}
+	capabilities := []string{"line.read", "incident.read", "report.read", "report.export", "notification.read"}
 	switch p.Role {
 	case "ADMIN":
 		capabilities = append(capabilities, "audit.read", "admin.manage", "admin.users", "admin.devices", "admin.policies", "notification.dispatch", "incident.create", "incident.update", "provider_case.draft", "provider_case.send")
