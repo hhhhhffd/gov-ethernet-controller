@@ -195,6 +195,10 @@ func (s *Server) adminUserRoute(w http.ResponseWriter, r *http.Request, p *auth.
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if r.Method == http.MethodPost {
+		if err := validateUserScopes(r.Context(), s, payload.Role, payload.Scopes); err != nil {
+			writeError(w, 422, err.Error())
+			return
+		}
 		if strings.EqualFold(getenv("LINKWATCH_ENV", "development"), "production") && len(payload.Password) < 12 {
 			writeError(w, 422, "a 12+ character password is required in production")
 			return
@@ -248,6 +252,10 @@ func (s *Server) adminUserRoute(w http.ResponseWriter, r *http.Request, p *auth.
 	previousScopes, err := userScopes(r.Context(), s, payload.ID)
 	if err != nil {
 		writeError(w, 500, "could not read user scopes")
+		return
+	}
+	if err := validateUserScopes(r.Context(), s, payload.Role, payload.Scopes); err != nil {
+		writeError(w, 422, err.Error())
 		return
 	}
 	setPassword := ""
@@ -323,6 +331,54 @@ func replaceUserScopes(ctx context.Context, s *Server, userID string, scopes []s
 		}
 	}
 	return nil
+}
+
+func validateUserScopes(ctx context.Context, s *Server, role string, scopes []scopePayload) error {
+	for _, scope := range scopes {
+		typ := strings.ToUpper(strings.TrimSpace(scope.Type))
+		if scope.ID == "" {
+			return fmt.Errorf("scope_type and scope_id are required")
+		}
+		if err := validateScopeRole(role, typ); err != nil {
+			return err
+		}
+		var exists bool
+		var query string
+		switch typ {
+		case "PROVIDER":
+			query = `SELECT EXISTS(SELECT 1 FROM providers WHERE id=$1 AND active)`
+		case "LINE":
+			query = `SELECT EXISTS(SELECT 1 FROM lines WHERE id=$1 AND status <> 'DELETED')`
+		case "ORGANIZATION":
+			query = `SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1 AND active)`
+		case "DISTRICT":
+			query = `SELECT EXISTS(SELECT 1 FROM districts WHERE id=$1 AND active)`
+		default:
+			return fmt.Errorf("unsupported scope type %q", typ)
+		}
+		if err := s.DB.Pool.QueryRow(ctx, query, scope.ID).Scan(&exists); err != nil {
+			return fmt.Errorf("could not validate scope")
+		}
+		if !exists {
+			return fmt.Errorf("scope %s:%s not found or inactive", typ, scope.ID)
+		}
+	}
+	return nil
+}
+
+func validateScopeRole(role, scopeType string) error {
+	if scopeType == "PROVIDER" && role != "PROVIDER" {
+		return fmt.Errorf("provider scope requires PROVIDER role")
+	}
+	if role == "PROVIDER" && scopeType != "PROVIDER" {
+		return fmt.Errorf("PROVIDER role requires provider scopes")
+	}
+	switch scopeType {
+	case "PROVIDER", "LINE", "ORGANIZATION", "DISTRICT":
+		return nil
+	default:
+		return fmt.Errorf("unsupported scope type %q", scopeType)
+	}
 }
 
 func userScopes(ctx context.Context, s *Server, userID string) ([]scopePayload, error) {
