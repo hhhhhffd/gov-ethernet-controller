@@ -30,6 +30,13 @@ func TestEvidenceChainUsesHistoricalAxesAndConfirmationPolicy(t *testing.T) {
 	if chain["line_context"].(map[string]interface{})["version"] != float64(2) {
 		t.Fatalf("context snapshot was not projected: %#v", chain["line_context"])
 	}
+	provenance := chain["configuration_provenance"].(map[string]interface{})["historical"].(map[string]interface{})["policy"].(map[string]interface{})
+	if provenance["source"] != "stored_policy_snapshot" || provenance["change_metadata_status"] != "UNKNOWN" {
+		t.Fatalf("snapshot provenance must expose source and missing audit metadata: %#v", provenance)
+	}
+	if chain["configuration_provenance"].(map[string]interface{})["current_operational"].(map[string]interface{})["status"] != "NOT_INCLUDED" {
+		t.Fatal("historical chain must not silently use current configuration")
+	}
 }
 
 func TestEvidenceChainExplicitlyReportsNoDataAndUnknownContext(t *testing.T) {
@@ -63,5 +70,16 @@ func TestEvidenceChainOpeningAndReportRowsShareProjectionShape(t *testing.T) {
 		if _, ok := rowChain[0][key]; !ok {
 			t.Fatalf("report projection missing %s", key)
 		}
+	}
+}
+
+func TestEvidenceChainLinksRemainScopedToKnownLine(t *testing.T) {
+	item := measurementRecord{ID: 11, LineID: "L-11", Valid: true, BaselineState: "OK"}
+	links := evidenceChain(item)["scoped_links"].([]string)
+	if len(links) != 2 || links[0] != "/api/lines/L-11" || links[1] != "/api/v1/lines/L-11" {
+		t.Fatalf("unexpected scoped links: %#v", links)
+	}
+	if got := evidenceChain(measurementRecord{})["scoped_links"].([]string); len(got) != 0 {
+		t.Fatalf("missing line must not receive guessed links: %#v", got)
 	}
 }

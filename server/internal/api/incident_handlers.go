@@ -63,6 +63,7 @@ func (s *Server) incidentMap(ctx context.Context, item incidentRecord) (map[stri
 		duration = &value
 	}
 	chain := evidenceChainFromOpening(opening, item.StartedAt)
+	addEvidenceLinks(chain, item.LineID)
 	setEvidenceDuration(chain, item.StartedAt, item.ConfirmedAt)
 	result := map[string]interface{}{"id": item.ID, "incident_no": item.Number, "number": item.Number, "line_id": item.LineID, "organization_id": item.OrganizationID, "school_id": item.SchoolID, "organization_name": item.OrganizationName, "school_name": item.OrganizationName, "district": item.District, "provider_id": item.ProviderID, "provider_name": item.ProviderName, "provider": provider, "source": item.Source, "violation_type": item.ViolationType, "status": item.Status, "recovery_state": item.RecoveryState, "started_at": item.StartedAt, "confirmed_at": item.ConfirmedAt, "resolved_at": item.ResolvedAt, "closed_at": item.ClosedAt, "duration_minutes": duration, "assignee": item.Assignee, "recurrence_of": item.RecurrenceOf, "opening_snapshot": opening, "evidence_chain": chain, "severity": map[bool]string{true: "CRITICAL", false: "ATTENTION"}[item.ViolationType == "NO_INTERNET"], "title": title, "description": description}
 	result["recovery_label"] = recoveryLabel(item.RecoveryState, item.Status)

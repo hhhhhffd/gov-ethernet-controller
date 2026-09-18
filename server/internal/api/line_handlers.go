@@ -452,6 +452,15 @@ func (s *Server) lineDetailMap(ctx context.Context, line lineRecord) (map[string
 		}
 	}
 	result["evidence_chain"] = evidenceChainForRecords(selected)
+	result["configuration_governance"] = map[string]interface{}{
+		"historical": result["evidence_chain"],
+		"current_operational": map[string]interface{}{
+			"source":   "current operational configuration tables",
+			"policy":   policy,
+			"contract": contract,
+			"warning":  "current values are not used to explain historical evidence",
+		},
+	}
 	monitoring, err := s.monitoringPoints(ctx, line.ID)
 	if err != nil {
 		return nil, err

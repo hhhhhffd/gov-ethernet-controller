@@ -10,10 +10,12 @@ import (
 // snapshots. It intentionally never resolves policy or context from current
 // tables: historical surfaces must remain stable after configuration changes.
 func evidenceChain(item measurementRecord) map[string]interface{} {
-	return evidenceChainFromSnapshots(item.ID, item.ObservedAt, item.BaselineState, item.ContractState,
+	chain := evidenceChainFromSnapshots(item.ID, item.ObservedAt, item.BaselineState, item.ContractState,
 		decodeJSONBytes(item.Violations), item.Valid, item.Reason,
 		decodeJSONBytes(item.PolicySnapshot), decodeJSONBytes(item.ContractSnapshot),
 		decodeJSONBytes(item.LineContextSnapshot), item.VerificationStatus, nil)
+	addEvidenceLinks(chain, item.LineID)
+	return chain
 }
 
 func evidenceChainFromSnapshots(id int64, observedAt time.Time, baseline, contract string, violations interface{}, valid bool, reason string, policy, contractSnapshot, contextSnapshot interface{}, verification string, extra map[string]interface{}) map[string]interface{} {
@@ -57,11 +59,52 @@ func evidenceChainFromSnapshots(id int64, observedAt time.Time, baseline, contra
 		"verification":      verificationMap,
 		"completeness":      map[string]interface{}{"status": status, "unknown_reason": unknownReason},
 		"historical_only":   true,
+		"configuration_provenance": map[string]interface{}{
+			"historical": map[string]interface{}{
+				"policy":       provenanceSnapshot("policy", policyMap),
+				"contract":     provenanceSnapshot("contract", contractMap),
+				"line_context": provenanceSnapshot("line_context", contextMap),
+			},
+			"current_operational": map[string]interface{}{"status": "NOT_INCLUDED", "reason": "current configuration is intentionally not used for historical evidence"},
+		},
 	}
 	for key, value := range extra {
 		result[key] = value
 	}
 	return result
+}
+
+func provenanceSnapshot(kind string, snapshot map[string]interface{}) map[string]interface{} {
+	result := map[string]interface{}{"source": "stored_" + kind + "_snapshot", "status": "AVAILABLE"}
+	for _, key := range []string{"id", "version", "scope_type", "scope_id", "line_id", "valid_from", "valid_to", "reason", "changed_by", "created_by", "created_at"} {
+		if value, ok := snapshot[key]; ok {
+			result[key] = value
+		}
+	}
+	if len(snapshot) == 0 {
+		result["status"] = "UNKNOWN"
+		result["unknown_reason"] = "historical " + kind + " snapshot unavailable; no current fallback"
+	} else {
+		missing := []string{}
+		for _, key := range []string{"reason", "created_by", "created_at"} {
+			if _, ok := snapshot[key]; !ok {
+				missing = append(missing, key)
+			}
+		}
+		if len(missing) > 0 {
+			result["change_metadata_status"] = "UNKNOWN"
+			result["change_metadata_unknown"] = missing
+		}
+	}
+	return result
+}
+
+func addEvidenceLinks(chain map[string]interface{}, lineID string) {
+	links := []string{}
+	if strings.TrimSpace(lineID) != "" {
+		links = []string{"/api/lines/" + lineID, "/api/v1/lines/" + lineID}
+	}
+	chain["scoped_links"] = links
 }
 
 func snapshotMap(value interface{}) map[string]interface{} {
@@ -161,7 +204,9 @@ func evidenceChainForRows(rows []reportRow) []map[string]interface{} {
 
 func evidenceChainForRecords(records []measurementRecord) map[string]interface{} {
 	if len(records) == 0 {
-		return evidenceChain(measurementRecord{})
+		chain := evidenceChain(measurementRecord{})
+		addEvidenceLinks(chain, "")
+		return chain
 	}
 	chain := evidenceChain(records[0])
 	confirmation, _ := chain["confirmation"].(map[string]interface{})
@@ -184,6 +229,7 @@ func evidenceChainForRecords(records []measurementRecord) map[string]interface{}
 			confirmation["duration_minutes"] = last.Sub(first).Minutes()
 		}
 	}
+	addEvidenceLinks(chain, records[0].LineID)
 	return chain
 }
 
@@ -195,6 +241,7 @@ func evidenceChainFromOpening(opening interface{}, startedAt time.Time) map[stri
 		first = ids[0]
 	}
 	chain := evidenceChainFromSnapshots(first, startedAt, evidenceStringValue(snapshot["baseline_state"]), evidenceStringValue(snapshot["contract_state"]), snapshot["violations"], true, evidenceStringValue(snapshot["reason"]), snapshot["policy"], snapshot["contract"], snapshot["line_context"], evidenceStringValue(snapshot["verification_status"]), map[string]interface{}{"observation_ids": ids})
+	addEvidenceLinks(chain, evidenceStringValue(snapshot["line_id"]))
 	confirmation := chain["confirmation"].(map[string]interface{})
 	confirmation["count"] = len(ids)
 	confirmation["observation_ids"] = ids

@@ -300,9 +300,14 @@
     const confirmation = chain.confirmation || {};
     const policy = chain.policy || {};
     const context = chain.line_context || {};
+    const provenance = chain.configuration_provenance?.historical || {};
+    const policyProvenance = provenance.policy || {};
+    const contractProvenance = provenance.contract || {};
+    const contextProvenance = provenance.line_context || {};
+    const auditNote = policyProvenance.change_metadata_status === "UNKNOWN" ? " · change metadata unavailable in stored snapshot" : "";
     const axis = (label, value) => { const item = chain[label] || {}; return `<span>${label === "baseline" ? "Базовый норматив" : "Договорный ориентир"}: ${escapeHtml(item.state || "UNKNOWN")}</span>`; };
     const reason = completeness.unknown_reason ? ` · ${completeness.unknown_reason}` : "";
-    return `<div class="evidence-chain"><b>Evidence chain · ${escapeHtml(completeness.status || chain.status || "UNKNOWN")}</b><div>${axis("baseline")} · ${axis("contract")}</div><small>Метод: ${escapeHtml(confirmation.method || "UNKNOWN")} · наблюдений: ${escapeHtml(String(confirmation.count ?? 0))} · длительность: ${escapeHtml(String(confirmation.duration_minutes ?? 0))} мин · policy: ${escapeHtml(policy.version != null ? `v${policy.version}` : "UNKNOWN")} · context: ${escapeHtml(context.version != null ? `v${context.version}` : "UNKNOWN")}${escapeHtml(reason)}</small>${chain.verification?.status ? `<small>Verification: ${escapeHtml(chain.verification.status)}</small>` : ""}</div>`;
+    return `<div class="evidence-chain"><b>Evidence chain · ${escapeHtml(completeness.status || chain.status || "UNKNOWN")}</b><div>${axis("baseline")} · ${axis("contract")}</div><small>Метод: ${escapeHtml(confirmation.method || "UNKNOWN")} · наблюдений: ${escapeHtml(String(confirmation.count ?? 0))} · длительность: ${escapeHtml(String(confirmation.duration_minutes ?? 0))} мин · policy: ${escapeHtml(policy.version != null ? `v${policy.version}` : "UNKNOWN")} · context: ${escapeHtml(context.version != null ? `v${context.version}` : "UNKNOWN")}${escapeHtml(reason)}</small><small>Policy: ${escapeHtml(policyProvenance.source || "UNKNOWN")} / ${escapeHtml(policyProvenance.scope_type || "UNKNOWN")} · Contract: ${escapeHtml(contractProvenance.source || "UNKNOWN")} · Context: ${escapeHtml(contextProvenance.source || "UNKNOWN")}${escapeHtml(auditNote)}</small>${chain.verification?.status ? `<small>Verification: ${escapeHtml(chain.verification.status)}</small>` : ""}</div>`;
   }
   function renderIncidents() {
     const root = $("#incidentBoard"); if (!state.incidents.length) { root.innerHTML = `<div class="table-empty">Инцидентов нет</div>`; return; }
