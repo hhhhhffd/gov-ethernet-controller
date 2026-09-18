@@ -47,6 +47,18 @@ func (s *Server) adminRoute(w http.ResponseWriter, r *http.Request, rest string)
 		s.adminSchedule(w, r, p)
 		return
 	}
+	if parts[0] == "catalogs" || parts[0] == "districts" || parts[0] == "district" || parts[0] == "technologies" || parts[0] == "technology" {
+		catalogParts := parts[1:]
+		if parts[0] != "catalogs" {
+			catalogParts = parts
+		}
+		s.adminCatalog(w, r, p, catalogParts)
+		return
+	}
+	if parts[0] == "agent-versions" {
+		s.adminAgentVersions(w, r, p, parts[1:])
+		return
+	}
 	if parts[0] == "policies" {
 		s.adminPolicy(w, r, p)
 		return
@@ -311,16 +323,21 @@ func (s *Server) agentRegister(w http.ResponseWriter, r *http.Request) {
 }
 
 type organizationPayload struct {
-	ID           string   `json:"id"`
-	SchoolID     string   `json:"school_id"`
-	Name         string   `json:"name"`
-	District     string   `json:"district"`
-	Address      string   `json:"address"`
-	Latitude     *float64 `json:"latitude"`
-	Longitude    *float64 `json:"longitude"`
-	ContactName  string   `json:"contact_name"`
-	ContactPhone string   `json:"contact_phone"`
-	Active       bool     `json:"active"`
+	ID               string     `json:"id"`
+	SchoolID         string     `json:"school_id"`
+	Name             string     `json:"name"`
+	District         string     `json:"district"`
+	DistrictID       *string    `json:"district_id,omitempty"`
+	Address          string     `json:"address"`
+	Latitude         *float64   `json:"latitude"`
+	Longitude        *float64   `json:"longitude"`
+	ContactName      string     `json:"contact_name"`
+	ContactPhone     string     `json:"contact_phone"`
+	ContactRole      string     `json:"contact_role"`
+	ContactPosition  string     `json:"contact_position,omitempty"`
+	ContactEmail     string     `json:"contact_email"`
+	ContactUpdatedAt *time.Time `json:"contact_updated_at,omitempty"`
+	Active           bool       `json:"active"`
 }
 
 func (s *Server) adminOrganizations(w http.ResponseWriter, r *http.Request, p *auth.Principal, parts []string) {
@@ -328,7 +345,7 @@ func (s *Server) adminOrganizations(w http.ResponseWriter, r *http.Request, p *a
 		return
 	}
 	if r.Method == http.MethodGet && len(parts) == 0 {
-		rows, err := s.DB.Pool.Query(r.Context(), `SELECT id,school_id,name,district,address,latitude,longitude,contact_name,contact_phone,active,created_at FROM organizations ORDER BY district,name`)
+		rows, err := s.DB.Pool.Query(r.Context(), `SELECT id,school_id,name,district,district_id,address,latitude,longitude,contact_name,contact_phone,contact_role,contact_email,contact_updated_at,active,created_at FROM organizations ORDER BY district,name`)
 		if err != nil {
 			writeError(w, 500, "could not query organizations")
 			return
@@ -338,7 +355,7 @@ func (s *Server) adminOrganizations(w http.ResponseWriter, r *http.Request, p *a
 		for rows.Next() {
 			var item organizationPayload
 			var created time.Time
-			if rows.Scan(&item.ID, &item.SchoolID, &item.Name, &item.District, &item.Address, &item.Latitude, &item.Longitude, &item.ContactName, &item.ContactPhone, &item.Active, &created) == nil {
+			if rows.Scan(&item.ID, &item.SchoolID, &item.Name, &item.District, &item.DistrictID, &item.Address, &item.Latitude, &item.Longitude, &item.ContactName, &item.ContactPhone, &item.ContactRole, &item.ContactEmail, &item.ContactUpdatedAt, &item.Active, &created) == nil {
 				result = append(result, organizationMap(item, created))
 			}
 		}
@@ -359,9 +376,20 @@ func (s *Server) adminOrganizations(w http.ResponseWriter, r *http.Request, p *a
 		writeError(w, 422, "invalid organization payload")
 		return
 	}
+	if payload.ContactRole == "" {
+		payload.ContactRole = payload.ContactPosition
+	}
+	if payload.DistrictID != nil {
+		var exists bool
+		if err := s.DB.Pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM districts WHERE id=$1 AND active)`, *payload.DistrictID).Scan(&exists); err != nil || !exists {
+			writeError(w, 422, "district reference not found")
+			return
+		}
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if r.Method == http.MethodPost {
-		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO organizations(id,school_id,name,district,address,latitude,longitude,contact_name,contact_phone,active,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, payload.ID, payload.SchoolID, payload.Name, payload.District, payload.Address, payload.Latitude, payload.Longitude, payload.ContactName, payload.ContactPhone, payload.Active, now); err != nil {
+		payload.ContactUpdatedAt = &now
+		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO organizations(id,school_id,name,district,district_id,address,latitude,longitude,contact_name,contact_phone,contact_role,contact_email,contact_updated_at,active,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, payload.ID, payload.SchoolID, payload.Name, payload.District, payload.DistrictID, payload.Address, payload.Latitude, payload.Longitude, payload.ContactName, payload.ContactPhone, payload.ContactRole, payload.ContactEmail, payload.ContactUpdatedAt, payload.Active, now); err != nil {
 			writeError(w, 409, "organization id or school_id already exists")
 			return
 		}
@@ -376,11 +404,17 @@ func (s *Server) adminOrganizations(w http.ResponseWriter, r *http.Request, p *a
 	}
 	var previous organizationPayload
 	var created time.Time
-	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT id,school_id,name,district,address,latitude,longitude,contact_name,contact_phone,active,created_at FROM organizations WHERE id=$1`, id).Scan(&previous.ID, &previous.SchoolID, &previous.Name, &previous.District, &previous.Address, &previous.Latitude, &previous.Longitude, &previous.ContactName, &previous.ContactPhone, &previous.Active, &created); err != nil {
+	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT id,school_id,name,district,district_id,address,latitude,longitude,contact_name,contact_phone,contact_role,contact_email,contact_updated_at,active,created_at FROM organizations WHERE id=$1`, id).Scan(&previous.ID, &previous.SchoolID, &previous.Name, &previous.District, &previous.DistrictID, &previous.Address, &previous.Latitude, &previous.Longitude, &previous.ContactName, &previous.ContactPhone, &previous.ContactRole, &previous.ContactEmail, &previous.ContactUpdatedAt, &previous.Active, &created); err != nil {
 		writeError(w, 404, "organization not found")
 		return
 	}
-	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE organizations SET school_id=$1,name=$2,district=$3,address=$4,latitude=$5,longitude=$6,contact_name=$7,contact_phone=$8,active=$9 WHERE id=$10`, payload.SchoolID, payload.Name, payload.District, payload.Address, payload.Latitude, payload.Longitude, payload.ContactName, payload.ContactPhone, payload.Active, id); err != nil {
+	contactChanged := previous.ContactName != payload.ContactName || previous.ContactPhone != payload.ContactPhone || previous.ContactRole != payload.ContactRole || previous.ContactEmail != payload.ContactEmail
+	contactUpdatedAt := previous.ContactUpdatedAt
+	if contactChanged || contactUpdatedAt == nil {
+		contactUpdatedAt = &now
+	}
+	payload.ContactUpdatedAt = contactUpdatedAt
+	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE organizations SET school_id=$1,name=$2,district=$3,district_id=$4,address=$5,latitude=$6,longitude=$7,contact_name=$8,contact_phone=$9,contact_role=$10,contact_email=$11,contact_updated_at=$12,active=$13 WHERE id=$14`, payload.SchoolID, payload.Name, payload.District, payload.DistrictID, payload.Address, payload.Latitude, payload.Longitude, payload.ContactName, payload.ContactPhone, payload.ContactRole, payload.ContactEmail, contactUpdatedAt, payload.Active, id); err != nil {
 		writeError(w, 409, "school_id already exists")
 		return
 	}
@@ -389,7 +423,7 @@ func (s *Server) adminOrganizations(w http.ResponseWriter, r *http.Request, p *a
 }
 
 func organizationMap(item organizationPayload, created time.Time) map[string]interface{} {
-	return map[string]interface{}{"id": item.ID, "school_id": item.SchoolID, "name": item.Name, "district": item.District, "address": item.Address, "latitude": item.Latitude, "longitude": item.Longitude, "contact_name": item.ContactName, "contact_phone": item.ContactPhone, "active": item.Active, "created_at": created}
+	return map[string]interface{}{"id": item.ID, "school_id": item.SchoolID, "name": item.Name, "district": item.District, "district_id": item.DistrictID, "address": item.Address, "latitude": item.Latitude, "longitude": item.Longitude, "contact_name": item.ContactName, "contact_phone": item.ContactPhone, "contact_role": item.ContactRole, "contact_position": item.ContactRole, "contact_email": item.ContactEmail, "contact_updated_at": item.ContactUpdatedAt, "active": item.Active, "created_at": created}
 }
 
 type providerPayload struct {
@@ -469,6 +503,7 @@ type linePayload struct {
 	ProviderID     *string `json:"provider_id"`
 	Role           string  `json:"role"`
 	Technology     string  `json:"technology"`
+	TechnologyID   *string `json:"technology_id,omitempty"`
 	Status         string  `json:"status"`
 }
 
@@ -477,7 +512,7 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 		return
 	}
 	if r.Method == http.MethodGet && len(parts) == 0 {
-		rows, err := s.DB.Pool.Query(r.Context(), `SELECT l.id,l.organization_id,l.provider_id,l.role,l.technology,l.status,l.created_at,o.school_id,o.name,p.name FROM lines l JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id ORDER BY o.district,o.name,l.role`)
+		rows, err := s.DB.Pool.Query(r.Context(), `SELECT l.id,l.organization_id,l.provider_id,l.role,l.technology,l.technology_id,l.status,l.created_at,o.school_id,o.name,p.name FROM lines l JOIN organizations o ON o.id=l.organization_id LEFT JOIN providers p ON p.id=l.provider_id ORDER BY o.district,o.name,l.role`)
 		if err != nil {
 			writeError(w, 500, "could not query lines")
 			return
@@ -490,9 +525,9 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 			var created time.Time
 			var school, name string
 			var providerName *string
-			if rows.Scan(&item.ID, &item.OrganizationID, &providerID, &item.Role, &item.Technology, &item.Status, &created, &school, &name, &providerName) == nil {
+			if rows.Scan(&item.ID, &item.OrganizationID, &providerID, &item.Role, &item.Technology, &item.TechnologyID, &item.Status, &created, &school, &name, &providerName) == nil {
 				item.ProviderID = providerID
-				result = append(result, map[string]interface{}{"id": item.ID, "organization_id": item.OrganizationID, "provider_id": providerID, "role": item.Role, "technology": item.Technology, "status": item.Status, "created_at": created, "school_id": school, "organization_name": name, "provider_name": providerName})
+				result = append(result, map[string]interface{}{"id": item.ID, "organization_id": item.OrganizationID, "provider_id": providerID, "role": item.Role, "technology": item.Technology, "technology_id": item.TechnologyID, "status": item.Status, "created_at": created, "school_id": school, "organization_name": name, "provider_name": providerName})
 			}
 		}
 		writeJSON(w, 200, result)
@@ -524,6 +559,13 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 		writeError(w, 422, "unsupported line status")
 		return
 	}
+	if payload.TechnologyID != nil {
+		var exists bool
+		if err := s.DB.Pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM technologies WHERE id=$1 AND active)`, *payload.TechnologyID).Scan(&exists); err != nil || !exists {
+			writeError(w, 422, "technology reference not found")
+			return
+		}
+	}
 	var organizationExists bool
 	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1)`, payload.OrganizationID).Scan(&organizationExists); err != nil || !organizationExists {
 		writeError(w, 422, "organization not found")
@@ -538,12 +580,12 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	if r.Method == http.MethodPost {
-		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO lines(id,organization_id,provider_id,role,technology,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`, payload.ID, payload.OrganizationID, payload.ProviderID, payload.Role, payload.Technology, payload.Status, now); err != nil {
+		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO lines(id,organization_id,provider_id,role,technology,technology_id,status,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, payload.ID, payload.OrganizationID, payload.ProviderID, payload.Role, payload.Technology, payload.TechnologyID, payload.Status, now); err != nil {
 			writeError(w, 409, "line already exists or references are invalid")
 			return
 		}
 		writeAudit(r.Context(), s, p, "line.created", "line", payload.ID, nil, payload)
-		writeJSON(w, 201, map[string]interface{}{"id": payload.ID, "organization_id": payload.OrganizationID, "provider_id": payload.ProviderID, "role": payload.Role, "technology": payload.Technology, "status": payload.Status, "created_at": now})
+		writeJSON(w, 201, map[string]interface{}{"id": payload.ID, "organization_id": payload.OrganizationID, "provider_id": payload.ProviderID, "role": payload.Role, "technology": payload.Technology, "technology_id": payload.TechnologyID, "status": payload.Status, "created_at": now})
 		return
 	}
 	if parts[0] != payload.ID {
@@ -552,16 +594,16 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 	}
 	var previous linePayload
 	var created time.Time
-	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT id,organization_id,provider_id,role,technology,status,created_at FROM lines WHERE id=$1`, parts[0]).Scan(&previous.ID, &previous.OrganizationID, &previous.ProviderID, &previous.Role, &previous.Technology, &previous.Status, &created); err != nil {
+	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT id,organization_id,provider_id,role,technology,technology_id,status,created_at FROM lines WHERE id=$1`, parts[0]).Scan(&previous.ID, &previous.OrganizationID, &previous.ProviderID, &previous.Role, &previous.Technology, &previous.TechnologyID, &previous.Status, &created); err != nil {
 		writeError(w, 404, "line not found")
 		return
 	}
-	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE lines SET organization_id=$1,provider_id=$2,role=$3,technology=$4,status=$5 WHERE id=$6`, payload.OrganizationID, payload.ProviderID, payload.Role, payload.Technology, payload.Status, parts[0]); err != nil {
+	if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE lines SET organization_id=$1,provider_id=$2,role=$3,technology=$4,technology_id=$5,status=$6 WHERE id=$7`, payload.OrganizationID, payload.ProviderID, payload.Role, payload.Technology, payload.TechnologyID, payload.Status, parts[0]); err != nil {
 		writeError(w, 409, "line update failed or references are invalid")
 		return
 	}
 	writeAudit(r.Context(), s, p, "line.updated", "line", parts[0], previous, payload)
-	writeJSON(w, 200, map[string]interface{}{"id": payload.ID, "organization_id": payload.OrganizationID, "provider_id": payload.ProviderID, "role": payload.Role, "technology": payload.Technology, "status": payload.Status, "created_at": created})
+	writeJSON(w, 200, map[string]interface{}{"id": payload.ID, "organization_id": payload.OrganizationID, "provider_id": payload.ProviderID, "role": payload.Role, "technology": payload.Technology, "technology_id": payload.TechnologyID, "status": payload.Status, "created_at": created})
 }
 
 type pointPayload struct {
@@ -650,9 +692,42 @@ func writeAudit(ctx context.Context, s *Server, p *auth.Principal, action, objec
 		s.Logger.Error("could not encode audit after snapshot", "action", action, "object_type", objectType, "object_id", objectID, "error", err)
 		return
 	}
-	if _, err := s.DB.Pool.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,request_id,created_at) VALUES ('USER',$1,$2,$3,$4,NULLIF($5,'')::jsonb,NULLIF($6,'')::jsonb,NULL,now())`, p.ID, action, objectType, objectID, string(beforeJSON), string(afterJSON)); err != nil {
+	if _, err := s.DB.Pool.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,before_json,after_json,request_id,created_at) VALUES ('USER',$1,$2,$3,$4,NULLIF($5,'')::jsonb,NULLIF($6,'')::jsonb,NULLIF($7,''),now())`, p.ID, action, objectType, objectID, string(beforeJSON), string(afterJSON), requestIDFromContext(ctx)); err != nil {
 		s.Logger.Error("could not persist audit event", "action", action, "object_type", objectType, "object_id", objectID, "error", err)
 	}
+}
+
+// writeVersionAudit keeps the version snapshot and its audit event in the
+// same transaction. Version metadata lives in after_json because the audit
+// schema is shared by all admin mutations and is intentionally generic.
+func writeVersionAudit(ctx context.Context, tx pgx.Tx, p *auth.Principal, action, objectType, objectID, scopeType, scopeID, reason string, version interface{}, before, after interface{}, createdAt time.Time) error {
+	beforeJSON, err := json.Marshal(before)
+	if err != nil {
+		return fmt.Errorf("encode audit before snapshot: %w", err)
+	}
+	afterMap, ok := after.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("audit after snapshot must be a map")
+	}
+	afterMap["reason"] = reason
+	afterMap["version"] = version
+	afterMap["created_by"] = p.ID
+	afterMap["created_at"] = createdAt
+	afterJSON, err := json.Marshal(afterMap)
+	if err != nil {
+		return fmt.Errorf("encode audit after snapshot: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,scope_type,scope_id,before_json,after_json,request_id,created_at) VALUES ('USER',$1,$2,$3,$4,$5,NULLIF($6,''),NULLIF($7,'')::jsonb,NULLIF($8,'')::jsonb,NULLIF($9,''),$10)`, p.ID, action, objectType, objectID, scopeType, scopeID, string(beforeJSON), string(afterJSON), requestIDFromContext(ctx), createdAt); err != nil {
+		return err
+	}
+	return nil
+}
+
+func auditReason(reason, fallback string) string {
+	if reason = strings.TrimSpace(reason); reason != "" {
+		return reason
+	}
+	return fallback
 }
 
 func (s *Server) adminPoints(w http.ResponseWriter, r *http.Request, p *auth.Principal) {
@@ -869,11 +944,21 @@ func (s *Server) adminSchedule(w http.ResponseWriter, r *http.Request, p *auth.P
 		writeError(w, 422, "tests_per_day must be 3-5 and jitter_minutes 0-240")
 		return
 	}
-	if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO agent_schedules(id,tests_per_day,jitter_minutes,light_checks_between,updated_by,updated_at) VALUES (1,$1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET tests_per_day=EXCLUDED.tests_per_day,jitter_minutes=EXCLUDED.jitter_minutes,light_checks_between=EXCLUDED.light_checks_between,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at`, testsPerDay, jitterMinutes, boolInt(payload.LightChecksBetween), p.ID, time.Now().UTC().Truncate(time.Second)); err != nil {
+	var previous map[string]interface{}
+	var previousTests, previousJitter, previousLight int
+	var previousBy *string
+	var previousAt *time.Time
+	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT tests_per_day,jitter_minutes,light_checks_between,updated_by,updated_at FROM agent_schedules WHERE id=1`).Scan(&previousTests, &previousJitter, &previousLight, &previousBy, &previousAt); err == nil {
+		previous = map[string]interface{}{"tests_per_day": previousTests, "jitter_minutes": previousJitter, "light_checks_between": previousLight != 0, "updated_by": previousBy, "updated_at": previousAt}
+	}
+	updatedAt := time.Now().UTC().Truncate(time.Second)
+	if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO agent_schedules(id,tests_per_day,jitter_minutes,light_checks_between,updated_by,updated_at) VALUES (1,$1,$2,$3,$4,$5) ON CONFLICT(id) DO UPDATE SET tests_per_day=EXCLUDED.tests_per_day,jitter_minutes=EXCLUDED.jitter_minutes,light_checks_between=EXCLUDED.light_checks_between,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at`, testsPerDay, jitterMinutes, boolInt(payload.LightChecksBetween), p.ID, updatedAt); err != nil {
 		writeError(w, 500, "could not store schedule")
 		return
 	}
-	writeJSON(w, 200, map[string]interface{}{"tests_per_day": testsPerDay, "performance_tests_per_day": testsPerDay, "jitter_minutes": jitterMinutes, "light_checks_between": payload.LightChecksBetween})
+	after := map[string]interface{}{"tests_per_day": testsPerDay, "performance_tests_per_day": testsPerDay, "jitter_minutes": jitterMinutes, "light_checks_between": payload.LightChecksBetween, "updated_by": p.ID, "updated_at": updatedAt}
+	writeAudit(r.Context(), s, p, "schedule.updated", "agent_schedule", "1", previous, after)
+	writeJSON(w, 200, after)
 }
 func boolInt(value bool) int {
 	if value {
@@ -931,6 +1016,7 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		RecoveryCount    int        `json:"recovery_count"`
 		RecoveryMinutes  int        `json:"recovery_minutes"`
 		FreshnessSeconds int        `json:"freshness_seconds"`
+		Reason           string     `json:"reason"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, 422, "invalid policy payload")
@@ -992,6 +1078,7 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 		writeError(w, 422, "valid_to must be after valid_from")
 		return
 	}
+	payload.Reason = auditReason(payload.Reason, "policy version created")
 	tx, err := s.DB.Pool.Begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "could not begin policy transaction")
@@ -1023,14 +1110,28 @@ func (s *Server) adminPolicy(w http.ResponseWriter, r *http.Request, p *auth.Pri
 			return
 		}
 	}
+	createdAt := time.Now().UTC().Truncate(time.Second)
 	var id int64
-	err = tx.QueryRow(r.Context(), `INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,valid_to,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, payload.ScopeType, nullableString(payload.ScopeID), *payload.ValidFrom, payload.ValidTo, payload.Version, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, payload.ConfirmCount, payload.ConfirmMinutes, payload.RecoveryCount, payload.RecoveryMinutes, payload.FreshnessSeconds, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
+	err = tx.QueryRow(r.Context(), `INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,valid_to,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING id`, payload.ScopeType, nullableString(payload.ScopeID), *payload.ValidFrom, payload.ValidTo, payload.Version, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, payload.ConfirmCount, payload.ConfirmMinutes, payload.RecoveryCount, payload.RecoveryMinutes, payload.FreshnessSeconds, p.ID, createdAt).Scan(&id)
 	if err != nil {
 		if isVersionConstraintConflict(err) {
 			writeError(w, http.StatusConflict, "policy version or effective interval conflicts with an existing version")
 			return
 		}
 		writeError(w, 500, "could not create policy")
+		return
+	}
+	policyAfter := map[string]interface{}{
+		"id": id, "scope_type": payload.ScopeType, "scope_id": nullableString(payload.ScopeID),
+		"valid_from": *payload.ValidFrom, "valid_to": payload.ValidTo, "download_min": payload.DownloadMin,
+		"upload_min": payload.UploadMin, "ping_max": payload.PingMax, "jitter_max": payload.JitterMax,
+		"packet_loss_max": payload.PacketLossMax, "availability_min": payload.AvailabilityMin,
+		"confirm_count": payload.ConfirmCount, "confirm_minutes": payload.ConfirmMinutes,
+		"recovery_count": payload.RecoveryCount, "recovery_minutes": payload.RecoveryMinutes,
+		"freshness_seconds": payload.FreshnessSeconds,
+	}
+	if err := writeVersionAudit(r.Context(), tx, p, "policy.version_created", "threshold_policy", fmt.Sprint(id), payload.ScopeType, payload.ScopeID, payload.Reason, payload.Version, nil, policyAfter, createdAt); err != nil {
+		writeError(w, 500, "could not audit policy")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -1156,6 +1257,7 @@ func (s *Server) adminContract(w http.ResponseWriter, r *http.Request, p *auth.P
 		JitterMax       *float64   `json:"jitter_max"`
 		PacketLossMax   *float64   `json:"packet_loss_max"`
 		AvailabilityMin *float64   `json:"availability_min"`
+		Reason          string     `json:"reason"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, 422, "invalid contract payload")
@@ -1178,6 +1280,7 @@ func (s *Server) adminContract(w http.ResponseWriter, r *http.Request, p *auth.P
 		writeError(w, 422, "valid_to must be after valid_from")
 		return
 	}
+	payload.Reason = auditReason(payload.Reason, "contract version created")
 	for name, value := range map[string]*float64{"download_min": payload.DownloadMin, "upload_min": payload.UploadMin, "ping_max": payload.PingMax, "jitter_max": payload.JitterMax, "packet_loss_max": payload.PacketLossMax, "availability_min": payload.AvailabilityMin} {
 		if value != nil && (*value < 0 || (name == "packet_loss_max" || name == "availability_min") && *value > 100) {
 			writeError(w, 422, "contract thresholds are outside the allowed range")
@@ -1198,14 +1301,25 @@ func (s *Server) adminContract(w http.ResponseWriter, r *http.Request, p *auth.P
 		writeError(w, 409, err.Error())
 		return
 	}
+	createdAt := time.Now().UTC().Truncate(time.Second)
 	var id int64
-	err = tx.QueryRow(r.Context(), `INSERT INTO contract_versions(line_id,valid_from,valid_to,contract_no,contract_date,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, payload.LineID, payload.ValidFrom, payload.ValidTo, payload.ContractNo, payload.ContractDate, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
+	err = tx.QueryRow(r.Context(), `INSERT INTO contract_versions(line_id,valid_from,valid_to,contract_no,contract_date,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,created_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, payload.LineID, payload.ValidFrom, payload.ValidTo, payload.ContractNo, payload.ContractDate, payload.DownloadMin, payload.UploadMin, payload.PingMax, payload.JitterMax, payload.PacketLossMax, payload.AvailabilityMin, p.ID, createdAt).Scan(&id)
 	if err != nil {
 		if isVersionConstraintConflict(err) {
 			writeError(w, http.StatusConflict, "contract version or effective interval conflicts with an existing version")
 			return
 		}
 		writeError(w, 500, "could not create contract")
+		return
+	}
+	contractAfter := map[string]interface{}{
+		"id": id, "line_id": payload.LineID, "valid_from": payload.ValidFrom, "valid_to": payload.ValidTo,
+		"contract_no": payload.ContractNo, "contract_date": payload.ContractDate, "download_min": payload.DownloadMin,
+		"upload_min": payload.UploadMin, "ping_max": payload.PingMax, "jitter_max": payload.JitterMax,
+		"packet_loss_max": payload.PacketLossMax, "availability_min": payload.AvailabilityMin,
+	}
+	if err := writeVersionAudit(r.Context(), tx, p, "contract.version_created", "contract_version", fmt.Sprint(id), "LINE", payload.LineID, payload.Reason, id, nil, contractAfter, createdAt); err != nil {
+		writeError(w, 500, "could not audit contract")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"linkwatch/server/internal/database"
 )
 
@@ -198,6 +200,56 @@ func AuthenticateDevice(ctx context.Context, db *database.DB, deviceID, token st
 		return nil, fmt.Errorf("invalid or blocked device")
 	}
 	return device, nil
+}
+
+// CheckRateLimit records one failed authentication attempt for a scoped key.
+// The row is locked in a short transaction so limits remain effective when
+// several server replicas handle the same credentials concurrently.
+func CheckRateLimit(ctx context.Context, db *database.DB, scope, key string, limit int, window time.Duration) (bool, time.Duration, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	if window <= 0 {
+		window = time.Minute
+	}
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return false, 0, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	now := time.Now().UTC()
+	var started time.Time
+	var attempts int
+	err = tx.QueryRow(ctx, `SELECT window_started_at,attempts FROM auth_rate_limits WHERE scope=$1 AND key=$2 FOR UPDATE`, scope, key).Scan(&started, &attempts)
+	if err != nil && err != pgx.ErrNoRows {
+		return false, 0, err
+	}
+	if err == pgx.ErrNoRows || !now.Before(started.Add(window)) {
+		started = now
+		attempts = 1
+		_, err = tx.Exec(ctx, `INSERT INTO auth_rate_limits(scope,key,window_started_at,attempts) VALUES ($1,$2,$3,$4) ON CONFLICT(scope,key) DO UPDATE SET window_started_at=EXCLUDED.window_started_at,attempts=EXCLUDED.attempts`, scope, key, started, attempts)
+	} else {
+		attempts++
+		_, err = tx.Exec(ctx, `UPDATE auth_rate_limits SET attempts=$3 WHERE scope=$1 AND key=$2`, scope, key, attempts)
+	}
+	if err != nil {
+		return false, 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, 0, err
+	}
+	if attempts <= limit {
+		return true, 0, nil
+	}
+	return false, time.Until(started.Add(window)), nil
+}
+
+// ClearRateLimit forgets the failed-attempt counter after a successful
+// authentication, preventing a user's normal activity from consuming a
+// failure budget.
+func ClearRateLimit(ctx context.Context, db *database.DB, scope, key string) error {
+	_, err := db.Pool.Exec(ctx, `DELETE FROM auth_rate_limits WHERE scope=$1 AND key=$2`, scope, key)
+	return err
 }
 
 func Bearer(r *http.Request) string {

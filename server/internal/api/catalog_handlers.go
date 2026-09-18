@@ -109,7 +109,7 @@ func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	where, params := scopeSQL(p, 1)
-	rows, err := s.DB.Pool.Query(r.Context(), `SELECT DISTINCT o.id,o.school_id,o.name,o.district,o.address,o.latitude,o.longitude,o.contact_name,o.contact_phone,o.active,o.created_at FROM organizations o JOIN lines l ON l.organization_id=o.id WHERE l.status <> 'DELETED' AND `+where+` ORDER BY o.district,o.name`, params...)
+	rows, err := s.DB.Pool.Query(r.Context(), `SELECT DISTINCT o.id,o.school_id,o.name,o.district,o.district_id,o.address,o.latitude,o.longitude,o.contact_name,o.contact_phone,o.contact_role,o.contact_email,o.contact_updated_at,o.active,o.created_at FROM organizations o JOIN lines l ON l.organization_id=o.id WHERE l.status <> 'DELETED' AND `+where+` ORDER BY o.district,o.name`, params...)
 	if err != nil {
 		writeError(w, 500, "could not query organizations")
 		return
@@ -117,15 +117,16 @@ func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	result := []map[string]interface{}{}
 	for rows.Next() {
-		var id, school, name, district, address, contact, phone string
+		var id, school, name, district, address, contact, phone, role, email string
+		var districtID *string
 		var lat, lon *float64
 		var active bool
-		var created time.Time
-		if err := rows.Scan(&id, &school, &name, &district, &address, &lat, &lon, &contact, &phone, &active, &created); err != nil {
+		var created, contactUpdatedAt time.Time
+		if err := rows.Scan(&id, &school, &name, &district, &districtID, &address, &lat, &lon, &contact, &phone, &role, &email, &contactUpdatedAt, &active, &created); err != nil {
 			writeError(w, 500, "could not read organizations")
 			return
 		}
-		result = append(result, map[string]interface{}{"id": id, "school_id": school, "name": name, "district": district, "address": address, "latitude": lat, "longitude": lon, "contact_name": contact, "contact_phone": phone, "active": active, "created_at": created})
+		result = append(result, map[string]interface{}{"id": id, "school_id": school, "name": name, "district": district, "district_id": districtID, "address": address, "latitude": lat, "longitude": lon, "contact_name": contact, "contact_phone": phone, "contact_role": role, "contact_position": role, "contact_email": email, "contact_updated_at": contactUpdatedAt, "active": active, "created_at": created})
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, 500, "could not read organizations")

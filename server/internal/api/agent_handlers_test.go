@@ -1,9 +1,25 @@
 package api
 
 import (
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestAuthClientKeyNormalizesRemotePort(t *testing.T) {
+	r := httptest.NewRequest("POST", "/api/login", nil)
+	r.RemoteAddr = "[2001:db8::1]:443"
+	if got := authClientKey(r); got != "2001:db8::1" {
+		t.Fatalf("authClientKey() = %q, want normalized IPv6 host", got)
+	}
+}
+
+func TestAuthRateLimitRejectsInvalidConfiguration(t *testing.T) {
+	t.Setenv("LINKWATCH_TEST_RATE_LIMIT", "0")
+	if got := authRateLimit("LINKWATCH_TEST_RATE_LIMIT", 10); got != 10 {
+		t.Fatalf("authRateLimit() = %d, want fallback", got)
+	}
+}
 
 func TestHeartbeatTelemetryOrderRejectsDelayedOlderBoot(t *testing.T) {
 	currentBoot := "boot-new"

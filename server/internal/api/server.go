@@ -27,6 +27,8 @@ type Server struct {
 	Logger  *slog.Logger
 }
 
+type requestIDContextKey struct{}
+
 func New(db *database.DB, webDir string) *Server {
 	return &Server{DB: db, Measure: &measurements.Service{DB: db}, WebDir: webDir, Logger: slog.Default()}
 }
@@ -34,6 +36,9 @@ func New(db *database.DB, webDir string) *Server {
 func (s *Server) Handler() http.Handler { return s }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if requestID := strings.TrimSpace(r.Header.Get("X-Request-ID")); requestID != "" {
+		r = r.WithContext(context.WithValue(r.Context(), requestIDContextKey{}, requestID))
+	}
 	s.applyCORS(w, r)
 	w.Header().Set("Vary", "Origin")
 	if r.Method == http.MethodOptions {
@@ -140,6 +145,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+func requestIDFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(requestIDContextKey{}).(string)
+	return value
 }
 
 func (s *Server) applyCORS(w http.ResponseWriter, r *http.Request) {
@@ -268,10 +278,33 @@ func (s *Server) principal(w http.ResponseWriter, r *http.Request) (*auth.Princi
 }
 
 func (s *Server) device(w http.ResponseWriter, r *http.Request) (*auth.Device, bool) {
-	device, err := auth.AuthenticateDevice(r.Context(), s.DB, r.Header.Get("X-Device-ID"), r.Header.Get("X-Device-Token"))
+	deviceID := strings.TrimSpace(r.Header.Get("X-Device-ID"))
+	clientKey := authClientKey(r) + ":" + deviceID
+	allowed, retryAfter, err := auth.CheckRateLimit(r.Context(), s.DB, "device", clientKey, authRateLimit("LINKWATCH_DEVICE_AUTH_RATE_LIMIT", 20), time.Minute)
 	if err != nil {
+		s.Logger.Error("could not check device auth rate limit", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "device authentication is temporarily unavailable")
+		return nil, false
+	}
+	if !allowed {
+		if _, auditErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,request_id,created_at) VALUES ('ANONYMOUS','', 'auth.device_rate_limited','device',$1,$2,now())`, deviceID, r.Header.Get("X-Request-ID")); auditErr != nil {
+			s.Logger.Error("could not persist device rate limit audit event", "error", auditErr)
+		}
+		seconds := int(retryAfter.Seconds()) + 1
+		w.Header().Set("Retry-After", strconv.Itoa(seconds))
+		writeError(w, http.StatusTooManyRequests, "too many device authentication attempts")
+		return nil, false
+	}
+	device, err := auth.AuthenticateDevice(r.Context(), s.DB, deviceID, r.Header.Get("X-Device-Token"))
+	if err != nil {
+		if _, auditErr := s.DB.Pool.Exec(r.Context(), `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,request_id,created_at) VALUES ('ANONYMOUS','', 'auth.device_failed','device',$1,$2,now())`, deviceID, r.Header.Get("X-Request-ID")); auditErr != nil {
+			s.Logger.Error("could not persist device authentication audit event", "error", auditErr)
+		}
 		writeError(w, http.StatusUnauthorized, "invalid or blocked device")
 		return nil, false
+	}
+	if err := auth.ClearRateLimit(r.Context(), s.DB, "device", clientKey); err != nil {
+		s.Logger.Error("could not clear device auth rate limit", "error", err)
 	}
 	return device, true
 }
