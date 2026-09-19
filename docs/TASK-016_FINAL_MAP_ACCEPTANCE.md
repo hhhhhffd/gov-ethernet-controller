@@ -1,6 +1,6 @@
 # TASK-016 — Final map acceptance and coverage audit
 
-Date: 2026-09-19 (Asia/Oral)
+Date: 2026-09-20 (Asia/Oral)
 
 ## Decision
 
@@ -12,8 +12,9 @@ rows with official coordinates, provenance, counters, and deterministic
 artifacts. The exact no-environment importer commands in the current checkout
 are blocked because no local eGov input files or `EGOV_API_KEY` are available;
 the committed handoff remains checkable and was produced from official inputs.
-The isolated Playwright/Chromium runtime executed the full MAP and live browser
-suite on the current checkout; AI draft and authorized provider delivery remain
+The isolated Playwright/Chromium runtime recorded MAP-001..012 and the live
+browser surfaces on the current checkout; the final MAP-013 repeat was blocked
+by Docker BuildKit. AI draft and authorized provider delivery remain
 external-blocked. No fixture is presented as a real registry, and no synthetic
 coordinate is presented as school geography.
 
@@ -31,7 +32,7 @@ remaining AI/provider/P0 environment blockers.
 | TASK | Owner/evidence | Result |
 |---|---|---|
 | TASK-001 | `3b523c4`, namespace tables in `FINAL_PRODUCT_CONCEPT_ACCEPTANCE.md` | PASS |
-| TASK-002 | `d1b814a`, vendored Leaflet and OSM foundation checks | PASS |
+| TASK-002 | `d1b814a`, `d9f8fb0`, vendored Leaflet and Stadia Maps Alidade Smooth Dark foundation checks | PASS |
 | TASK-003 | `6a4da86`, `9c818ff`, source adapters and Overpass POST/GET fallback tests | PASS |
 | TASK-004 | `2152ab9`, deterministic matching/coordinate/dedupe tests | PASS |
 | TASK-005 | `54a532e`, `dcedeaf`, artifact/report/review/override generator and tests | PASS; real registry/report/review artifacts generated |
@@ -43,7 +44,7 @@ remaining AI/provider/P0 environment blockers.
 | TASK-011 | `c3f8850`, fallback/resilience tests | PASS |
 | TASK-012 | `b475a93`, importer suite, 28/28 twice | PASS |
 | TASK-013 | `dcedeaf`, `356c40f`, `docs/TASK-013_VKO_IMPORT.md` | PASS |
-| TASK-014 | `e56c025`, `f146346`, `fd2a6b9`, executable MAP-001..012 harness | PASS; isolated browser run MAP-001..012 = 12/12 |
+| TASK-014 | `e56c025`, `f146346`, `fd2a6b9`, `d9f8fb0`, executable MAP-001..013 harness | BLOCKED_EXTERNAL; isolated browser evidence MAP-001..012 = 12/12, MAP-013 final repeat blocked by Docker |
 | TASK-015 | fresh exact-command run and isolated browser rerun recorded below | BLOCKED_EXTERNAL for importer inputs, repo-local Playwright, AI/provider browser gates, and P0 environment |
 | TASK-016 | this document and final audit commit | BLOCKED_EXTERNAL |
 
@@ -61,7 +62,7 @@ sources. No raw source dump or credential was committed.
 |---:|---|---|---|
 | 0 | Scope, no new backend sprint, preserve existing LINKWATCH truth | Plan global rules; TASK-015 server/agent/smoke regression | PASS |
 | 1 | Canonical `BUG-001..006`, `ACC-FIX-001..006`, `EXT-001..004` namespaces | `3b523c4`; final acceptance namespace tables | PASS |
-| 2 | Leaflet primary surface, local vendor, replaceable OSM raster config | `d1b814a`; `web/vendor/leaflet`; foundation check | PASS |
+| 2 | Leaflet primary surface, local vendor, replaceable Stadia Maps Alidade Smooth Dark raster config with OSM attribution | `d1b814a`, `d9f8fb0`; `web/vendor/leaflet`; foundation check | PASS |
 | 3 | Official/current source adapters and supported env/file inputs | `6a4da86`; importer source tests | PASS |
 | 4 | Current VKO identity filter and explicit Abai exclusion | importer tests and fixtures | PASS |
 | 5 | Overpass current VKO relation, OSM fallback role, no Nominatim bulk path | `9c818ff`; Overpass relation/POST/GET tests | PASS |
@@ -76,17 +77,17 @@ sources. No raw source dump or credential was committed.
 | 14 | Registry-only neutral layer, canonical LINKWATCH layer, KPI separation | `c3139c1`; data-model tests | PASS |
 | 15 | Organization → line → monitoring point → device chain and demo disclosure | mapping artifact chain/provenance | PASS for real registry handoff; synthetic backend organizations remain explicitly unmapped |
 | 16 | Registry and monitored marker layers with missing-coordinate omission | `e2a4518`; map tests | PASS |
-| 17 | Status priority, clustering, no permanent labels, current-VKO fit bounds | `e2a4518`; map implementation/tests | PASS by deterministic local contract |
+| 17 | Status priority, screen-distance clustering, no permanent labels, current-VKO fit bounds | `e2a4518`, `d9f8fb0`; map implementation/tests | PASS by deterministic local contract; registry clusters open a neutral member list |
 | 18 | Registry/monitored popup fields, null metrics, multiple lines, drawer bridge | `8c42ff4`; popup tests; browser run | PASS; live popup/drawer paths executed |
 | 19 | Current mode remains canonical LineState | `ddba784`; model/map contracts | PASS by local contract |
 | 20 | Historical report/evidence semantics and coverage/district/provider/technology/status/period filters | `ddba784`; focused tests | PASS by local contract |
 | 21 | VKO/district fit bounds and no Ust-Kamenogorsk-only hardcoded center | map implementation/tests | PASS |
 | 22 | Tile/registry/API failure states keep dashboard alive | `c3f8850`; resilience guards | PASS by local contract |
 | 23 | Remove SVG/pseudo/grid fallback and prohibit silent demo fallback | `c3f8850`; source guards and web tests | PASS |
-| 24 | Preserve dashboard composition, controls, attribution, dependency-light runtime | `d1b814a`, foundation check, static frontend | PASS |
+| 24 | Preserve dashboard composition, controls, Stadia/OpenMapTiles/OSM attribution, dependency-light runtime | `d1b814a`, `d9f8fb0`, foundation check, static frontend | PASS |
 | 25 | Single registry load, no marker N+1, interaction-only detail, cluster performance | TASK-007/TASK-011 model and source guards | PASS by local contract |
 | 26 | Complete importer fixtures: IDs, names, languages, ambiguity, coordinates, Abai, dedupe | `b475a93`; 28/28 twice | PASS |
-| 27 | Browser MAP-001..MAP-012 executable acceptance | `e56c025`, `f146346`; isolated Playwright/Chromium run | PASS: MAP-001..MAP-012 = 12/12 |
+| 27 | Browser MAP-001..MAP-013 executable acceptance | `e56c025`, `f146346`, `d9f8fb0`; isolated Playwright/Chromium evidence | BLOCKED_EXTERNAL: MAP-001..MAP-012 = 12/12; MAP-013 final repeat blocked by Docker |
 | 28 | Generated report metadata, counters, review CSV, controlled overrides | `dcedeaf`; importer `--check` | PASS |
 | 29 | One real modern-VKO import with official identities and preserved provenance | `dcedeaf`; `docs/TASK-013_VKO_IMPORT.md` | PASS |
 | 30 | 15-step hackathon demo on real map/schools with synthetic-measurement disclosure | TASK-016 manual path below | BLOCKED_EXTERNAL only for external AI/provider gates; browser path and real `org-07 → 16856` mapping are evidenced |
@@ -98,18 +99,19 @@ No source requirement is silently marked complete by fixture data. There are no
 code `FAIL` results in the local map/import suites; the incomplete rows are
 external-environment blockers.
 
-## MAP-001..MAP-012 browser acceptance
+## MAP-001..MAP-013 browser acceptance
 
 The executable checks exist in `scripts/browser-e2e.mjs` and use real-coordinate
-test fixtures plus mocked registry/backend/OSM requests. The final browser run
-used isolated Playwright/Chromium from `/tmp` and the current Docker-served
-checkout; all MAP checks passed:
+test fixtures plus mocked registry/backend/Stadia tile requests. The recorded
+isolated browser run used Playwright/Chromium from `/tmp` and the current
+Docker-served checkout; MAP-001..012 passed. The final MAP-013 repeat was
+blocked by Docker BuildKit:
 
 | ID | Contract | Status | Evidence |
 |---|---|---|---|
 | MAP-001 | Leaflet initializes | PASS | Isolated Playwright/Chromium run |
-| MAP-002 | OSM tile template configured | PASS | OSM requests mocked; configured template verified |
-| MAP-003 | OSM attribution visible | PASS | Isolated browser assertion |
+| MAP-002 | Stadia Maps Alidade Smooth Dark tile template configured | PASS | Stadia tile requests mocked; configured template verified |
+| MAP-003 | Stadia Maps, OpenMapTiles, and OpenStreetMap attribution visible | PASS | Isolated browser assertion |
 | MAP-004 | Registry JSON loads | PASS | One registry and one mapping fetch; no N+1 |
 | MAP-005 | Registry-only school is neutral | PASS | Registry-only popup disclosure verified |
 | MAP-006 | Monitored school uses backend state | PASS | Monitoring marker uses `NO_INTERNET` backend state |
@@ -119,6 +121,7 @@ checkout; all MAP checks passed:
 | MAP-010 | Current/Historical truth stays separated | PASS | Current and historical popup boundaries verified |
 | MAP-011 | All schools/LINKWATCH-only filter works | PASS | Coverage IDs verified |
 | MAP-012 | API failure does not enable demo data silently | PASS | Explicit unavailable state; demo remains off |
+| MAP-013 | Registry cluster opens a neutral member list and allows school selection | BLOCKED_EXTERNAL | Final repeat blocked by Docker BuildKit; `d9f8fb0` includes the member list, and school №32 (`registry_id=18383`) is selectable from it |
 
 Raw run result:
 
@@ -131,6 +134,7 @@ Full browser surface matrix:
 | Surface | Result | Exact evidence |
 |---|---|---|
 | MAP-001..012 | PASS | 12/12 MAP checks passed |
+| MAP-013 | BLOCKED_EXTERNAL | Final repeat blocked by Docker BuildKit; no PASS inferred |
 | map | PASS | `current monitored markers=1`; popup mouse and keyboard paths passed; `NO_DATA` marker present |
 | line detail | PASS | `line-42-primary` API/UI detail loaded |
 | device detail | PASS | `device-42-primary` API/UI detail loaded; measurements=4 |
@@ -154,7 +158,7 @@ Full browser surface matrix:
 | `./scripts/p0-local-acceptance.sh` | `pass=12 fail=1`; Docker BuildKit activity path is read-only | BLOCKED_EXTERNAL |
 | `./scripts/p1-acceptance.sh` | `pass=28 fail=0` | PASS |
 | `node scripts/browser-e2e.mjs` | `Playwright unavailable`; `PASS=0 FAIL=0 BLOCKED_EXTERNAL=12` | BLOCKED_EXTERNAL; repo has no browser dependency |
-| `PLAYWRIGHT_MODULE=/tmp/gov-ethernet-playwright/node_modules/playwright/index.mjs BROWSER_E2E_CHROMIUM=/tmp/gov-ethernet-playwright/browsers/chromium-1243/chrome-linux64/chrome PLAYWRIGHT_BROWSERS_PATH=/tmp/gov-ethernet-playwright/browsers node scripts/browser-e2e.mjs` | `PASS=37 FAIL=0 BLOCKED_EXTERNAL=2` | PASS with AI/provider external blockers |
+| `PLAYWRIGHT_MODULE=/tmp/gov-ethernet-playwright/node_modules/playwright/index.mjs BROWSER_E2E_CHROMIUM=/tmp/gov-ethernet-playwright/browsers/chromium-1243/chrome-linux64/chrome PLAYWRIGHT_BROWSERS_PATH=/tmp/gov-ethernet-playwright/browsers node scripts/browser-e2e.mjs` | `PASS=37 FAIL=0 BLOCKED_EXTERNAL=2` | Recorded isolated browser evidence; MAP-001..012 passed, while MAP-013 final repeat remains Docker-blocked; AI/provider blockers remain |
 
 Additional targeted evidence from the fresh run:
 
@@ -183,7 +187,7 @@ BuildKit can write its activity directory.
 
 | Step | Expected path | Result |
 |---:|---|---|
-| 1 | Open real OSM VKO map | PASS in isolated browser; OSM tile requests mocked |
+| 1 | Open real VKO map with Stadia Maps Alidade Smooth Dark | PASS in isolated browser; Stadia tile requests mocked |
 | 2 | See real VKO schools across the region | PASS; current official registry loads 370 rows |
 | 3 | Select `Только в контуре LINKWATCH` | PASS in live browser coverage control |
 | 4 | Only monitored schools remain | PASS; current mapped organization count is 1 |

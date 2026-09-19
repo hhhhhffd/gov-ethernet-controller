@@ -1,6 +1,6 @@
 # Final Product Concept Acceptance
 
-Date: 2026-09-19 (Asia/Oral)
+Date: 2026-09-20 (Asia/Oral)
 
 ## Decision
 
@@ -228,17 +228,22 @@ The bounded decision does not close these external gates:
 5. Live local Ollama/model `SUCCEEDED` draft evidence, if required by the full
    AI acceptance rather than the bounded fallback path.
 The current browser/web follow-up was rerun against the rebuilt Docker-served
-checkout with isolated Playwright/Chromium; the remaining blockers are
-external AI/provider/P0 gates. The only repository mutations are the bounded
-acceptance-harness selector fix and factual evidence updates.
+checkout with isolated Playwright/Chromium; MAP-001..012 passed, while the
+final MAP-013 repeat was blocked by Docker BuildKit. The remaining blockers are
+external AI/provider/P0 gates. Commit `d9f8fb0` records the Stadia Maps Alidade
+Smooth Dark tiles and the accessible registry-cluster member list; this update
+changes acceptance documentation only.
 
 ## Final map/import acceptance
 
 The TASK-016 audit is maintained separately in
 [`docs/TASK-016_FINAL_MAP_ACCEPTANCE.md`](docs/TASK-016_FINAL_MAP_ACCEPTANCE.md).
-It is authoritative for the Leaflet/OpenStreetMap, current-VKO registry,
-importer, organization mapping, registry-vs-LINKWATCH truth, MAP-001..012,
-exact TASK-015 command results, and the 15-step demo. Its decision remains
+It is authoritative for the Leaflet/Stadia Maps Alidade Smooth Dark map with
+OpenMapTiles/OpenStreetMap attribution, current-VKO registry, importer,
+organization mapping, registry-vs-LINKWATCH truth, MAP-001..013, exact TASK-015
+command results, and the 15-step demo. Registry clusters open a neutral member
+list; school №32 (`registry_id=18383`) is selectable there and opens its
+registry card. Its decision remains
 `BLOCKED_EXTERNAL` only for the recorded external AI/provider/P0 gates; the
 current official registry and `org-07 → registry 16856` browser path are
 evidenced. Fixtures and synthetic measurements are explicitly not accepted as
