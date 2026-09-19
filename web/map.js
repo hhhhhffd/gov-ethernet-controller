@@ -46,10 +46,20 @@
   function bindMarker(marker, context) {
     marker.__linkwatchContext = context;
     if (typeof marker.bindTooltip === "function") marker.bindTooltip(context.label, { direction: "top", offset: [0, -7] });
-    if (typeof marker.on === "function") marker.on("click", () => {
+    const activate = () => {
       if (typeof state.onMarkerClick === "function") state.onMarkerClick(context, marker);
-      if (typeof window.CustomEvent === "function" && typeof window.dispatchEvent === "function") window.dispatchEvent(new CustomEvent("linkwatch:map-marker", { detail: { context, marker } }));
-    });
+      if (typeof window.CustomEvent === "function" && typeof window.dispatchEvent === "function") window.dispatchEvent(new window.CustomEvent("linkwatch:map-marker", { detail: { context, marker } }));
+    };
+    if (typeof marker.on === "function") {
+      marker.on("click", activate);
+      marker.on("keypress", (event) => {
+        const original = event?.originalEvent || event;
+        if (original?.key === "Enter" || original?.key === " " || original?.key === "Spacebar" || original?.keyCode === 13 || original?.keyCode === 32) {
+          original.preventDefault?.();
+          activate();
+        }
+      });
+    }
     return marker;
   }
   function createMarker(coordinate, options, context) {

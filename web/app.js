@@ -588,31 +588,91 @@
   async function downloadAnalytics() { try { const response = await fetch(`/api/reports/analytics?${currentReportParams()}&limit=100&format=csv`, { headers: state.token ? { Authorization: `Bearer ${state.token}` } : {} }); if (!response.ok) throw new Error("analytics"); return consumeDownload(response, "analytics", "csv"); } catch (_) { toast("Историческая аналитика недоступна — файл не создан", "warn"); } }
 
   function popupText(value) { return value == null || value === "" || value === "—" ? "Нет данных" : String(value); }
+  function popupProvenance(school) {
+    const provenance = school?.provenance;
+    if (typeof provenance === "string") return provenance;
+    if (provenance && typeof provenance === "object") return provenance.source || provenance.source_name || provenance.source_url || "Официальный реестр";
+    return school?.metadata?.source || "Официальный реестр";
+  }
+  function popupCoordinateSource(school) { return school?.coordinateSource || school?.coordinate_source || (school?.coordinate ? "Источник не указан" : "Координаты отсутствуют"); }
+  function popupSchoolName(school, line) { return school?.officialName || school?.official_name || school?.name || line?.school_name || "Школа из реестра"; }
+  function popupLineID(line) { return line?.id || line?.line_id || "—"; }
+  function popupLineStatus(line) { return String(line?.linkwatchStatus || line?.status || "UNKNOWN").toUpperCase(); }
+  function popupHistoricalState(line) {
+    const summary = historicalSummary(line);
+    if (!summary || !Number(summary.measurement_count)) return "Нет данных за период";
+    if (summary.analytics_state === "UNKNOWN") return "Недостаточно данных";
+    return "История доступна";
+  }
+  function ensurePopupLineChoices() {
+    let choices = $("#mapPopupLineChoices");
+    if (choices) return choices;
+    choices = document.createElement("div");
+    choices.id = "mapPopupLineChoices";
+    choices.className = "map-popup-line-choices";
+    choices.setAttribute("aria-live", "polite");
+    $("#mapPopupFields").after(choices);
+    return choices;
+  }
+  function mapPopupFields(fields) {
+    $("#mapPopupFields").innerHTML = fields.map(([label, value]) => `<div class="map-popup-field"><span>${escapeHtml(label)}</span><b>${escapeHtml(popupText(value))}</b></div>`).join("");
+  }
+  function mapPopupLineChoice(line, historical) {
+    const id = popupLineID(line);
+    const status = historical ? popupHistoricalState(line) : statusLabel(popupLineStatus(line));
+    const provider = popupText(line?.provider || line?.provider_name);
+    const role = popupText(line?.role || line?.line_role);
+    return `<button type="button" class="map-popup-line-choice" data-popup-line-id="${escapeHtml(id)}"><span>${escapeHtml(id)}<small>${escapeHtml(provider)} · ${escapeHtml(role)}</small></span><span class="status-badge ${historical ? "historical" : statusClass(popupLineStatus(line))}">${escapeHtml(status)}</span></button>`;
+  }
   function closeMapPopup(restoreFocus = true) {
     const trigger = state.mapPopupTrigger;
     state.mapPopupLineID = null;
     state.mapPopupTrigger = null;
     const popup = $("#mapPopup");
     if (popup) popup.classList.add("hidden");
-    if (trigger) trigger.setAttribute("aria-expanded", "false");
-    if (restoreFocus && trigger?.isConnected) trigger.focus();
+    const triggerElement = trigger?.nodeType ? trigger : trigger?._icon;
+    if (triggerElement) triggerElement.setAttribute("aria-expanded", "false");
+    if (restoreFocus && triggerElement?.isConnected) triggerElement.focus();
+  }
+  function openMapPopupForContext(context, trigger) {
+    const lines = Array.isArray(context?.lines) ? context.lines.filter(Boolean) : [];
+    const school = context?.school || lines[0]?.registrySchool || null;
+    const registryOnly = context?.kind === "registry";
+    closeMapPopup(false);
+    state.mapPopupLineID = registryOnly ? "__registry__" : lines.length ? popupLineID(lines[0]) : null;
+    state.mapPopupTrigger = trigger || null;
+    const triggerElement = trigger?.nodeType ? trigger : trigger?._icon;
+    if (triggerElement) triggerElement.setAttribute("aria-expanded", "true");
+    const historical = !registryOnly && (context?.mode === "historical" || isHistoricalMode());
+    $("#mapPopupTitle").textContent = popupSchoolName(school, lines[0]);
+    $("#mapPopupSummary").textContent = registryOnly ? "Официальный registry layer · Не подключена к мониторингу" : historical ? `Historical evidence · ${periodLabel()} · current state не используется` : "Current operational data · latest LineState";
+    const commonFields = [["Реестровый / School ID", school?.schoolId || school?.school_id || school?.registryId || lines[0]?.school_id], ["Район", school?.district || lines[0]?.district], ["Населённый пункт", school?.locality], ["Адрес", school?.address], ["Источник координат", popupCoordinateSource(school)], ["Происхождение данных", popupProvenance(school)]];
+    if (registryOnly) {
+      mapPopupFields(commonFields.concat([["Мониторинг", "Не подключена к мониторингу"]]));
+    } else if (lines.length === 1) {
+      const line = lines[0]; const latest = line.latest || {}; const summary = historicalSummary(line);
+      const evidenceCount = summary?.measurement_count == null ? "Нет данных" : number(summary.measurement_count);
+      const fields = commonFields.concat(historical ? [["Историческое evidence", popupHistoricalState(line)], ["Наблюдений за период", evidenceCount]] : [["Провайдер", line.provider || line.provider_name], ["Технология", line.technology || line.connection_type], ["Роль линии", line.role || line.line_role], ["Текущее состояние", statusLabel(popupLineStatus(line))], ["Download · latest", popupMetric(latest.download, " Мбит/с")], ["Upload · latest", popupMetric(latest.upload, " Мбит/с")], ["Ping · latest", popupMetric(latest.ping, " мс")], ["Последнее наблюдение", latest.at ? time(latest.at, true) : "Нет данных"]]);
+      mapPopupFields(fields);
+    } else {
+      mapPopupFields(commonFields.concat([["Линии", `${lines.length} подключений · выберите линию ниже`]]));
+    }
+    const choices = ensurePopupLineChoices();
+    const openButton = $("#mapPopupOpenLine");
+    choices.innerHTML = "";
+    openButton.hidden = true;
+    if (!registryOnly && lines.length > 1) {
+      choices.innerHTML = `<div class="panel-kicker">ВЫБЕРИТЕ ЛИНИЮ</div>${lines.map((line) => mapPopupLineChoice(line, historical)).join("")}`;
+      $$('[data-popup-line-id]', choices).forEach((button) => button.addEventListener("click", () => { closeMapPopup(false); openLine(button.dataset.popupLineId); }));
+    } else if (!registryOnly && lines.length === 1) {
+      openButton.hidden = false;
+      openButton.onclick = () => { closeMapPopup(false); openLine(popupLineID(lines[0])); };
+    }
+    const popup = $("#mapPopup"); popup.classList.remove("hidden"); $("#mapPopupClose").focus();
   }
   function openMapPopup(id, trigger) {
     const line = state.lines.find((item) => item.id === id); if (!line) return;
-    closeMapPopup(false);
-    state.mapPopupLineID = id;
-    state.mapPopupTrigger = trigger || null;
-    if (trigger) trigger.setAttribute("aria-expanded", "true");
-    const latest = line.latest || {};
-    const summary = historicalSummary(line);
-    const currentStatus = line.status ? statusLabel(line.status) : "Нет данных";
-    const contractStatus = line.contract_state && line.contract_state !== "UNKNOWN" ? axisLabel(line.contract_state) : "Нет данных";
-    const historySummary = !summary || !Number(summary.measurement_count) ? "Нет наблюдений за выбранный период" : `${number(summary.measurement_count)} наблюдений · проблемные: ${summary.problem_measurement_count == null ? "Нет данных" : number(summary.problem_measurement_count)}`;
-    $("#mapPopupTitle").textContent = line.school_name;
-    $("#mapPopupSummary").textContent = isHistoricalMode() ? `Historical evidence · ${periodLabel()} · ${historySummary}` : "Current operational data · latest LineState";
-    const fields = [["School ID", popupText(line.school_id)], ["Название", popupText(line.school_name)], ["Район", popupText(line.district)], ["Провайдер", popupText(line.provider)], ["Технология", popupText(line.technology)], ["Договорный ориентир", contractStatus], ["Текущее состояние", currentStatus], ["Download · latest", popupMetric(latest.download, " Мбит/с")], ["Upload · latest", popupMetric(latest.upload, " Мбит/с")], ["Ping · latest", popupMetric(latest.ping, " мс")], ["Последнее наблюдение", latest.at ? time(latest.at, true) : "Нет данных"]];
-    $("#mapPopupFields").innerHTML = fields.map(([label, value]) => `<div class="map-popup-field"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("");
-    const popup = $("#mapPopup"); popup.classList.remove("hidden"); $("#mapPopupOpenLine").onclick = () => { closeMapPopup(false); openLine(id); }; $("#mapPopupClose").focus();
+    openMapPopupForContext({ kind: "monitoring", mode: isHistoricalMode() ? "historical" : "current", school: line.registrySchool, lines: [line] }, trigger);
   }
 
   async function openLine(id) {
@@ -862,6 +922,7 @@
   function toast(message, tone = "") { const node = document.createElement("div"); node.className = `toast ${tone}`; node.textContent = message; $("#toastRegion").appendChild(node); setTimeout(() => node.remove(), 4200); }
 
   function bindEvents() {
+    window.LinkwatchMap?.setMarkerClickHandler((context, marker) => openMapPopupForContext(context, marker));
     $$("[data-view]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.view)));
     $("#menuToggle").addEventListener("click", () => $(".rail").classList.add("open")); $("#railClose").addEventListener("click", () => $(".rail").classList.remove("open"));
     $("#refreshButton").addEventListener("click", () => loadData()); $("#demoButton").addEventListener("click", createReplay); $("#exportButton").addEventListener("click", () => downloadExport("raw-csv")); $("#noticeDismiss").addEventListener("click", () => $("#noticeBar").classList.add("hidden"));
