@@ -216,6 +216,18 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .incident-detail section { margin-top: 19px; }
 .incident-detail h3 { margin-bottom: 7px; font-size: 11px; }
 .incident-detail section > p { margin: 0; color: var(--ref-text-secondary); }
+.provider-case-context { border-top: 1px solid var(--ref-border-soft); padding-top: 16px; }
+.provider-case-detail { margin-top: 10px; border: 1px solid var(--ref-border-soft); border-radius: 8px; padding: 12px; }
+.provider-case-detail h4 { margin: 0 0 10px; color: var(--ref-text-primary); font-size: 12px; }
+.provider-case-fields { margin-bottom: 12px; }
+.provider-case-text { display: grid; gap: 6px; color: var(--ref-text-secondary); font-size: 10px; }
+.provider-case-text textarea { min-height: 150px; resize: vertical; }
+.provider-case-actions, .provider-case-send { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.provider-case-send { flex-wrap: wrap; }
+.provider-case-send label { color: var(--ref-text-secondary); font-size: 10px; }
+.provider-case-error { margin: 10px 0 0; color: var(--ref-red); }
+.provider-case-delivery { margin-top: 10px; color: var(--ref-text-secondary); font-size: 10px; }
+.provider-case-delivery p { margin: 6px 0 0; overflow-wrap: anywhere; }
 .incident-detail-head { padding-bottom: 12px; border-bottom: 1px solid var(--ref-border-soft); }
 .incident-detail-head h2 { margin-top: 9px; font-size: 15px; }
 .detail-grid { display: grid; gap: 0; margin: 0; }

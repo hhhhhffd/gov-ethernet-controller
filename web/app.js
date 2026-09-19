@@ -15,13 +15,14 @@ import { createNotificationsBoundary } from "./features/notifications.mjs";
 import { createProviderCaseBoundary } from "./features/provider-case.mjs";
 import { createReportsBoundary } from "./features/reports.mjs";
 import { filterIncidents, incidentSeverityValues, incidentStatusValues, presentIncident, presentRecovery, presentSituation, presentTimeline, relatedSituations } from "./features/incidents-presentation.mjs";
+import { presentProviderCase, providerCaseActions } from "./features/provider-case-presentation.mjs";
 import { activeIncident, availableMetrics, createSelectedSchool, mergeLineDetail, selectedLine, selectSchoolLine } from "./features/school-detail.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const state = {
   capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, selectedSchool: null,
   mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null,
-  incidents: { state: "idle", items: [], filters: { status: "", severity: "" }, selectedId: null, detail: null, detailState: "idle", situations: [], situationsState: "idle", selectedSituationId: null, situation: null, situationState: "idle" },
+  incidents: createIncidentSurfaceState(),
 };
 
 let session;
@@ -54,6 +55,14 @@ const boundaries = {
   incidents: createIncidentsBoundary(api), reports, notifications: createNotificationsBoundary(api),
   providerCases: createProviderCaseBoundary(api), admin: createAdminBoundary(api), audit: createAuditBoundary(api),
 };
+
+function createIncidentSurfaceState() {
+  return {
+    state: "idle", items: [], filters: { status: "", severity: "" }, selectedId: null, detail: null, detailState: "idle",
+    situations: [], situationsState: "idle", selectedSituationId: null, situation: null, situationState: "idle",
+    providerCase: { selectedId: null, state: "idle", detail: null, actionState: "idle", actionError: "", generated: null },
+  };
+}
 
 function localizeStaticContent() {
   document.querySelectorAll("[data-i18n]").forEach((element) => { element.textContent = i18n.t(element.dataset.i18n); });
@@ -154,7 +163,7 @@ function handleSessionChange(snapshot) {
     state.mapLoaded = false;
     state.mapLoadPromise = null;
     state.selectedSchool = null;
-    state.incidents = { state: "idle", items: [], filters: { status: "", severity: "" }, selectedId: null, detail: null, detailState: "idle", situations: [], situationsState: "idle", selectedSituationId: null, situation: null, situationState: "idle" };
+    state.incidents = createIncidentSurfaceState();
   }
   renderSession(snapshot);
   renderPrimaryNav();
@@ -540,11 +549,41 @@ function renderIncidentDetail() {
   const events = presentTimeline(detail.events, { i18n, presentation });
   const timeline = events.length ? events.map((event) => '<li><time>' + escapeHtml(event.atLabel) + '</time><div><strong>' + escapeHtml(event.label) + "</strong>" + (event.note ? '<p>' + escapeHtml(event.note) + "</p>" : "") + (event.status ? '<small>' + escapeHtml(event.status) + "</small>" : "") + (event.actor ? '<small class="timeline-actor">' + escapeHtml(event.actor) + "</small>" : "") + "</div></li>").join("") : '<p class="surface-state">' + escapeHtml(i18n.t("incidents.timelineEmpty")) + "</p>";
   const lineAvailable = Boolean(map.getLine(detail.line_id));
-  const providerCases = Array.isArray(detail.provider_cases) ? detail.provider_cases : [];
-  const cases = providerCases.length ? '<ul class="case-summary">' + providerCases.map((item) => '<li>' + escapeHtml(i18n.t("field.providerCase")) + " #" + escapeHtml(item.ticket_no || item.id) + ' <span>' + escapeHtml(presentation.deliveryStatus(item.delivery_status)) + "</span></li>").join("") + "</ul>" : '<p class="detail-muted">' + escapeHtml(i18n.t("incidents.noRelatedCases")) + "</p>";
   const canComment = state.capabilities.has("incident.update");
   const commentForm = canComment ? '<form class="incident-comment-form" data-incident-comment><label for="incidentComment">' + escapeHtml(i18n.t("incidents.comment")) + '</label><textarea id="incidentComment" required maxlength="4000" placeholder="' + escapeHtml(i18n.t("incidents.commentPlaceholder")) + '"></textarea><button class="secondary-action" type="submit">' + escapeHtml(i18n.t("incidents.sendComment")) + "</button></form>" : "";
-  return '<header class="incident-detail-head"><span class="severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.severityLabel) + "</span><h2>" + escapeHtml(incident.number) + "</h2><p>" + escapeHtml(incident.statusLabel) + "</p></header><section><h3>" + escapeHtml(i18n.t("incidents.what")) + "</h3><p>" + escapeHtml(incident.typeLabel) + "</p></section><dl class="detail-grid"><div><dt>" + escapeHtml(i18n.t("incidents.where")) + "</dt><dd>" + escapeHtml(incident.school) + " · " + escapeHtml(incident.line) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.when")) + "</dt><dd>" + escapeHtml(incident.startedLabel) + " · " + escapeHtml(incident.durationLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.confirmed")) + "</dt><dd>" + escapeHtml(confirmed) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.recovery")) + "</dt><dd>" + escapeHtml(recovery.label) + "</dd></div>" + (detail.assignee ? "<div><dt>" + escapeHtml(i18n.t("field.assignee")) + "</dt><dd>" + escapeHtml(detail.assignee) + "</dd></div>" : "") + "</dl>" + (lineAvailable ? '<button class="secondary-action" type="button" data-incident-open-line="' + escapeHtml(detail.line_id) + '">' + escapeHtml(i18n.t("incidents.openLine")) + "</button>" : "") + '<section><h3>' + escapeHtml(i18n.t("incidents.workflow")) + "</h3><ol class=\"incident-timeline\">" + timeline + "</ol>" + commentForm + "</section><section><h3>" + escapeHtml(i18n.t("incidents.relatedCases")) + "</h3>" + cases + "</section>" + renderSituationContext(detail.id);
+  return '<header class="incident-detail-head"><span class="severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.severityLabel) + "</span><h2>" + escapeHtml(incident.number) + "</h2><p>" + escapeHtml(incident.statusLabel) + "</p></header><section><h3>" + escapeHtml(i18n.t("incidents.what")) + "</h3><p>" + escapeHtml(incident.typeLabel) + "</p></section><dl class="detail-grid"><div><dt>" + escapeHtml(i18n.t("incidents.where")) + "</dt><dd>" + escapeHtml(incident.school) + " · " + escapeHtml(incident.line) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.when")) + "</dt><dd>" + escapeHtml(incident.startedLabel) + " · " + escapeHtml(incident.durationLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.confirmed")) + "</dt><dd>" + escapeHtml(confirmed) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.recovery")) + "</dt><dd>" + escapeHtml(recovery.label) + "</dd></div>" + (detail.assignee ? "<div><dt>" + escapeHtml(i18n.t("field.assignee")) + "</dt><dd>" + escapeHtml(detail.assignee) + "</dd></div>" : "") + "</dl>" + (lineAvailable ? '<button class="secondary-action" type="button" data-incident-open-line="' + escapeHtml(detail.line_id) + '">' + escapeHtml(i18n.t("incidents.openLine")) + "</button>" : "") + '<section><h3>' + escapeHtml(i18n.t("incidents.workflow")) + "</h3><ol class=\"incident-timeline\">" + timeline + "</ol>" + commentForm + "</section>" + renderProviderCaseContext(detail) + renderSituationContext(detail.id);
+}
+
+function renderProviderCaseContext(incident) {
+  const view = incidentSurfaceState();
+  const providerView = view.providerCase;
+  const cases = Array.isArray(incident.provider_cases) ? incident.provider_cases : [];
+  const canPrepare = providerCaseActions(null, state.capabilities).canPrepare;
+  const list = cases.length ? '<ul class="case-summary">' + cases.map((item) => {
+    const current = String(providerView.selectedId) === String(item.id);
+    return '<li><button class="link-action" type="button" data-provider-case-id="' + escapeHtml(item.id) + '"' + (current ? ' aria-current="true"' : "") + '>' + escapeHtml(i18n.t("field.providerCase")) + " #" + escapeHtml(item.ticket_no || item.external_ticket_no || item.id) + ' <span>' + escapeHtml(presentation.deliveryStatus(item.delivery_status)) + "</span></button></li>";
+  }).join("") + "</ul>" : '<p class="detail-muted">' + escapeHtml(i18n.t("incidents.noRelatedCases")) + "</p>";
+  const create = !cases.length && canPrepare
+    ? '<button class="secondary-action" type="button" data-provider-case-prepare' + (providerView.actionState === "creating" ? " disabled" : "") + ">" + escapeHtml(i18n.t("providerCase.prepare")) + "</button>"
+    : !cases.length ? '<p class="detail-muted">' + escapeHtml(i18n.t("providerCase.unavailable")) + "</p>" : "";
+  const actionError = providerView.actionError ? '<p class="provider-case-error" role="alert">' + escapeHtml(providerView.actionError) + "</p>" : "";
+  return '<section class="provider-case-context"><h3>' + escapeHtml(i18n.t("incidents.relatedCases")) + "</h3>" + list + create + actionError + renderSelectedProviderCase() + "</section>";
+}
+
+function renderSelectedProviderCase() {
+  const providerView = incidentSurfaceState().providerCase;
+  if (!providerView.selectedId) return "";
+  if (providerView.state === "loading") return '<p class="detail-muted" role="status">' + escapeHtml(i18n.t("providerCase.loading")) + "</p>";
+  if (providerView.state === "error" || !providerView.detail) return '<p class="provider-case-error" role="alert">' + escapeHtml(i18n.t("providerCase.detailUnavailable")) + "</p>";
+  const item = presentProviderCase(providerView.detail, { i18n, presentation });
+  const actions = providerCaseActions(providerView.detail, state.capabilities);
+  const metadata = '<dl class="detail-grid provider-case-fields"><div><dt>' + escapeHtml(i18n.t("providerCase.source")) + "</dt><dd>" + escapeHtml(item.sourceLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.status")) + "</dt><dd>" + escapeHtml(item.statusLabel) + " · " + escapeHtml(item.deliveryLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.createdAt")) + "</dt><dd>" + escapeHtml(item.createdAtLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.lastVerified")) + "</dt><dd>" + escapeHtml(item.lastVerifiedLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.provenance")) + "</dt><dd>" + escapeHtml(item.provenanceLabel) + "</dd></div>" + (item.externalReference ? "<div><dt>" + escapeHtml(i18n.t("providerCase.reference")) + "</dt><dd>" + escapeHtml(item.externalReference) + "</dd></div>" : "") + (item.status === "SENT" ? "<div><dt>" + escapeHtml(i18n.t("providerCase.sentAt")) + "</dt><dd>" + escapeHtml(item.sentAtLabel) + "</dd></div>" : "") + "</dl>";
+  const automatic = providerView.generated?.provider ? '<p class="detail-muted">' + escapeHtml(i18n.t("providerCase.automaticDraft")) + "</p>" : "";
+  const draft = item.text ? '<label class="provider-case-text"><span>' + escapeHtml(i18n.t("providerCase.text")) + '</span><textarea data-provider-case-text maxlength="32768"' + (actions.canSend ? "" : " readonly") + ">" + escapeHtml(item.text) + "</textarea></label>" : '<p class="provider-case-error">' + escapeHtml(i18n.t("providerCase.textUnavailable")) + "</p>";
+  const generate = actions.canGenerate ? '<button class="secondary-action" type="button" data-provider-case-generate' + (providerView.actionState === "generating" ? " disabled" : "") + ">" + escapeHtml(i18n.t("providerCase.prepareAutomatic")) + "</button>" : "";
+  const send = actions.canSend && item.text ? '<form class="provider-case-send" data-provider-case-send><label><input type="checkbox" data-provider-case-reviewed required /> ' + escapeHtml(i18n.t("providerCase.reviewed")) + '</label><button class="primary-action" type="submit" data-provider-case-submit disabled>' + escapeHtml(i18n.t(actions.isRetry ? "providerCase.retry" : "providerCase.send")) + "</button></form>" : "";
+  const delivery = item.deliveryError ? '<details class="provider-case-delivery"><summary>' + escapeHtml(i18n.t("providerCase.deliveryFailed")) + "</summary><p>" + escapeHtml(i18n.t("providerCase.deliveryAttempts", { count: item.deliveryAttempts })) + (item.nextAttemptLabel !== i18n.t("empty.value") ? " · " + escapeHtml(i18n.t("providerCase.nextAttempt", { at: item.nextAttemptLabel })) : "") + "</p><p>" + escapeHtml(item.deliveryError) + "</p></details>" : "";
+  return '<article class="provider-case-detail"><h4>' + escapeHtml(i18n.t("providerCase.title", { reference: item.reference })) + "</h4>" + metadata + automatic + draft + '<div class="provider-case-actions">' + generate + "</div>" + send + delivery + "</article>";
 }
 
 function renderSituationContext(incidentId) {
@@ -578,6 +617,14 @@ function bindIncidentSurfaceEvents(root) {
   }));
   root.querySelectorAll("[data-incident-id]").forEach((control) => control.addEventListener("click", () => selectIncident(control.dataset.incidentId)));
   root.querySelectorAll("[data-situation-id]").forEach((control) => control.addEventListener("click", () => selectSituation(control.dataset.situationId)));
+  root.querySelectorAll("[data-provider-case-id]").forEach((control) => control.addEventListener("click", () => selectProviderCase(control.dataset.providerCaseId)));
+  root.querySelector("[data-provider-case-prepare]")?.addEventListener("click", createIncidentProviderCase);
+  root.querySelector("[data-provider-case-generate]")?.addEventListener("click", generateProviderCaseDraft);
+  root.querySelector("[data-provider-case-reviewed]")?.addEventListener("change", (event) => {
+    const submit = root.querySelector("[data-provider-case-submit]");
+    if (submit) submit.disabled = !event.currentTarget.checked;
+  });
+  root.querySelector("[data-provider-case-send]")?.addEventListener("submit", sendProviderCase);
   root.querySelector("[data-situation-back]")?.addEventListener("click", () => { incidentSurfaceState().selectedSituationId = null; incidentSurfaceState().situation = null; incidentSurfaceState().situationState = "idle"; renderIncidentsSurface(); });
   root.querySelector("[data-incident-open-line]")?.addEventListener("click", () => openIncidentLine(root.querySelector("[data-incident-open-line]").dataset.incidentOpenLine));
   root.querySelector("[data-incident-comment]")?.addEventListener("submit", submitIncidentComment);
@@ -620,6 +667,7 @@ async function selectIncident(id) {
   view.selectedSituationId = null;
   view.situation = null;
   view.situationState = "idle";
+  view.providerCase = { selectedId: null, state: "idle", detail: null, actionState: "idle", actionError: "", generated: null };
   renderIncidentsSurface();
   await loadIncidentDetail(id);
 }
@@ -631,12 +679,109 @@ async function loadIncidentDetail(id) {
     if (String(view.selectedId) !== String(id)) return;
     view.detail = objectPayload(response);
     view.detailState = "ready";
+    const cases = Array.isArray(view.detail.provider_cases) ? view.detail.provider_cases : [];
+    if (view.providerCase.selectedId && !cases.some((item) => String(item.id) === String(view.providerCase.selectedId))) {
+      view.providerCase = { selectedId: null, state: "idle", detail: null, actionState: "idle", actionError: "", generated: null };
+    }
   } catch (error) {
     if (String(view.selectedId) !== String(id)) return;
     view.detail = null;
     view.detailState = "error";
   }
   renderIncidentsSurface();
+}
+
+async function selectProviderCase(id) {
+  const view = incidentSurfaceState();
+  if (!view.detail || !view.selectedId) return;
+  view.providerCase = { selectedId: id, state: "loading", detail: null, actionState: "idle", actionError: "", generated: null };
+  renderIncidentsSurface();
+  try {
+    const detail = objectPayload(await boundaries.providerCases.get(id));
+    if (String(view.providerCase.selectedId) !== String(id) || String(view.selectedId) !== String(view.detail?.id)) return;
+    if (String(detail.incident_id) !== String(view.selectedId)) throw Object.assign(new Error("provider case context mismatch"), { status: 404 });
+    view.providerCase.detail = detail;
+    view.providerCase.state = "ready";
+  } catch (error) {
+    if (String(view.providerCase.selectedId) !== String(id)) return;
+    view.providerCase.state = "error";
+  }
+  renderIncidentsSurface();
+}
+
+async function createIncidentProviderCase() {
+  const view = incidentSurfaceState();
+  if (!view.selectedId || !view.detail || !providerCaseActions(null, state.capabilities).canPrepare) return;
+  if (!globalThis.confirm?.(i18n.t("providerCase.confirmPrepare"))) return;
+  view.providerCase.actionState = "creating";
+  view.providerCase.actionError = "";
+  renderIncidentsSurface();
+  try {
+    const created = objectPayload(await boundaries.incidents.createProviderCaseDraft(view.selectedId));
+    await loadIncidentDetail(view.selectedId);
+    await selectProviderCase(created.id);
+  } catch (error) {
+    view.providerCase.actionState = "idle";
+    view.providerCase.actionError = i18n.t("providerCase.prepareFailed");
+    renderIncidentsSurface();
+  }
+}
+
+async function generateProviderCaseDraft() {
+  const view = incidentSurfaceState();
+  const detail = view.providerCase.detail;
+  if (!detail || !providerCaseActions(detail, state.capabilities).canGenerate) return;
+  if (!globalThis.confirm?.(i18n.t("providerCase.confirmAutomatic"))) return;
+  view.providerCase.actionState = "generating";
+  view.providerCase.actionError = "";
+  renderIncidentsSurface();
+  try {
+    const generated = objectPayload(await boundaries.providerCases.aiDraft(detail.id));
+    if (String(view.providerCase.selectedId) !== String(detail.id)) return;
+    view.providerCase.detail = { ...detail, ...generated };
+    view.providerCase.generated = generated;
+    view.providerCase.actionState = "idle";
+  } catch (error) {
+    if (String(view.providerCase.selectedId) !== String(detail.id)) return;
+    view.providerCase.actionState = "idle";
+    view.providerCase.actionError = i18n.t("providerCase.automaticFailed");
+  }
+  renderIncidentsSurface();
+}
+
+async function sendProviderCase(event) {
+  event.preventDefault();
+  const view = incidentSurfaceState();
+  const detail = view.providerCase.detail;
+  const finalText = event.currentTarget.closest(".provider-case-detail")?.querySelector("[data-provider-case-text]")?.value.trim();
+  const reviewed = event.currentTarget.querySelector("[data-provider-case-reviewed]")?.checked === true;
+  if (!detail || !reviewed || !finalText || !providerCaseActions(detail, state.capabilities).canSend) return;
+  if (!globalThis.confirm?.(i18n.t("providerCase.confirmSend"))) return;
+  view.providerCase.actionState = "sending";
+  view.providerCase.actionError = "";
+  renderIncidentsSurface();
+  try {
+    const sent = objectPayload(await boundaries.providerCases.send(detail.id, { incident_id: view.selectedId, final_text: finalText, reviewed: true }));
+    if (String(view.providerCase.selectedId) !== String(detail.id)) return;
+    view.providerCase.detail = { ...detail, ...sent };
+    view.providerCase.actionState = "idle";
+    await loadIncidentDetail(view.selectedId);
+    await selectProviderCase(detail.id);
+  } catch (error) {
+    if (String(view.providerCase.selectedId) !== String(detail.id)) return;
+    view.providerCase.actionState = "idle";
+    view.providerCase.actionError = i18n.t("providerCase.sendFailed");
+    try {
+      const refreshed = objectPayload(await boundaries.providerCases.get(detail.id));
+      if (String(view.providerCase.selectedId) === String(detail.id)) {
+        view.providerCase.detail = refreshed;
+        view.providerCase.state = "ready";
+      }
+    } catch (refreshError) {
+      view.providerCase.state = "error";
+    }
+    renderIncidentsSurface();
+  }
 }
 
 async function selectSituation(id) {
