@@ -38,6 +38,12 @@
     currentCaseId: null,
     apiOnline: false,
     usingDemoData: false,
+    registryUnavailable: true,
+    registryLoading: false,
+    registryError: null,
+    mappingUnavailable: true,
+    mapDataPromise: null,
+    frontendModel: null,
     // Demo data is opt-in per URL, never persisted across environments.
     demoMode: new URLSearchParams(window.location.search).get("demo") === "1",
     lineLimit: 30,
@@ -173,8 +179,70 @@
     try { const response = await apiTry(["/api/auth/me", "/api/v1/auth/me", "/api/me", "/api/v1/me"]); state.user = response.user || response; updateUser(); } catch (_) { /* login user shape is still enough for the coarse gate */ }
   }
 
+  function mapDataFallback() {
+    return { registryPayload: null, mappingPayload: null, registryUnavailable: true, mappingUnavailable: true, registryError: new Error("frontend data model unavailable"), mappingError: null };
+  }
+
+  function loadMapData() {
+    if (!state.mapDataPromise) {
+      state.registryLoading = true;
+      const loader = window.LinkwatchDataModel?.createDataLoader();
+      state.mapDataPromise = (loader ? loader.load() : Promise.resolve(mapDataFallback()))
+        .then((result) => {
+          state.registryUnavailable = Boolean(result.registryUnavailable);
+          state.mappingUnavailable = Boolean(result.mappingUnavailable);
+          state.registryError = result.registryError || null;
+          state.registryLoading = false;
+          return result;
+        })
+        .catch((error) => {
+          state.registryUnavailable = true;
+          state.mappingUnavailable = true;
+          state.registryError = error;
+          state.registryLoading = false;
+          return mapDataFallback();
+        });
+    }
+    return state.mapDataPromise;
+  }
+
+  function applyFrontendModel(assetResult) {
+    const model = window.LinkwatchDataModel;
+    state.frontendModel = model
+      ? model.buildFrontendModel({ ...assetResult, lines: state.lines })
+      : null;
+    if (state.frontendModel) {
+      state.registryUnavailable = state.frontendModel.registryUnavailable;
+      state.mappingUnavailable = state.frontendModel.mappingUnavailable;
+      state.lines = state.frontendModel.linkwatch.lines;
+    }
+    renderRegistryStatus();
+  }
+
+  function renderRegistryStatus() {
+    const status = $("#registryDataStatus");
+    const registryKpi = $("#kpiRegistrySchools");
+    const total = state.frontendModel?.registry?.total;
+    if (registryKpi) registryKpi.textContent = total == null ? "—" : number(total);
+    if (!status) return;
+    if (state.registryLoading) {
+      status.textContent = "Реестр ВКО: загрузка…";
+      status.dataset.state = "loading";
+    } else if (state.registryUnavailable) {
+      status.textContent = "Реестр ВКО недоступен · мониторинг линий отображён отдельно";
+      status.dataset.state = "unavailable";
+    } else if (state.mappingUnavailable) {
+      status.textContent = `Реестр ВКО: ${number(total)} школ · связка с мониторингом недоступна`;
+      status.dataset.state = "mapping-unavailable";
+    } else {
+      status.textContent = `Реестр ВКО: ${number(total)} школ · отдельно от мониторинга`;
+      status.dataset.state = "available";
+    }
+  }
+
   async function loadData() {
     let lines, incidents, situations, overview, audit;
+    const mapData = loadMapData();
     try {
       [lines, incidents, situations, overview] = await Promise.all([
         apiTry(["/api/lines", "/api/v1/lines", "/api/organizations/lines"]),
@@ -190,7 +258,6 @@
       state.incidents = unwrap(incidents).map((item) => ({ ...item, number: item.number || item.id, school_name: item.school_name || item.school?.name || "—", provider: item.provider_name || item.provider?.name || "—", district: item.district || item.school?.district || "—" }));
       state.situations = unwrap(situations);
       state.audit = unwrap(audit);
-      renderOverview(overview || {});
       state.usingDemoData = false;
     } catch (error) {
       state.usingDemoData = state.demoMode;
@@ -203,6 +270,8 @@
       $("#noticeTitle").textContent = state.demoMode ? "Демо-срез: сервер мониторинга недоступен" : "Сервер мониторинга недоступен";
       $("#noticeText").textContent = state.demoMode ? "Показаны учебные данные. Не используйте их для операционных решений или официальной выгрузки." : "Текущая картина и официальные выгрузки недоступны. Проверьте соединение и повторите обновление.";
     }
+    applyFrontendModel(await mapData);
+    renderOverview(overview || {});
     populateFilters();
     applyCapabilities();
     renderAll();
@@ -233,7 +302,7 @@
     try { const payload = await apiTry([`/api/agent-versions/${encodeURIComponent(version)}/devices?limit=100`, `/api/v1/agent-versions/${encodeURIComponent(version)}/devices?limit=100`]); const root = $("#agentVersionDevices"); root.hidden = false; const items = unwrap(payload); root.innerHTML = `<div class="panel-kicker">УСТРОЙСТВА · ${escapeHtml(version)}</div>` + (items.length ? `<table class="admin-table"><thead><tr><th>Устройство</th><th>Школа</th><th>Последняя связь</th></tr></thead><tbody>${items.map((item) => `<tr><td>${escapeHtml(item.display_name || item.hostname || item.id)}</td><td>${escapeHtml(item.school_name || item.school_id || "—")}</td><td>${escapeHtml(time(item.last_seen, true))}</td></tr>`).join("")}</tbody></table>` : `<div class="table-empty">Устройств не найдено.</div>`); } catch (_) { $("#agentVersionDevices").hidden = false; $("#agentVersionDevices").innerHTML = `<div class="table-empty">Список устройств недоступен.</div>`; }
   }
   function renderOverview(data) {
-    const schools = (data.schools ?? data.organization_count ?? data.counts?.schools ?? new Set(state.lines.map((line) => line.school_id)).size) || 0;
+    const schools = (data.schools ?? data.organization_count ?? data.counts?.schools ?? state.frontendModel?.linkwatch?.monitoredSchoolCount ?? new Set(state.lines.map((line) => line.school_id)).size) || 0;
     const devices = data.active_devices ?? data.active_points ?? data.devices ?? data.counts?.active_devices ?? state.lines.length;
     const problems = data.problem_lines ?? data.problems ?? data.counts?.problem_lines ?? state.lines.filter((line) => ["critical", "unstable"].includes(statusClass(line.status))).length;
     const completeness = data.completeness ?? data.data_completeness ?? data.data_completeness_pct ?? 94;
@@ -245,6 +314,7 @@
     $("#kpiAverageDownload").textContent = overviewMetric(averages.download, " Мбит/с");
     $("#kpiAverageUpload").textContent = overviewMetric(averages.upload, " Мбит/с");
     $("#kpiAveragePing").textContent = overviewMetric(averages.ping, " мс");
+    renderRegistryStatus();
     if (data.completeness != null || data.data_completeness != null) $("#qualityScore").textContent = number(completeness);
     $("#lineNavCount").textContent = number(state.lines.length || data.lines || data.counts?.lines || "—");
     $("#incidentNavCount").textContent = number((data.active_incidents ?? data.counts?.active_incidents ?? state.incidents.filter((item) => item.status !== "CLOSED").length) || "—");
