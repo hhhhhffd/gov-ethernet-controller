@@ -38,6 +38,18 @@ func TestAuthClientKeyIgnoresForwardedHeaderFromDirectPeer(t *testing.T) {
 	}
 }
 
+func TestAuthClientKeyTrustedProxyWithoutForwardedHeaderFallsBackToPeer(t *testing.T) {
+	networks, err := parseTrustedProxyCIDRs("172.30.0.10/32")
+	if err != nil {
+		t.Fatalf("parse trusted proxy: %v", err)
+	}
+	r := httptest.NewRequest("POST", "/api/login", nil)
+	r.RemoteAddr = "172.30.0.10:4000"
+	if got := authClientKeyWithTrustedProxies(r, networks); got != "172.30.0.10" {
+		t.Fatalf("trusted peer without X-Forwarded-For got key %q", got)
+	}
+}
+
 func TestAuthClientKeyUsesFirstValidForwardedHopAndNormalizesIPv6(t *testing.T) {
 	networks, err := parseTrustedProxyCIDRs("2001:db8::10/128")
 	if err != nil {
