@@ -229,3 +229,15 @@ The bounded decision does not close these external gates:
    AI acceptance rather than the bounded fallback path.
 No long suite was run for this closure. The only worktree mutation is this
 matrix plus removal of the untracked generated `server/linkwatch-server`.
+
+## Final map/import acceptance
+
+The TASK-016 audit is maintained separately in
+[`docs/TASK-016_FINAL_MAP_ACCEPTANCE.md`](docs/TASK-016_FINAL_MAP_ACCEPTANCE.md).
+It is authoritative for the Leaflet/OpenStreetMap, current-VKO registry,
+importer, organization mapping, registry-vs-LINKWATCH truth, MAP-001..012,
+exact TASK-015 command results, and the 15-step demo. Its decision is
+`BLOCKED_EXTERNAL` until an official current VKO registry is imported and the
+browser acceptance environment is available. Fixtures and synthetic
+measurements are explicitly not accepted as real school geography or a real
+school outage.
