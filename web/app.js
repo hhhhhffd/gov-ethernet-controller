@@ -32,7 +32,7 @@
     historicalRequest: 0,
     mapPopupLineID: null,
     mapPopupTrigger: null,
-    filters: { search: "", district: "", provider: "", technology: "", status: "", period: "week", from: "", to: "", view: "lines", mapMode: "current" },
+    filters: { search: "", district: "", provider: "", technology: "", status: "", period: "week", from: "", to: "", view: "lines", mapMode: "current", coverage: "all" },
     currentLine: null,
     currentIncident: null,
     currentCaseId: null,
@@ -320,14 +320,14 @@
     $("#incidentNavCount").textContent = number((data.active_incidents ?? data.counts?.active_incidents ?? state.incidents.filter((item) => item.status !== "CLOSED").length) || "—");
   }
   function populateFilters() {
-    const districts = [...new Set(state.lines.map((line) => line.district).filter(Boolean))].sort();
+    const districts = [...new Set(state.lines.map((line) => line.district).concat(state.frontendModel?.registry?.schools?.map((school) => school.district) || []).filter(Boolean))].sort();
     const providers = [...new Set(state.lines.map((line) => line.provider).filter(Boolean))].sort();
     const technologies = [...new Set(state.lines.map((line) => line.technology).filter(Boolean))].sort();
     const districtSelect = $("#districtFilter"); const providerSelect = $("#providerFilter"); const technologySelect = $("#technologyFilter");
     districtSelect.innerHTML = `<option value="">Все районы</option>${districts.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}`;
     providerSelect.innerHTML = `<option value="">Все провайдеры</option>${providers.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}`;
     technologySelect.innerHTML = `<option value="">Все типы</option>${technologies.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}`;
-    districtSelect.value = state.filters.district; providerSelect.value = state.filters.provider; technologySelect.value = state.filters.technology; $("#statusFilter").value = state.filters.status; $("#periodFilter").value = state.filters.period; $("#fromDateFilter").value = state.filters.from; $("#toDateFilter").value = state.filters.to; $("#mapListMode").value = state.filters.mapMode; toggleCustomPeriod(); syncModeControls();
+    districtSelect.value = state.filters.district; providerSelect.value = state.filters.provider; technologySelect.value = state.filters.technology; $("#statusFilter").value = state.filters.status; $("#periodFilter").value = state.filters.period; $("#fromDateFilter").value = state.filters.from; $("#toDateFilter").value = state.filters.to; $("#mapListMode").value = state.filters.mapMode; $("#coverageFilter").value = state.filters.coverage; toggleCustomPeriod(); syncModeControls();
   }
   function dateValue(date) { return new Date(date).toISOString().slice(0, 10); }
   function toggleCustomPeriod() { const controls = $("#customPeriodControls"); if (controls) controls.hidden = state.filters.period !== "custom"; }
@@ -338,19 +338,31 @@
   function syncModeControls() {
     const historical = isHistoricalMode();
     const status = $("#statusFilter");
-    if (status) { status.disabled = historical; status.title = historical ? "Фильтр current state доступен только в текущем режиме" : ""; }
+    if (status) { status.disabled = false; status.title = historical ? "Фильтр применяется к historical evidence, а не к current LineState" : ""; const label = status.closest("label")?.querySelector(".filter-label"); if (label) label.textContent = historical ? "Статус historical evidence" : "Статус current state"; }
     $$('[data-table-view]').forEach((button) => { button.disabled = historical; button.title = historical ? "Представление historical evidence использует строки линий" : ""; });
+  }
+  function coverageRows() {
+    return window.LinkwatchDataModel?.coverageRows
+      ? window.LinkwatchDataModel.coverageRows(state.frontendModel, state.filters.coverage)
+      : state.lines.slice();
+  }
+  function historicalStatus(line) {
+    if (line.registryOnly) return "NOT_MONITORED";
+    const summary = historicalSummary(line);
+    if (!summary || !Number(summary.measurement_count)) return "NO_DATA";
+    const candidate = String(summary.analytics_state || summary.status || "UNKNOWN").toUpperCase();
+    return candidate === "UNSTABLE" ? "DEGRADED" : ["OK", "DEGRADED", "NO_INTERNET", "NO_DATA", "UNKNOWN"].includes(candidate) ? candidate : "UNKNOWN";
   }
   function filteredLines() {
     const query = state.filters.search.trim().toLowerCase();
-    return state.lines.filter((line) => {
+    return coverageRows().filter((line) => {
       const matchesQuery = !query || [line.id, line.school_id, line.school_name, line.district, line.provider].some((value) => String(value || "").toLowerCase().includes(query));
       const matchesDistrict = !state.filters.district || line.district === state.filters.district;
-      const matchesProvider = !state.filters.provider || line.provider === state.filters.provider;
-      const matchesTechnology = !state.filters.technology || line.technology === state.filters.technology;
+      const matchesProvider = !state.filters.provider || (!line.registryOnly && line.provider === state.filters.provider);
+      const matchesTechnology = !state.filters.technology || (!line.registryOnly && line.technology === state.filters.technology);
       const normalizedStatus = String(line.status || "").toUpperCase() === "UNSTABLE" ? "DEGRADED" : String(line.status || "").toUpperCase();
-      const matchesStatus = isHistoricalMode() || !state.filters.status || normalizedStatus === state.filters.status;
-      const matchesView = isHistoricalMode() || (state.filters.view === "attention" ? ["critical", "unstable"].includes(statusClass(line.status)) : state.filters.view === "stale" ? statusClass(line.data_state) === "no-data" : true);
+      const matchesStatus = !state.filters.status || (isHistoricalMode() ? historicalStatus(line) === state.filters.status : normalizedStatus === state.filters.status);
+      const matchesView = line.registryOnly ? state.filters.view === "lines" || isHistoricalMode() : (isHistoricalMode() || (state.filters.view === "attention" ? ["critical", "unstable"].includes(statusClass(line.status)) : state.filters.view === "stale" ? statusClass(line.data_state) === "no-data" : true));
       return matchesQuery && matchesDistrict && matchesProvider && matchesTechnology && matchesStatus && matchesView;
     });
   }
@@ -409,15 +421,20 @@
       if (historical && state.historicalLoading) { $("#mapVisibleCount").textContent = "—"; $("#mapFooterNote").textContent = `Загрузка historical evidence за период: ${periodLabel()}`; return; }
       if (historical && state.historicalError) { $("#mapVisibleCount").textContent = "—"; $("#mapFooterNote").textContent = "Историческое представление недоступно"; return; }
       const rows = filteredLines();
+      const monitoredRows = rows.filter((line) => !line.registryOnly);
+      const visibleRegistryIds = new Set(rows.map((line) => line.registryId).filter(Boolean));
+      const registry = state.frontendModel?.registry
+        ? { ...state.frontendModel.registry, schools: state.frontendModel.registry.schools.filter((school) => state.filters.coverage === "all" || visibleRegistryIds.has(school.registryId)) }
+        : state.frontendModel?.registry;
       $("#mapVisibleCount").textContent = rows.length;
       $("#mapFooterNote").textContent = historical ? `Historical evidence · ${periodLabel()} · current LineState не используется` : "Текущее состояние из latest LineState";
       window.LinkwatchMap.render({
         containerId: "leafletMap",
         mode: historical ? "historical" : "current",
         lineCount: rows.length,
-        lines: rows,
+        lines: monitoredRows,
         model: state.frontendModel,
-        registry: state.frontendModel?.registry,
+        registry,
         historicalByLine: state.historicalByLine,
       });
       return;
@@ -447,6 +464,7 @@
     if (!rows.length) { root.innerHTML = `<tr><td colspan="6" class="table-empty">По выбранным фильтрам линий нет.</td></tr>`; $("#loadMore").hidden = true; $("#tableSummary").textContent = "Нет строк"; return; }
     const visibleRows = rows.slice(0, state.lineLimit);
     root.innerHTML = visibleRows.map((line) => {
+      if (line.registryOnly) return `<tr class="registry-only-row"><td><div class="line-cell"><span class="line-avatar">${escapeHtml((line.school_name || "Ш").replace(/[^А-ЯA-Z]/gi, "").slice(0, 1) || "Ш")}</span><div><span class="line-name">${escapeHtml(line.school_name)}</span><span class="line-sub">${escapeHtml(line.school_id)} · ${escapeHtml(line.district)}</span></div></div></td><td><span class="status-badge no-data"><i></i>Не подключена</span></td><td><div class="axis-pair"><span class="axis-chip unknown"><strong>История</strong> Не применимо</span></div></td><td><div class="metric-line"><strong>Нет мониторинга</strong><span>Registry-only</span></div></td><td><div class="time-line"><span class="freshness">${escapeHtml(periodLabel())}</span><span>Историческое evidence не применимо</span></div></td><td></td></tr>`;
       const summary = historicalSummary(line); const badge = historicalBadge(summary); const measurements = summary?.measurement_count == null ? "Нет данных" : number(summary.measurement_count); const problems = summary?.problem_measurement_count == null ? "Нет данных" : number(summary.problem_measurement_count);
       return `<tr><td><div class="line-cell"><span class="line-avatar">${escapeHtml((line.school_name || "Ш").replace(/[^А-ЯA-Z]/gi, "").slice(0, 1) || "Ш")}</span><div><span class="line-name">${escapeHtml(line.school_name)}</span><span class="line-sub">${escapeHtml(line.id)} · ${escapeHtml(line.role)} · ${escapeHtml(line.technology)}</span></div></div></td><td><span class="status-badge ${badge.className}"><i></i>${escapeHtml(badge.label)}</span></td><td><div class="axis-pair"><span class="axis-chip ${summary?.baseline_compliance == null ? "unknown" : "good"}"><strong>Базовый норматив</strong> ${escapeHtml(historicalRate(summary?.baseline_compliance))}</span><span class="axis-chip ${summary?.contract_compliance == null ? "unknown" : "good"}"><strong>Договор</strong> ${escapeHtml(historicalRate(summary?.contract_compliance))}</span></div></td><td><div class="metric-line"><strong>${escapeHtml(measurements)} наблюдений</strong><span>Проблемные: ${escapeHtml(problems)}</span></div></td><td><div class="time-line"><span class="freshness">${escapeHtml(periodLabel())}</span><span>Historical evidence · current state не используется</span></div></td><td><button class="row-action" data-line-id="${escapeHtml(line.id)}">Открыть →</button></td></tr>`;
     }).join("");
@@ -470,6 +488,7 @@
     }
     const visibleRows = rows.slice(0, state.lineLimit);
     if (!rows.length) { root.innerHTML = `<tr><td colspan="6" class="table-empty">По выбранным фильтрам линий нет. Измените фильтр или сбросьте его.</td></tr>`; } else root.innerHTML = visibleRows.map((line) => {
+      if (line.registryOnly) return `<tr class="registry-only-row"><td><div class="line-cell"><span class="line-avatar">${escapeHtml((line.school_name || "Ш").replace(/[^А-ЯA-Z]/gi, "").slice(0, 1) || "Ш")}</span><div><span class="line-name">${escapeHtml(line.school_name)}</span><span class="line-sub">${escapeHtml(line.school_id)} · ${escapeHtml(line.district)}</span></div></div></td><td><span class="status-badge no-data"><i></i>Не подключена</span></td><td><div class="axis-pair"><span class="axis-chip unknown"><strong>Провайдер</strong> Не применимо</span></div></td><td><div class="metric-line"><strong>Нет наблюдения</strong><span>Registry-only</span></div></td><td><div class="time-line"><span class="freshness">Не мониторится</span><span>—</span></div></td><td></td></tr>`;
       const cls = statusClass(line.status); const quality = statusClass(line.quality_state); const contract = statusClass(line.contract_state); const latest = line.latest || {};
       return `<tr><td><div class="line-cell"><span class="line-avatar">${escapeHtml((line.school_name || "Ш").replace(/[^А-ЯA-Z]/gi, "").slice(0, 1) || "Ш")}</span><div><span class="line-name">${escapeHtml(line.school_name)}</span><span class="line-sub">${escapeHtml(line.id)} · ${escapeHtml(line.role)} · ${escapeHtml(line.technology)}</span></div></div></td><td><span class="status-badge ${cls}"><i></i>${escapeHtml(statusLabel(line.status))}</span></td><td><div class="axis-pair"><span class="axis-chip ${quality === "healthy" ? "good" : quality === "unstable" ? "warn" : "unknown"}"><strong>Качество</strong> ${escapeHtml(axisLabel(line.quality_state))}</span><span class="axis-chip ${contract === "healthy" ? "good" : contract === "unstable" ? "warn" : "unknown"}"><strong>Договор</strong> ${escapeHtml(axisLabel(line.contract_state))}</span></div></td><td><div class="metric-line"><strong>${latest.download == null ? "Нет наблюдения" : `↓ ${number(latest.download, " Мбит/с")}`}</strong><span>${latest.ping == null ? "—" : `Ping ${number(latest.ping, " мс")} · Loss ${number(latest.loss, "%")}`}</span></div></td><td><div class="time-line"><span class="${line.data_state === "NO_DATA" ? "freshness stale" : "freshness"}">${line.data_state === "NO_DATA" ? "Нет актуальных данных" : relative(latest.at)}</span><span>${time(latest.at, true)}</span></div></td><td><button class="row-action" data-line-id="${escapeHtml(line.id)}">Открыть →</button></td></tr>`;
     }).join("");
@@ -922,6 +941,15 @@
   function toast(message, tone = "") { const node = document.createElement("div"); node.className = `toast ${tone}`; node.textContent = message; $("#toastRegion").appendChild(node); setTimeout(() => node.remove(), 4200); }
 
   function bindEvents() {
+    const coverageFilter = $("#coverageFilter") || (() => {
+      const anchor = $("#districtFilter");
+      if (!anchor?.parentElement) return null;
+      const label = document.createElement("label");
+      label.innerHTML = '<span class="filter-label">Покрытие</span><select id="coverageFilter"><option value="all">Все школы ВКО</option><option value="monitored">Только школы LINKWATCH</option></select>';
+      anchor.parentElement.before(label);
+      return $("#coverageFilter");
+    })();
+    coverageFilter?.addEventListener("change", (event) => { state.filters.coverage = event.target.value === "monitored" ? "monitored" : "all"; renderMap(); renderLines(); });
     window.LinkwatchMap?.setMarkerClickHandler((context, marker) => openMapPopupForContext(context, marker));
     $$("[data-view]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.view)));
     $("#menuToggle").addEventListener("click", () => $(".rail").classList.add("open")); $("#railClose").addEventListener("click", () => $(".rail").classList.remove("open"));
@@ -939,6 +967,7 @@
     $$("[data-table-view]").forEach((button) => button.addEventListener("click", () => { state.filters.view = button.dataset.tableView; $$("[data-table-view]").forEach((item) => item.classList.toggle("active", item === button)); renderLines(); }));
     $$("[data-export]").forEach((button) => button.addEventListener("click", () => downloadExport(button.dataset.export)));
     $("#loadMore").addEventListener("click", () => { state.lineLimit += 30; renderLines(); });
+    $("#resetFilters").addEventListener("click", () => { setTimeout(() => { state.filters.coverage = "all"; if (coverageFilter) coverageFilter.value = "all"; renderMap(); renderLines(); }, 0); });
     const loginForm = $("#loginForm"); if (loginForm) loginForm.addEventListener("submit", async (event) => { event.preventDefault(); const submit = $("#loginSubmit"); submit.disabled = true; try { await login(false, { username: $("#loginUsername").value.trim(), password: $("#loginPassword").value }); if (state.apiOnline) { await loadData(); await loadPassport(); } } finally { submit.disabled = false; } });
     [["mapZoomIn", "zoomIn"], ["mapZoomOut", "zoomOut"], ["mapReset", "resetView"]].forEach(([id, action]) => { const button = $(`#${id}`); if (button) button.addEventListener("click", () => { const map = window.LinkwatchMap?.getMap(); if (!map) return; if (action === "resetView") window.LinkwatchMap.resetView(); else map[action](); }); });
   }

@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const {
   buildFrontendModel,
+  coverageRows,
   createDataLoader,
 } = require("./data-model.js");
 
@@ -94,4 +95,18 @@ test("registry failure is explicit, cached once, and does not discard LINKWATCH 
   assert.equal(model.linkwatch.lines.length, 1);
   assert.equal(model.linkwatch.lines[0].mappingStatus, "REGISTRY_UNAVAILABLE");
   assert.equal(model.registry.total, null);
+});
+
+test("coverage rows keep registry-only schools neutral and monitored mode keeps every line", () => {
+  const model = buildFrontendModel({
+    registryPayload: registry,
+    mappingPayload: { entries: [{ organization_id: "org-1", registry_id: "registry-1" }] },
+    lines: [line("line-1", "org-1", "school-1", "OK"), line("line-2", "org-1", "school-1", "NO_DATA")],
+  });
+  const all = coverageRows(model, "all");
+  const monitored = coverageRows(model, "monitored");
+  assert.equal(all.length, 3);
+  assert.equal(all.filter((row) => row.registryOnly).length, 1);
+  assert.equal(all.find((row) => row.registryOnly).status, "NOT_MONITORED");
+  assert.deepEqual(monitored.map((row) => row.id), ["line-1", "line-2"]);
 });

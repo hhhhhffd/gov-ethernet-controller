@@ -70,4 +70,18 @@ monitoringMarker.handlers.keypress({ originalEvent: { key: "Enter", preventDefau
 assert.equal(received.at(-1).kind, "monitoring");
 assert.deepEqual(Array.from(received.at(-1).lines, (line) => line.id), ["line-1", "line-2"]);
 
+window.LinkwatchMap.render({
+  mode: "historical",
+  registry: { schools: [registrySchool] },
+  lines: [lineOne, lineTwo],
+  historicalByLine: {
+    "line-1": { measurement_count: 3, analytics_state: "OK" },
+    "line-2": { measurement_count: 0 },
+  },
+});
+const historicalContext = window.LinkwatchMap.getLayers().monitoring.items[0].__linkwatchContext;
+assert.equal(historicalContext.mode, "historical");
+assert.equal(historicalContext.status, "NO_DATA", "historical marker must aggregate historical evidence, not current line state");
+assert.deepEqual(Array.from(historicalContext.evidence, (item) => item.status), ["OK", "NO_DATA"]);
+
 console.log("web popup context checks: PASS");

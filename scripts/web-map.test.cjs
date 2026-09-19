@@ -87,6 +87,6 @@ assert.equal(monitoringContext.status, "NO_INTERNET");
 mapApi.render({ mode: "historical", registry, lines: lines.slice(0, 1), historicalByLine: { "line-ok": { measurement_count: 2 } } });
 const historicalContext = mapApi.getMarkerContext(mapApi.getLayers().monitoring.items[0]);
 assert.equal(historicalContext.status, "UNKNOWN", "historical mode must not reuse current state");
-assert.equal(historicalContext.evidence[0].status, null, "historical marker evidence must be neutral about current state");
+assert.equal(historicalContext.evidence[0].status, "UNKNOWN", "historical marker evidence must come from the historical summary");
 
 console.log("web map marker checks: PASS");

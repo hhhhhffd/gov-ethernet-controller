@@ -122,6 +122,37 @@
     return candidate && OPERATIONAL_STATUSES.has(candidate.toUpperCase()) ? candidate.toUpperCase() : "UNKNOWN";
   }
 
+  function registryOnlyRow(school) {
+    return {
+      id: `registry:${school.registryId}`,
+      registryId: school.registryId,
+      registrySchool: school,
+      registryOnly: true,
+      organization_id: null,
+      school_id: school.schoolId || school.registryId,
+      school_name: school.officialName,
+      district: school.district || "—",
+      provider: "—",
+      technology: "—",
+      role: "—",
+      status: "NOT_MONITORED",
+      linkwatchStatus: "NOT_MONITORED",
+      statusSource: "registry-only",
+      data_state: "NOT_MONITORED",
+      latest: {},
+    };
+  }
+
+  function coverageRows(model, coverage = "all") {
+    const lines = model?.linkwatch?.lines || [];
+    if (coverage === "monitored") return lines.slice();
+    const monitoredRegistryIds = new Set(lines.map((line) => line.registryId).filter(Boolean));
+    const registryOnly = (model?.registry?.schools || [])
+      .filter((school) => !monitoredRegistryIds.has(school.registryId) && school.monitoringStatus === "NOT_MONITORED")
+      .map(registryOnlyRow);
+    return lines.concat(registryOnly).sort((left, right) => String(left.school_name || "").localeCompare(String(right.school_name || ""), "ru"));
+  }
+
   function buildFrontendModel({ registryPayload, mappingPayload, lines = [], registryUnavailable = false, mappingUnavailable = false } = {}) {
     const registry = normalizedRegistry(registryPayload);
     const mapping = normalizedMapping(mappingPayload);
@@ -225,6 +256,7 @@
     DEFAULT_REGISTRY_URL,
     DEFAULT_MAPPING_URL,
     buildFrontendModel,
+    coverageRows,
     createDataLoader,
     normalizeRegistryEntry,
   };

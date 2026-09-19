@@ -34,6 +34,14 @@
     return STATUS_SET.has(normalized) ? normalized : "UNKNOWN";
   }
   function aggregateStatus(lines) { return STATUS_PRIORITY.find((status) => lines.some((line) => statusForLine(line) === status)) || "UNKNOWN"; }
+  function historicalStatusForLine(line, historicalByLine) {
+    const summary = historicalByLine?.[line.id ?? line.line_id];
+    if (!summary || !Number(summary.measurement_count)) return "NO_DATA";
+    const raw = String(summary.analytics_state || summary.status || "UNKNOWN").toUpperCase();
+    const normalized = raw === "UNSTABLE" ? "DEGRADED" : raw;
+    return STATUS_SET.has(normalized) ? normalized : "UNKNOWN";
+  }
+  function aggregateHistoricalStatus(lines, historicalByLine) { return STATUS_PRIORITY.find((status) => lines.some((line) => historicalStatusForLine(line, historicalByLine) === status)) || "UNKNOWN"; }
   function layerGroup() {
     return typeof window.L.layerGroup === "function" ? window.L.layerGroup() : {
       items: [], addLayer(layer) { this.items.push(layer); return this; }, removeLayer(layer) { this.items = this.items.filter((item) => item !== layer); return this; }, clearLayers() { this.items = []; return this; }, addTo(map) { map.addLayer?.(this); return this; },
@@ -86,8 +94,8 @@
       groups.get(registryId).lines.push(line);
     });
     return [...groups.values()].map((group) => {
-      const status = mode === "historical" ? "UNKNOWN" : aggregateStatus(group.lines);
-      const evidence = group.lines.map((line) => ({ lineId: line.id ?? line.line_id ?? null, status: mode === "historical" ? null : statusForLine(line), historical: historicalByLine?.[line.id] ?? null }));
+      const status = mode === "historical" ? aggregateHistoricalStatus(group.lines, historicalByLine) : aggregateStatus(group.lines);
+      const evidence = group.lines.map((line) => ({ lineId: line.id ?? line.line_id ?? null, status: mode === "historical" ? historicalStatusForLine(line, historicalByLine) : statusForLine(line), historical: historicalByLine?.[line.id] ?? null }));
       const school = group.lines[0]?.registrySchool ?? null;
       return { ...group, school, status, mode, evidence, label: school?.officialName ?? group.lines[0]?.school_name ?? "Мониторинговая школа" };
     });
