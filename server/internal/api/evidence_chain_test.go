@@ -58,8 +58,15 @@ func TestEvidenceChainExplicitlyReportsNoDataAndUnknownContext(t *testing.T) {
 func TestEvidenceChainOpeningAndReportRowsShareProjectionShape(t *testing.T) {
 	opening := map[string]interface{}{"evidence_measurement_ids": []interface{}{42.0, 43.0}, "policy": map[string]interface{}{"version": 4}, "contract": map[string]interface{}{"id": 8}, "reason": "confirmed duration"}
 	incidentChain := evidenceChainFromOpening(opening, time.Now())
+	if incidentChain["status"] != "AVAILABLE" {
+		t.Fatalf("incident evidence status = %#v, want AVAILABLE", incidentChain["status"])
+	}
 	if incidentChain["confirmation"].(map[string]interface{})["count"] != 2 {
 		t.Fatalf("opening evidence count missing: %#v", incidentChain)
+	}
+	observationIDs, ok := incidentChain["confirmation"].(map[string]interface{})["observation_ids"].([]int64)
+	if !ok || len(observationIDs) != 2 || observationIDs[0] != 42 || observationIDs[1] != 43 {
+		t.Fatalf("opening evidence observation IDs = %#v, want [42 43]", incidentChain["confirmation"].(map[string]interface{})["observation_ids"])
 	}
 	rows := []reportRow{{measurementRecord: measurementRecord{ID: 42, Valid: true, BaselineState: "OK", ContractState: "MEETS"}}}
 	rowChain := evidenceChainForRows(rows)

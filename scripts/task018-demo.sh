@@ -235,14 +235,24 @@ assert_incident_detail() {
   if [[ "$call_status" != "200" ]] || ! node - "$call_body" <<'NODE'
 const fs = require("fs");
 const body = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
-const valid = Array.isArray(body.evidence_chain)
-  && body.evidence_chain.length > 0
+const chain = body.evidence_chain;
+const confirmation = chain && typeof chain === "object" && !Array.isArray(chain)
+  ? chain.confirmation
+  : undefined;
+const observationIds = confirmation?.observation_ids;
+const valid = chain && typeof chain === "object" && !Array.isArray(chain)
+  && chain.status === "AVAILABLE"
+  && confirmation && typeof confirmation === "object" && !Array.isArray(confirmation)
+  && Array.isArray(observationIds)
+  && observationIds.length > 0
+  && observationIds.every((id) => Number.isInteger(id) && id > 0)
   && Array.isArray(body.events)
-  && body.events.length > 0;
+  && body.events.length > 0
+  && body.events.every((event) => event && typeof event === "object" && typeof event.event_type === "string" && event.event_type.length > 0);
 process.exit(valid ? 0 : 1);
 NODE
   then
-    fail "run $run_count incident evidence/timeline" "HTTP $call_status or empty evidence/timeline"
+    fail "run $run_count incident evidence/timeline" "HTTP $call_status or invalid evidence object/observation IDs or empty timeline"
     return 1
   fi
   pass "run $run_count incident evidence/timeline"
