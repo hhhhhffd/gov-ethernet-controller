@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
-import { writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import process from "node:process";
 
 export const CURRENT_SCHOOLS_API_URL =
@@ -9,6 +9,10 @@ export const CURRENT_SCHOOLS_API_URL =
 export const STATE_SCHOOLS_API_URL =
   "https://data.egov.kz/api/v4/state_schools/v1";
 export const DEFAULT_OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
+export const DEFAULT_REGISTRY_OUTPUT = "web/data/vko-schools.json";
+export const DEFAULT_REPORT_OUTPUT = "artifacts/vko-schools-import-report.json";
+export const DEFAULT_REVIEW_OUTPUT = "artifacts/vko-schools-review.csv";
+export const DEFAULT_OVERRIDES_FILE = "web/data/vko-school-overrides.json";
 
 const CURRENT_REGISTRY_SOURCE = "egov-current-registry";
 const STATE_SCHOOLS_SOURCE = "egov-state-schools";
@@ -733,6 +737,9 @@ export function matchRegistryToOsm(registrySchools = [], osmSchools = []) {
 
 function reviewedOverrideFor(registryRecord, reviewedOverrides) {
   if (!reviewedOverrides) return null;
+  if (reviewedOverrides instanceof Map) {
+    return reviewedOverrides.get(normalizeIdentifier(registryIdFor(registryRecord))) ?? null;
+  }
   if (Array.isArray(reviewedOverrides)) {
     return reviewedOverrides.find((override) => normalizeIdentifier(override.registry_id) === normalizeIdentifier(registryRecord.school_id));
   }
@@ -822,6 +829,250 @@ export function buildDeterministicMatches({
     osm_only: osmMatches.osm_only,
     duplicates: osmMatches.duplicates,
   };
+}
+
+function registryIdFor(record) {
+  return stringValue(record.school_id) ?? stringValue(record.bin) ?? stableRecordKey(record);
+}
+
+function canonicalOverrideEntries(payload, source) {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === "object" && Array.isArray(payload.overrides)) return payload.overrides;
+  throw new ImportInputError(source, "expected a JSON array or an object with an overrides array");
+}
+
+export function validateReviewedOverrides(overrides, matches, { boundary } = {}) {
+  if (overrides === undefined || overrides === null) return [];
+  const entries = canonicalOverrideEntries(overrides, "overrides");
+  const byId = new Map(matches.map((match) => [registryIdFor(match.registry), match]));
+  const normalized = [];
+  const seen = new Set();
+  for (const [index, override] of entries.entries()) {
+    if (!override || typeof override !== "object" || Array.isArray(override)) {
+      throw new ImportInputError("overrides", `entry ${index + 1} must be an object`);
+    }
+    const registryId = stringValue(override.registry_id);
+    if (!registryId) throw new ImportInputError("overrides", `entry ${index + 1} is missing registry_id`);
+    const normalizedId = normalizeIdentifier(registryId);
+    if (seen.has(normalizedId)) throw new ImportInputError("overrides", `duplicate registry_id ${registryId}`);
+    seen.add(normalizedId);
+    const match = byId.get(registryId) ?? [...byId.entries()].find(([id]) => normalizeIdentifier(id) === normalizedId)?.[1];
+    if (!match) throw new ImportInputError("overrides", `unknown registry_id ${registryId}`);
+    if (!match.ambiguous) {
+      throw new ImportInputError("overrides", `registry_id ${registryId} is not an ambiguous review case`);
+    }
+    const reviewed = override.reviewed === true
+      || ["reviewed", "approved"].includes(canonicalValue(override.status));
+    if (!reviewed) throw new ImportInputError("overrides", `registry_id ${registryId} must be explicitly reviewed`);
+    const coordinate = coordinateFromValue(override);
+    const validation = validateCoordinate(coordinate, { boundary, sourceVerified: true });
+    if (!validation.valid) {
+      throw new ImportInputError("overrides", `registry_id ${registryId} has ${validation.reason} coordinates`);
+    }
+    normalized.push({
+      registry_id: registryId,
+      latitude: validation.coordinate.latitude,
+      longitude: validation.coordinate.longitude,
+      reviewed: true,
+      provenance: stringValue(override.provenance) ?? "reviewed_override",
+      note: stringValue(override.note),
+    });
+  }
+  return normalized.sort((left, right) => normalizeIdentifier(left.registry_id).localeCompare(normalizeIdentifier(right.registry_id), "en"));
+}
+
+function overridesByRegistryId(overrides) {
+  return new Map(overrides.map((override) => [normalizeIdentifier(override.registry_id), override]));
+}
+
+function registryEntryFromMatch(match, overridesById) {
+  const registry = match.registry;
+  const registryId = registryIdFor(registry);
+  const override = overridesById.get(normalizeIdentifier(registryId));
+  const osm = match.candidate;
+  const coordinate = match.coordinate;
+  const entry = {
+    registry_id: registryId,
+    official_name: registry.display_name,
+    name: registry.display_name,
+    district: registry.district ?? null,
+    locality: registry.locality ?? null,
+    address: registry.address ?? null,
+    latitude: coordinate.latitude,
+    longitude: coordinate.longitude,
+    identity_source: registry.source ?? CURRENT_REGISTRY_SOURCE,
+    coordinate_source: coordinate.source,
+    match_method: match.match_method,
+    confidence: match.confidence,
+  };
+  if (osm?.osm_type) entry.osm_type = osm.osm_type;
+  if (osm?.osm_id) entry.osm_id = osm.osm_id;
+  if (override && coordinate.source === "reviewed_override") entry.coordinate_provenance = override.provenance;
+  return entry;
+}
+
+function reviewCsvValue(value) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+const REVIEW_CSV_HEADERS = [
+  "registry_id", "official_name", "district", "locality", "address", "match_status",
+  "confidence", "match_method", "review_reasons", "candidate_count", "candidate_osm_ids",
+];
+
+export function renderReviewCsv(matches) {
+  const rows = matches
+    .filter((match) => match.match_status === "REVIEW_REQUIRED" || match.ambiguous)
+    .sort((left, right) => registryIdFor(left.registry).localeCompare(registryIdFor(right.registry), "en"))
+    .map((match) => [
+      registryIdFor(match.registry),
+      match.registry.display_name,
+      match.registry.district,
+      match.registry.locality,
+      match.registry.address,
+      match.match_status,
+      match.confidence,
+      match.match_method,
+      [...new Set(match.review_reasons ?? [])].join(";"),
+      match.candidates?.length ?? 0,
+      (match.candidates ?? []).map((item) => item.candidate.osm_id).filter(Boolean).join(";"),
+    ]);
+  return `${[REVIEW_CSV_HEADERS, ...rows].map((row) => row.map(reviewCsvValue).join(",")).join("\n")}\n`;
+}
+
+function countInvalidCoordinates(matches) {
+  return matches.filter((match) => {
+    const reasons = [...(match.coordinate?.invalid_sources ?? []), ...(match.review_reasons ?? [])];
+    return reasons.some((reason) => reason === "invalid" || reason === "outside_current_vko" || reason === "official_coordinate_outside_vko");
+  }).length;
+}
+
+export function buildImportArtifacts({ snapshot, reviewedOverrides, boundary } = {}) {
+  if (!snapshot || !Array.isArray(snapshot.current_schools)) {
+    throw new ImportInputError("artifacts", "snapshot.current_schools is required");
+  }
+  const matches = buildDeterministicMatches({
+    registrySchools: snapshot.current_schools,
+    stateSchools: snapshot.state_school_coordinates ?? [],
+    osmSchools: snapshot.overpass?.schools ?? [],
+    boundary,
+  });
+  const validatedOverrides = validateReviewedOverrides(reviewedOverrides, matches.matches, { boundary });
+  const resolvedMatches = buildDeterministicMatches({
+    registrySchools: snapshot.current_schools,
+    stateSchools: snapshot.state_school_coordinates ?? [],
+    osmSchools: snapshot.overpass?.schools ?? [],
+    reviewedOverrides: overridesByRegistryId(validatedOverrides),
+    boundary,
+  });
+  const schools = resolvedMatches.matches
+    .map((match) => registryEntryFromMatch(match, overridesByRegistryId(validatedOverrides)))
+    .sort((left, right) => left.registry_id.localeCompare(right.registry_id, "en"));
+  const counters = {
+    official_schools_total: schools.length,
+    vko_schools: schools.length,
+    official_coordinates: schools.filter((school) => school.coordinate_source === "official").length,
+    matched_osm: schools.filter((school) => Boolean(school.osm_id)).length,
+    osm_only: resolvedMatches.osm_only.length,
+    ambiguous: resolvedMatches.matches.filter((match) => match.ambiguous).length,
+    review_required: resolvedMatches.matches.filter((match) => match.match_status === "REVIEW_REQUIRED").length,
+    unmatched: resolvedMatches.matches.filter((match) => match.match_status === "UNMATCHED").length,
+    without_coordinates: schools.filter((school) => school.latitude === null || school.longitude === null).length,
+    duplicates_removed: resolvedMatches.duplicates.length,
+    invalid_or_outside_coordinates: countInvalidCoordinates(resolvedMatches.matches),
+  };
+  const consistency = {
+    registry_count_matches_vko_schools: counters.vko_schools === schools.length,
+    coordinate_partition: counters.official_coordinates
+      + schools.filter((school) => school.coordinate_source === "osm").length
+      + schools.filter((school) => school.coordinate_source === "reviewed_override").length
+      + counters.without_coordinates === counters.vko_schools,
+    review_queue_matches_review_required: renderReviewCsv(resolvedMatches.matches).trimEnd().split("\n").length - 1 === counters.review_required,
+  };
+  if (!Object.values(consistency).every(Boolean)) {
+    throw new ImportInputError("artifacts", "generated artifact counters are inconsistent");
+  }
+  return {
+    registry: { schema_version: 1, region: "current-vko", schools },
+    report: {
+      schema_version: 1,
+      region: "current-vko",
+      counters,
+      consistency,
+      sources: {
+        official_registry: CURRENT_REGISTRY_SOURCE,
+        state_coordinates: STATE_SCHOOLS_SOURCE,
+        osm: OVERPASS_SOURCE,
+      },
+    },
+    reviewCsv: renderReviewCsv(resolvedMatches.matches),
+    matches: resolvedMatches.matches,
+    overrides: validatedOverrides,
+  };
+}
+
+async function readOptionalJson(filePath) {
+  if (!filePath) return undefined;
+  let text;
+  try {
+    text = await readFile(filePath, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") return undefined;
+    throw new ImportSourceError("overrides", `cannot read ${filePath}`, error);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new ImportInputError("overrides", `invalid JSON in ${filePath}`, error);
+  }
+}
+
+async function writeArtifact(filePath, content) {
+  try {
+    await mkdir(dirname(resolve(filePath)), { recursive: true });
+    await writeFile(filePath, content, "utf8");
+  } catch (error) {
+    throw new ImportInputError("output", `cannot write ${filePath}: ${error.message}`, error);
+  }
+}
+
+function artifactSerialization(artifacts) {
+  return {
+    registry: `${JSON.stringify(artifacts.registry, null, 2)}\n`,
+    report: `${JSON.stringify(artifacts.report, null, 2)}\n`,
+    reviewCsv: artifacts.reviewCsv,
+  };
+}
+
+export async function writeImportArtifacts(artifacts, {
+  registryPath = DEFAULT_REGISTRY_OUTPUT,
+  reportPath = DEFAULT_REPORT_OUTPUT,
+  reviewPath = DEFAULT_REVIEW_OUTPUT,
+} = {}) {
+  const serialized = artifactSerialization(artifacts);
+  await writeArtifact(registryPath, serialized.registry);
+  await writeArtifact(reportPath, serialized.report);
+  await writeArtifact(reviewPath, serialized.reviewCsv);
+  return serialized;
+}
+
+async function validateExistingArtifact(path, expected, label) {
+  let actual;
+  try {
+    actual = await readFile(path, "utf8");
+  } catch (error) {
+    throw new ImportInputError("check", `${label} ${path} is missing or unreadable: ${error.message}`, error);
+  }
+  if (actual !== expected) throw new ImportInputError("check", `${label} ${path} is stale; run importer without --check`);
+}
+
+export async function checkImportArtifacts(artifacts, paths = {}) {
+  const serialized = artifactSerialization(artifacts);
+  await validateExistingArtifact(paths.registryPath ?? DEFAULT_REGISTRY_OUTPUT, serialized.registry, "registry artifact");
+  await validateExistingArtifact(paths.reportPath ?? DEFAULT_REPORT_OUTPUT, serialized.report, "report artifact");
+  await validateExistingArtifact(paths.reviewPath ?? DEFAULT_REVIEW_OUTPUT, serialized.reviewCsv, "review artifact");
+  return artifacts.report;
 }
 
 export function normalizeCurrentRegistryRows(rows) {
@@ -1117,16 +1368,49 @@ export async function runImport(options = {}) {
 }
 
 function printUsage() {
-  process.stderr.write("Usage: node scripts/import-vko-schools.mjs [--output FILE]\n");
+  process.stderr.write(`Usage: node scripts/import-vko-schools.mjs [options]
+
+Options:
+  --output FILE             Preserve legacy normalized snapshot output.
+  --registry-output FILE    Registry JSON (default: ${DEFAULT_REGISTRY_OUTPUT}).
+  --report-output FILE      Import report JSON (default: ${DEFAULT_REPORT_OUTPUT}).
+  --review-output FILE      Review CSV (default: ${DEFAULT_REVIEW_OUTPUT}).
+  --overrides FILE          Reviewed coordinate overrides (default: ${DEFAULT_OVERRIDES_FILE}).
+  --boundary FILE           JSON current-VKO coordinate boundary.
+  --check                   Validate inputs and existing artifacts without writing.
+`);
 }
 
-async function main(argv = process.argv.slice(2)) {
+export async function main(argv = process.argv.slice(2), env = process.env, fetchImpl = fetch) {
   let outputPath = null;
+  let check = false;
+  const paths = {
+    registryPath: env.VKO_REGISTRY_OUTPUT || DEFAULT_REGISTRY_OUTPUT,
+    reportPath: env.VKO_REPORT_OUTPUT || DEFAULT_REPORT_OUTPUT,
+    reviewPath: env.VKO_REVIEW_OUTPUT || DEFAULT_REVIEW_OUTPUT,
+    overridesPath: env.VKO_OVERRIDES_FILE || DEFAULT_OVERRIDES_FILE,
+    boundaryPath: env.VKO_BOUNDARY_FILE || null,
+  };
   for (let index = 0; index < argv.length; index += 1) {
     if (argv[index] === "--output") {
       outputPath = argv[index + 1];
       index += 1;
       if (!outputPath) throw new Error("--output requires a file path");
+    } else if (["--registry-output", "--report-output", "--review-output", "--overrides", "--boundary"].includes(argv[index])) {
+      const option = argv[index];
+      const value = argv[index + 1];
+      index += 1;
+      if (!value) throw new Error(`${option} requires a file path`);
+      const key = {
+        "--registry-output": "registryPath",
+        "--report-output": "reportPath",
+        "--review-output": "reviewPath",
+        "--overrides": "overridesPath",
+        "--boundary": "boundaryPath",
+      }[option];
+      paths[key] = value;
+    } else if (argv[index] === "--check") {
+      check = true;
     } else if (argv[index] === "--help") {
       printUsage();
       return;
@@ -1134,10 +1418,19 @@ async function main(argv = process.argv.slice(2)) {
       throw new Error(`unknown argument: ${argv[index]}`);
     }
   }
-  const snapshot = await runImport();
+  const sourceOptions = { env, fetchImpl };
+  const snapshot = await runImport(sourceOptions);
+  const overrides = await readOptionalJson(paths.overridesPath);
+  const boundary = paths.boundaryPath ? await readOptionalJson(paths.boundaryPath) : undefined;
+  const artifacts = buildImportArtifacts({ snapshot, reviewedOverrides: overrides, boundary });
   const serialized = `${JSON.stringify(snapshot, null, 2)}\n`;
-  if (outputPath) await writeFile(outputPath, serialized, "utf8");
-  else process.stdout.write(serialized);
+  if (check) {
+    await checkImportArtifacts(artifacts, paths);
+  } else {
+    await writeImportArtifacts(artifacts, paths);
+    if (outputPath) await writeArtifact(outputPath, serialized);
+  }
+  if (!outputPath) process.stdout.write(`${JSON.stringify(artifacts.report.counters)}\n`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

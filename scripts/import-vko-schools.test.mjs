@@ -1,19 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import os from "node:os";
 
 import {
   ImportInputError,
   ImportSourceError,
   buildDeterministicMatches,
+  buildImportArtifacts,
   createImportSnapshot,
   dedupeOsmSchools,
   fetchOverpassSnapshot,
   filterCurrentVkoRows,
   isCoordinateInCurrentVko,
   matchRegistryToOsm,
+  main,
   loadImportSources,
   normalizeAddress,
   normalizeCurrentRegistryRows,
@@ -23,6 +26,8 @@ import {
   resolveSchoolCoordinate,
   selectCurrentVkoRelation,
   validateCoordinate,
+  writeImportArtifacts,
+  checkImportArtifacts,
 } from "./import-vko-schools.mjs";
 
 const fixtureDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "import-vko");
@@ -288,4 +293,228 @@ test("matching output is deterministic and never invents coordinates", () => {
   assert.deepEqual(first, second);
   assert.deepEqual(first.matches.map((match) => match.registry.school_id), ["a", "b"]);
   assert.deepEqual(first.matches.map((match) => [match.coordinate.latitude, match.coordinate.longitude]), [[null, null], [null, null]]);
+});
+
+function artifactSnapshot() {
+  return {
+    current_schools: [
+      {
+        school_id: "vko-001",
+        name: "Официальная школа № 1",
+        district: "Уланский район",
+        locality: "Таврическое",
+        address: "ул. Абая, 1",
+        region: "current-vko",
+      },
+      {
+        school_id: "vko-002",
+        name: "Школа без координат",
+        district: "Уланский район",
+        locality: "Таврическое",
+        address: "ул. Центральная, 2",
+        region: "current-vko",
+      },
+    ],
+    state_school_coordinates: [
+      {
+        school_id: "vko-001",
+        name: "Официальная школа № 1",
+        district: "Уланский район",
+        locality: "Таврическое",
+        address: "ул. Абая, 1",
+        region: "current-vko",
+        latitude: 50,
+        longitude: 82,
+      },
+    ],
+    overpass: {
+      relation: { id: 1, tags: { "ISO3166-2": "KZ-EK" } },
+      schools: [
+        {
+          osm_id: "node/1",
+          osm_type: "node",
+          name: "Официальная школа № 1",
+          school_id: "vko-001",
+          region: "current-vko",
+          latitude: 50,
+          longitude: 82,
+        },
+        {
+          osm_id: "node/orphan",
+          osm_type: "node",
+          name: "OSM only school",
+          region: "current-vko",
+          latitude: 50.1,
+          longitude: 82.1,
+        },
+      ],
+    },
+  };
+}
+
+test("artifact builder emits registry provenance, consistent counters, and empty review queue", () => {
+  const artifacts = buildImportArtifacts({ snapshot: artifactSnapshot() });
+  assert.equal(artifacts.registry.schools.length, 2);
+  assert.deepEqual(Object.keys(artifacts.registry.schools[0]).sort(), [
+    "address", "confidence", "coordinate_source", "district", "identity_source", "latitude",
+    "locality", "match_method", "name", "official_name", "osm_id", "osm_type", "registry_id", "longitude",
+  ].sort());
+  assert.equal(artifacts.registry.schools[0].official_name, "Официальная школа № 1");
+  assert.equal(artifacts.registry.schools[1].latitude, null);
+  assert.equal(artifacts.report.counters.official_schools_total, 2);
+  assert.equal(artifacts.report.counters.official_coordinates, 1);
+  assert.equal(artifacts.report.counters.matched_osm, 1);
+  assert.equal(artifacts.report.counters.osm_only, 1);
+  assert.equal(artifacts.report.counters.without_coordinates, 1);
+  assert.equal(artifacts.report.counters.duplicates_removed, 0);
+  assert.equal(artifacts.report.consistency.coordinate_partition, true);
+  assert.match(artifacts.reviewCsv, /^registry_id,official_name,/);
+  assert.equal(artifacts.reviewCsv.trimEnd().split("\n").length, 1);
+});
+
+function ambiguousSnapshot() {
+  return {
+    current_schools: [{
+      school_id: "vko-review-001",
+      name: "Школа для проверки",
+      district: "Уланский район",
+      locality: "Таврическое",
+      region: "current-vko",
+    }],
+    state_school_coordinates: [],
+    overpass: {
+      relation: { id: 1, tags: {} },
+      schools: [
+        { osm_id: "node/1", osm_type: "node", name: "Школа для проверки", district: "Уланский район", locality: "Таврическое", region: "current-vko", latitude: 50, longitude: 82 },
+        { osm_id: "way/2", osm_type: "way", name: "Школа для проверки", district: "Уланский район", locality: "Таврическое", region: "current-vko", latitude: 50.001, longitude: 82.001 },
+      ],
+    },
+  };
+}
+
+test("reviewed overrides apply only to ambiguous cases and retain provenance", () => {
+  const artifacts = buildImportArtifacts({
+    snapshot: ambiguousSnapshot(),
+    reviewedOverrides: [{
+      registry_id: "vko-review-001",
+      latitude: 50.2,
+      longitude: 82.2,
+      reviewed: true,
+      provenance: "manual-review-fixture",
+    }],
+    boundary: { minLatitude: 50, maxLatitude: 51, minLongitude: 82, maxLongitude: 83 },
+  });
+  assert.equal(artifacts.registry.schools[0].coordinate_source, "reviewed_override");
+  assert.equal(artifacts.registry.schools[0].coordinate_provenance, "manual-review-fixture");
+  assert.equal(artifacts.report.counters.ambiguous, 1);
+  assert.match(artifacts.reviewCsv, /vko-review-001/);
+});
+
+test("review queue consistency counts non-ambiguous REVIEW_REQUIRED rows", () => {
+  const artifacts = buildImportArtifacts({
+    snapshot: {
+      current_schools: [{ school_id: "vko-outside-001", name: "Школа с плохой точкой", region: "current-vko" }],
+      state_school_coordinates: [{
+        school_id: "vko-outside-001",
+        name: "Школа с плохой точкой",
+        region: "current-vko",
+        latitude: 49,
+        longitude: 82,
+      }],
+      overpass: {
+        relation: { id: 1, tags: {} },
+        schools: [{
+          osm_id: "node/outside-source",
+          osm_type: "node",
+          school_id: "vko-outside-001",
+          name: "Школа с плохой точкой",
+          region: "current-vko",
+          latitude: 50.1,
+          longitude: 82.1,
+        }],
+      },
+    },
+    boundary: { minLatitude: 50, maxLatitude: 51, minLongitude: 81, maxLongitude: 83 },
+  });
+  assert.equal(artifacts.report.counters.ambiguous, 0);
+  assert.equal(artifacts.report.counters.review_required, 1);
+  assert.equal(artifacts.report.consistency.review_queue_matches_review_required, true);
+  assert.match(artifacts.reviewCsv, /vko-outside-001/);
+});
+
+test("overrides reject unknown, malformed, non-reviewed, and outside-VKO entries", () => {
+  const cases = [
+    [{ registry_id: "unknown", latitude: 50.2, longitude: 82.2, reviewed: true }, "unknown registry_id"],
+    [{ registry_id: "vko-review-001", latitude: "not-a-number", longitude: 82.2, reviewed: true }, "invalid coordinates"],
+    [{ registry_id: "vko-review-001", latitude: 50.2, longitude: 82.2 }, "must be explicitly reviewed"],
+    [{ registry_id: "vko-review-001", latitude: 49, longitude: 82.2, reviewed: true }, "outside_current_vko"],
+  ];
+  for (const [override, message] of cases) {
+    assert.throws(
+      () => buildImportArtifacts({
+        snapshot: ambiguousSnapshot(),
+        reviewedOverrides: [override],
+        boundary: { minLatitude: 50, maxLatitude: 51, minLongitude: 82, maxLongitude: 83 },
+      }),
+      (error) => error instanceof ImportInputError && error.message.includes(message),
+    );
+  }
+  assert.throws(
+    () => buildImportArtifacts({ snapshot: ambiguousSnapshot(), reviewedOverrides: { bad: true } }),
+    (error) => error instanceof ImportInputError && error.message.includes("overrides array"),
+  );
+});
+
+test("artifact files are deterministic, checkable, and reject malformed output paths", async () => {
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "vko-import-"));
+  try {
+    const artifacts = buildImportArtifacts({ snapshot: artifactSnapshot() });
+    const paths = {
+      registryPath: path.join(temporaryDirectory, "registry.json"),
+      reportPath: path.join(temporaryDirectory, "report.json"),
+      reviewPath: path.join(temporaryDirectory, "review.csv"),
+    };
+    const first = await writeImportArtifacts(artifacts, paths);
+    const second = await writeImportArtifacts(artifacts, paths);
+    assert.deepEqual(first, second);
+    await checkImportArtifacts(artifacts, paths);
+    await assert.rejects(
+      () => writeImportArtifacts(artifacts, { ...paths, registryPath: temporaryDirectory }),
+      (error) => error instanceof ImportInputError && error.source === "output",
+    );
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("main --check validates fixture inputs without writing artifacts", async () => {
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "vko-import-check-"));
+  try {
+    const currentFile = path.join(fixtureDirectory, "current-registry.csv");
+    const stateFile = path.join(fixtureDirectory, "state-schools.csv");
+    const relationJson = await fixture("overpass-relations.json");
+    const schoolsJson = await fixture("overpass-schools.json");
+    let overpassCalls = 0;
+    const fetchImpl = async (url) => ({
+      ok: true,
+      status: 200,
+      text: async () => (overpassCalls++ === 0 ? relationJson : schoolsJson),
+    });
+    const env = {
+      EGOV_CURRENT_SCHOOLS_FILE: currentFile,
+      EGOV_STATE_SCHOOLS_FILE: stateFile,
+      OVERPASS_ENDPOINT: "https://overpass.test/api/interpreter",
+    };
+    const paths = [
+      "--registry-output", path.join(temporaryDirectory, "registry.json"),
+      "--report-output", path.join(temporaryDirectory, "report.json"),
+      "--review-output", path.join(temporaryDirectory, "review.csv"),
+      "--overrides", path.join(temporaryDirectory, "missing-overrides.json"),
+    ];
+    await main(paths, env, fetchImpl);
+    overpassCalls = 0;
+    await main([...paths, "--check"], env, fetchImpl);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
 });
