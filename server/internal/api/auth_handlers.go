@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,7 +26,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if username == "" {
 		username = strings.TrimSpace(payload.Login)
 	}
-	clientKey := authClientKey(r)
+	clientKey := s.authClientKey(r)
 	allowed, retryAfter, err := auth.CheckRateLimit(r.Context(), s.DB, "login", clientKey, authRateLimit("LINKWATCH_LOGIN_RATE_LIMIT", 10), time.Minute)
 	if err != nil {
 		s.Logger.Error("could not check login rate limit", "error", err)
@@ -67,17 +66,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		"token": token, "token_type": "Bearer", "expires_at": expires.UTC().Format(time.RFC3339),
 		"user": map[string]interface{}{"id": principal.ID, "username": principal.Username, "role": principal.Role, "role_label": roleLabel(principal.Role), "scopes": principal.Scopes, "capabilities": principal.Capabilities},
 	})
-}
-
-func authClientKey(r *http.Request) string {
-	address := strings.TrimSpace(r.RemoteAddr)
-	if host, _, err := net.SplitHostPort(address); err == nil {
-		address = host
-	}
-	if address == "" {
-		address = "unknown"
-	}
-	return address
 }
 
 func authRateLimit(name string, fallback int) int {

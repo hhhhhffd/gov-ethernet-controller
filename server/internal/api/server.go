@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -21,17 +22,22 @@ import (
 )
 
 type Server struct {
-	DB             *database.DB
-	Measure        *measurements.Service
-	WebDir         string
-	Logger         *slog.Logger
-	DraftGenerator DraftGenerator
+	DB                *database.DB
+	Measure           *measurements.Service
+	WebDir            string
+	Logger            *slog.Logger
+	DraftGenerator    DraftGenerator
+	trustedProxyCIDRs []*net.IPNet
 }
 
 type requestIDContextKey struct{}
 
-func New(db *database.DB, webDir string) *Server {
-	return &Server{DB: db, Measure: &measurements.Service{DB: db}, WebDir: webDir, Logger: slog.Default(), DraftGenerator: newOllamaDraftGeneratorFromEnv()}
+func New(db *database.DB, webDir string) (*Server, error) {
+	trustedProxyCIDRs, err := trustedProxyNetworksFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return &Server{DB: db, Measure: &measurements.Service{DB: db}, WebDir: webDir, Logger: slog.Default(), DraftGenerator: newOllamaDraftGeneratorFromEnv(), trustedProxyCIDRs: trustedProxyCIDRs}, nil
 }
 
 func (s *Server) Handler() http.Handler { return s }
@@ -301,7 +307,7 @@ func (s *Server) principal(w http.ResponseWriter, r *http.Request) (*auth.Princi
 
 func (s *Server) device(w http.ResponseWriter, r *http.Request) (*auth.Device, bool) {
 	deviceID := strings.TrimSpace(r.Header.Get("X-Device-ID"))
-	clientKey := authClientKey(r) + ":" + deviceID
+	clientKey := s.authClientKey(r) + ":" + deviceID
 	allowed, retryAfter, err := auth.CheckRateLimit(r.Context(), s.DB, "device", clientKey, authRateLimit("LINKWATCH_DEVICE_AUTH_RATE_LIMIT", 20), time.Minute)
 	if err != nil {
 		s.Logger.Error("could not check device auth rate limit", "error", err)

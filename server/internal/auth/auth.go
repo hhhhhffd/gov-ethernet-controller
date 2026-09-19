@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"linkwatch/server/internal/database"
 )
 
@@ -237,16 +235,23 @@ func CheckRateLimit(ctx context.Context, db *database.DB, scope, key string, lim
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	now := time.Now().UTC()
+	// Locking a row that does not exist cannot serialize the first concurrent
+	// insert. Materialize the key first so every caller contends on the same
+	// primary-key row before reading and incrementing it.
+	if _, err := tx.Exec(ctx, `INSERT INTO auth_rate_limits(scope,key,window_started_at,attempts) VALUES ($1,$2,$3,0) ON CONFLICT(scope,key) DO NOTHING`, scope, key, now); err != nil {
+		return false, 0, err
+	}
 	var started time.Time
 	var attempts int
 	err = tx.QueryRow(ctx, `SELECT window_started_at,attempts FROM auth_rate_limits WHERE scope=$1 AND key=$2 FOR UPDATE`, scope, key).Scan(&started, &attempts)
-	if err != nil && err != pgx.ErrNoRows {
+	if err != nil {
 		return false, 0, err
 	}
-	if err == pgx.ErrNoRows || !now.Before(started.Add(window)) {
+	now = time.Now().UTC()
+	if !now.Before(started.Add(window)) {
 		started = now
 		attempts = 1
-		_, err = tx.Exec(ctx, `INSERT INTO auth_rate_limits(scope,key,window_started_at,attempts) VALUES ($1,$2,$3,$4) ON CONFLICT(scope,key) DO UPDATE SET window_started_at=EXCLUDED.window_started_at,attempts=EXCLUDED.attempts`, scope, key, started, attempts)
+		_, err = tx.Exec(ctx, `UPDATE auth_rate_limits SET window_started_at=$3,attempts=$4 WHERE scope=$1 AND key=$2`, scope, key, started, attempts)
 	} else {
 		attempts++
 		_, err = tx.Exec(ctx, `UPDATE auth_rate_limits SET attempts=$3 WHERE scope=$1 AND key=$2`, scope, key, attempts)

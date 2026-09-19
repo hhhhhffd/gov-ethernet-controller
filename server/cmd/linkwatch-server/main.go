@@ -24,6 +24,10 @@ func main() {
 	slog.SetDefault(logger)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := api.ValidateRuntimeConfig(); err != nil {
+		logger.Error("invalid runtime configuration", "error", err)
+		os.Exit(1)
+	}
 	db, err := database.Open(ctx, database.DefaultDSN())
 	if err != nil {
 		logger.Error("database startup failed", "error", err)
@@ -38,7 +42,11 @@ func main() {
 	if webDir == "" {
 		webDir = findWebDir()
 	}
-	server := api.New(db, webDir)
+	server, err := api.New(db, webDir)
+	if err != nil {
+		logger.Error("invalid runtime configuration", "error", err)
+		os.Exit(1)
+	}
 	address := os.Getenv("LINKWATCH_ADDR")
 	if address == "" {
 		address = ":8080"

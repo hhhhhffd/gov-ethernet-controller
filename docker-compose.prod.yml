@@ -14,6 +14,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
+    networks:
+      - linkwatch-backend
 
   linkwatch-server:
     build:
@@ -26,6 +28,7 @@ services:
       LINKWATCH_DATABASE_URL: postgres://${LINKWATCH_POSTGRES_USER}:${LINKWATCH_POSTGRES_PASSWORD}@postgres:5432/${LINKWATCH_POSTGRES_DB}
       LINKWATCH_SEED_DEMO: ${LINKWATCH_SEED_DEMO:-0}
       LINKWATCH_AUTH_DISABLED: "0"
+      LINKWATCH_TRUSTED_PROXY_CIDRS: ${LINKWATCH_TRUSTED_PROXY_CIDRS:-172.30.0.10/32}
       LINKWATCH_BOOTSTRAP_ADMIN_USERNAME: ${LINKWATCH_BOOTSTRAP_ADMIN_USERNAME:-}
       LINKWATCH_BOOTSTRAP_ADMIN_PASSWORD: ${LINKWATCH_BOOTSTRAP_ADMIN_PASSWORD:-}
       LINKWATCH_SESSION_TTL_SECONDS: ${LINKWATCH_SESSION_TTL_SECONDS:-28800}
@@ -46,6 +49,9 @@ services:
         condition: service_healthy
     expose:
       - "8080"
+    networks:
+      linkwatch-backend:
+        ipv4_address: 172.30.0.20
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health/ready >/dev/null"]
       interval: 5s
@@ -67,8 +73,18 @@ services:
       - ./deployment/Caddyfile:/etc/caddy/Caddyfile:ro
       - linkwatch-caddy-data:/data
       - linkwatch-caddy-config:/config
+    networks:
+      linkwatch-backend:
+        ipv4_address: 172.30.0.10
 
 volumes:
   linkwatch-postgres-prod:
   linkwatch-caddy-data:
   linkwatch-caddy-config:
+
+networks:
+  linkwatch-backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${LINKWATCH_BACKEND_SUBNET:-172.30.0.0/24}

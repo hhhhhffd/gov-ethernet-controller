@@ -3,7 +3,10 @@
 }
 
 {$LINKWATCH_PUBLIC_HOST} {
-	reverse_proxy linkwatch-server:8080
+	reverse_proxy linkwatch-server:8080 {
+		# Replace client-supplied forwarding metadata at the only trusted edge.
+		header_up X-Forwarded-For {http.request.remote.host}
+	}
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
