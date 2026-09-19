@@ -6,8 +6,10 @@ cd "$repo_root"
 
 node --check web/map.js
 node --check web/app.js
+for file in web/core/*.mjs web/features/*.mjs web/integration/*.mjs; do node --check "$file"; done
 node --check web/vendor/leaflet/leaflet.js
 node scripts/web-map.test.cjs
+node --test web/boundaries.test.cjs web/data-model.test.cjs web/map-popup.test.cjs
 
 node - <<'NODE'
 const assert = require("node:assert/strict");

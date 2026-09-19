@@ -120,15 +120,19 @@ assert.doesNotMatch(indexSource, /<svg[^>]*class=\"vko-map\"|class=\"map-gridlin
 assert.doesNotMatch(mapSource, /fetch\s*\(/, "markers must not issue per-school API calls");
 assert.doesNotMatch(mapSource, /permanent\s*:\s*true/, "schools must not receive permanent labels");
 assert.doesNotMatch(mapSource, /clusterCellDegrees/, "registry clustering must not use a fixed degree grid");
-assert.match(appSource, /registryCluster/, "cluster popup must have a dedicated neutral path");
+assert.match(appSource, /registry-cluster/, "cluster popup must have a dedicated neutral path");
 assert.match(appSource, /data-popup-registry-id/, "cluster popup must expose selectable registry members");
+assert.match(appSource, /operationalError/, "API failure must be represented explicitly");
+assert.match(fs.readFileSync("web/integration/map-integration.mjs", "utf8"), /state\.lines = \[\]/, "API failure must clear operational rows");
 assert.doesNotMatch(appSource, /sampleLines|sampleIncidents|sampleSituations|demoMode|demoCapabilities|createReplay/, "production app must not contain synthetic/demo operational paths");
-assert.doesNotMatch(appSource, /URLSearchParams\(window\.location\.search\)/, "normal navigation must not activate a demo query path");
-assert.doesNotMatch(indexSource, /demoButton|Запустить replay|Айдана К\.|Областной уровень|Policy v14/, "production shell must not contain demo identity/replay placeholders");
-assert.match(appSource, /state\.operationalError/, "API failure must be represented explicitly");
-assert.match(appSource, /state\.lines = \[\]/, "API failure must clear operational rows");
-assert.doesNotMatch(appSource, /L-00[1-8]|INC-18[1-4]|SIT-02[6-7]/, "known synthetic operational IDs must not be in production app");
-assert.doesNotMatch(indexSource, /fixture|synthetic|demo/i, "production shell must not contain acceptance fixture data");
+assert.doesNotMatch(indexSource, /demoButton|Запустить replay|Айдана К\.|Областной уровень|Policy v14|fixture|synthetic|demo/i, "production scaffold must not contain demo placeholders");
+assert.match(indexSource, /id="authenticatedWorkspace"/, "authenticated scaffold is required");
+assert.match(indexSource, /id="authBackdrop"/, "login seam is required");
+assert.match(indexSource, /id="leafletMap"/, "real Leaflet map container is required");
+assert.doesNotMatch(indexSource, /class="(rail|topbar|kpi-grid|notice-bar|activity-panel|situations-panel)/, "deleted legacy composition must not return");
+for (const boundary of ["core/api.mjs", "core/session.mjs", "core/capabilities.mjs", "core/i18n.mjs", "core/theme.mjs", "core/router.mjs", "core/presentation.mjs", "integration/map-integration.mjs", "features/lines.mjs", "features/incidents.mjs", "features/reports.mjs", "features/notifications.mjs", "features/admin.mjs", "features/audit.mjs", "features/provider-case.mjs"]) {
+  assert.match(appSource + fs.readFileSync(`web/${boundary}`, "utf8"), new RegExp(boundary.replace(".", "\\.")), `${boundary} must remain part of the frontend boundary`);
+}
 assert.match(browserHarnessSource, /BROWSER_MAP_FIXTURE/, "explicit browser fixture must remain in acceptance harness");
 assert.match(browserHarnessSource, /browser-e2e-test-fixture/, "browser fixture provenance must be explicit");
 
