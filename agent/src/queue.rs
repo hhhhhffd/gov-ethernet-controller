@@ -6,6 +6,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+const MAX_EVENT_ID_LENGTH: usize = 128;
+
 #[derive(Debug)]
 pub struct Queue {
     dir: PathBuf,
@@ -18,6 +20,7 @@ impl Queue {
         Ok(Self { dir })
     }
     pub fn enqueue(&self, event_id: &str, payload: &Value) -> io::Result<PathBuf> {
+        validate_event_id(event_id)?;
         let final_path = self.dir.join(format!("{event_id}.json"));
         if final_path.exists() {
             return Ok(final_path);
@@ -72,7 +75,7 @@ impl Queue {
                     if payload
                         .get("client_event_id")
                         .and_then(Value::as_str)
-                        .map(|value| !value.trim().is_empty() && value.len() <= 128)
+                        .map(is_valid_event_id)
                         .unwrap_or(false) =>
                 {
                     pending.push((path, payload))
@@ -183,6 +186,24 @@ impl Queue {
     }
 }
 
+fn is_valid_event_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_EVENT_ID_LENGTH
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+}
+
+fn validate_event_id(value: &str) -> io::Result<()> {
+    if is_valid_event_id(value) {
+        return Ok(());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "queue event id must be a bounded filename-safe identifier",
+    ))
+}
+
 /// Persist a directory entry update where the platform exposes directory
 /// handles. Windows has no equivalent of Unix directory fsync, so the file
 /// contents and atomic rename remain the durability boundary there.
@@ -242,6 +263,28 @@ mod tests {
         let quarantine = dir.path().join("quarantine");
         assert!(quarantine.exists());
         assert_eq!(fs::read_dir(quarantine).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn event_ids_cannot_escape_queue_directory_or_exceed_bounds() {
+        let root = tempdir().unwrap();
+        let queue_dir = root.path().join("queue");
+        let queue = Queue::open(&queue_dir).unwrap();
+        let invalid_ids = ["../escaped", r"..\escaped", "/absolute", "event id", ""];
+
+        for event_id in invalid_ids {
+            let payload = serde_json::json!({"client_event_id": event_id});
+            let error = queue.enqueue(event_id, &payload).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        }
+
+        let oversized = "x".repeat(MAX_EVENT_ID_LENGTH + 1);
+        let payload = serde_json::json!({"client_event_id": oversized});
+        let error = queue.enqueue(payload["client_event_id"].as_str().unwrap(), &payload);
+        assert_eq!(error.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+
+        assert!(!root.path().join("escaped.json").exists());
+        assert_eq!(queue.count().unwrap(), 0);
     }
 
     #[test]

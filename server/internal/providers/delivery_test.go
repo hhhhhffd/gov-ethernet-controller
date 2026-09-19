@@ -78,6 +78,39 @@ func TestSendProviderCaseRejectsMissingExternalReference(t *testing.T) {
 	}
 }
 
+func TestSendProviderCaseRejectsWebhookURLWithCredentials(t *testing.T) {
+	t.Setenv("LINKWATCH_ENV", "test")
+	t.Setenv("LINKWATCH_ALLOW_INSECURE_WEBHOOK", "1")
+	t.Setenv("LINKWATCH_PROVIDER_TRANSPORT", "webhook")
+	t.Setenv("LINKWATCH_PROVIDER_WEBHOOK_URL", "https://provider-user:provider-secret@example.test/webhook")
+
+	item, incident, provider := webhookCase()
+	_, err := SendProviderCase(context.Background(), item, incident, provider)
+	deliveryErr := requireDeliveryError(t, err)
+	if deliveryErr.Retryable || deliveryErr.Error() != "webhook endpoint must use HTTPS without credentials" {
+		t.Fatalf("credential-bearing webhook classification = %+v", deliveryErr)
+	}
+	if strings.Contains(deliveryErr.Error(), "provider-user") || strings.Contains(deliveryErr.Error(), "provider-secret") {
+		t.Fatalf("credential-bearing webhook error leaked userinfo: %q", deliveryErr)
+	}
+}
+
+func TestSendNotificationRejectsWebhookURLWithCredentials(t *testing.T) {
+	t.Setenv("LINKWATCH_ENV", "test")
+	t.Setenv("LINKWATCH_ALLOW_INSECURE_WEBHOOK", "1")
+	t.Setenv("LINKWATCH_NOTIFICATION_TRANSPORT", "webhook")
+	t.Setenv("LINKWATCH_NOTIFICATION_WEBHOOK_URL", "https://notification-user:notification-secret@example.test/webhook")
+
+	_, err := SendNotification(context.Background(), Notification{ID: 21, Message: "test"})
+	deliveryErr := requireDeliveryError(t, err)
+	if deliveryErr.Retryable || deliveryErr.Error() != "webhook endpoint must use HTTPS without credentials" {
+		t.Fatalf("credential-bearing notification webhook classification = %+v", deliveryErr)
+	}
+	if strings.Contains(deliveryErr.Error(), "notification-user") || strings.Contains(deliveryErr.Error(), "notification-secret") {
+		t.Fatalf("credential-bearing notification error leaked userinfo: %q", deliveryErr)
+	}
+}
+
 func TestPostJSONClassifiesAuthAndTransientResponses(t *testing.T) {
 	for _, test := range []struct {
 		name      string

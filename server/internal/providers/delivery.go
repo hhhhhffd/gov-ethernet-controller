@@ -340,8 +340,8 @@ func waitNotificationRateLimit(ctx context.Context, channel string) error {
 
 func postJSON(ctx context.Context, endpoint string, payload interface{}, tokenEnv, idempotency string) (map[string]interface{}, error) {
 	parsed, err := url.Parse(endpoint)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "https" && !(parsed.Scheme == "http" && !isProduction() && os.Getenv("LINKWATCH_ALLOW_INSECURE_WEBHOOK") == "1")) {
-		return nil, &DeliveryError{Message: "webhook endpoint must use HTTPS", Retryable: false}
+	if err != nil || !isAllowedWebhookURL(parsed) {
+		return nil, &DeliveryError{Message: "webhook endpoint must use HTTPS without credentials", Retryable: false}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -364,7 +364,7 @@ func postJSON(ctx context.Context, endpoint string, payload interface{}, tokenEn
 	client := &http.Client{
 		Timeout: timeout,
 		CheckRedirect: func(next *http.Request, _ []*http.Request) error {
-			if next.URL.Scheme != "https" && !(next.URL.Scheme == "http" && !isProduction() && os.Getenv("LINKWATCH_ALLOW_INSECURE_WEBHOOK") == "1") {
+			if !isAllowedWebhookURL(next.URL) {
 				return fmt.Errorf("webhook redirect must use HTTPS")
 			}
 			return nil
@@ -393,6 +393,13 @@ func postJSON(ctx context.Context, endpoint string, payload interface{}, tokenEn
 		return nil, &DeliveryError{Message: "webhook response must be a JSON object", Retryable: true}
 	}
 	return decoded, nil
+}
+
+func isAllowedWebhookURL(value *url.URL) bool {
+	if value == nil || value.Host == "" || value.User != nil {
+		return false
+	}
+	return value.Scheme == "https" || (value.Scheme == "http" && !isProduction() && os.Getenv("LINKWATCH_ALLOW_INSECURE_WEBHOOK") == "1")
 }
 
 func responseID(value map[string]interface{}) string {
