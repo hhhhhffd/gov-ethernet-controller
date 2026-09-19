@@ -84,3 +84,24 @@ func TestProviderDraftPromptDisallowsLegalConclusions(t *testing.T) {
 		t.Fatalf("prompt boundary missing: %q", prompt)
 	}
 }
+
+func TestProviderDraftPromptRedactsCredentialValues(t *testing.T) {
+	prompt := buildProviderDraftPrompt(ProviderDraftInput{
+		LineID:           "line-1",
+		PolicyJSON:       `{"api_token":"fixture-api-token","download_min":50}`,
+		ContractJSON:     `{"password":"fixture-password"}`,
+		ObservationsJSON: `[{"id":7,"raw_secret":"fixture-raw-secret"}]`,
+		Comment:          "password=fixture-comment-password Authorization: Bearer fixture-bearer-token",
+	})
+	for _, secret := range []string{"fixture-api-token", "fixture-password", "fixture-raw-secret", "fixture-comment-password", "fixture-bearer-token"} {
+		if strings.Contains(prompt, secret) {
+			t.Fatalf("prompt leaked credential value %q: %s", secret, prompt)
+		}
+	}
+	if strings.Count(prompt, "[REDACTED]") < 5 {
+		t.Fatalf("prompt redaction markers = %d, want at least 5: %s", strings.Count(prompt, "[REDACTED]"), prompt)
+	}
+	if !strings.Contains(prompt, `"download_min":50`) || !strings.Contains(prompt, "line-1") {
+		t.Fatalf("prompt lost non-sensitive technical facts: %s", prompt)
+	}
+}

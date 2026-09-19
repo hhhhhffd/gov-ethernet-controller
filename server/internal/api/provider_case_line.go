@@ -289,8 +289,12 @@ func (s *Server) createProviderCase(w http.ResponseWriter, r *http.Request) {
 			draft = generated
 		}
 	}
+	evidenceJSON := input.EvidenceJSON
+	if evidenceJSON == "" {
+		evidenceJSON = "[]"
+	}
 	var id int64
-	err = s.DB.Pool.QueryRow(r.Context(), `INSERT INTO provider_cases(incident_id,source_context,draft_text,status,delivery_status,created_by,created_at) VALUES ($1,'INCIDENT',$2,'DRAFT','PENDING',$3,$4) RETURNING id`, item.ID, draft, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
+	err = s.DB.Pool.QueryRow(r.Context(), `INSERT INTO provider_cases(incident_id,source_context,evidence_measurement_ids,draft_text,status,delivery_status,created_by,created_at) VALUES ($1,'INCIDENT',$2::jsonb,$3,'DRAFT','PENDING',$4,$5) RETURNING id`, item.ID, evidenceJSON, draft, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
 	if err != nil {
 		writeError(w, 500, "could not create provider case")
 		return

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -246,10 +247,29 @@ func safeProviderDraftInput(input ProviderDraftInput) ProviderDraftInput {
 	input.Organization = safeDraftField(input.Organization)
 	input.ViolationType = safeDraftField(input.ViolationType)
 	input.StartedAt = safeDraftField(input.StartedAt)
-	input.PolicyJSON = safeDraftField(input.PolicyJSON)
-	input.ContractJSON = safeDraftField(input.ContractJSON)
-	input.ObservationsJSON = safeDraftField(input.ObservationsJSON)
-	input.EvidenceJSON = safeDraftField(input.EvidenceJSON)
-	input.Comment = safeDraftField(input.Comment)
+	input.PolicyJSON = redactProviderDraftJSON(safeDraftField(input.PolicyJSON))
+	input.ContractJSON = redactProviderDraftJSON(safeDraftField(input.ContractJSON))
+	input.ObservationsJSON = redactProviderDraftJSON(safeDraftField(input.ObservationsJSON))
+	input.EvidenceJSON = redactProviderDraftJSON(safeDraftField(input.EvidenceJSON))
+	input.Comment = redactProviderDraftText(safeDraftField(input.Comment))
 	return input
+}
+
+var providerDraftCredentialPattern = regexp.MustCompile(`(?i)\b(password|passphrase|token|secret|credential|private[_ -]?key|api[_ -]?key)\b\s*(?:[:=]\s*|\s+)[^\s,;]+|\b(?:authorization|bearer)\b\s*:?\s+[^\s,;]+(?:\s+[^\s,;]+)?`)
+
+func redactProviderDraftText(value string) string {
+	return providerDraftCredentialPattern.ReplaceAllString(value, "[REDACTED]")
+}
+
+func redactProviderDraftJSON(value string) string {
+	var decoded interface{}
+	if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+		return redactProviderDraftText(value)
+	}
+	redacted := redactAuditValue(decoded)
+	encoded, err := json.Marshal(redacted)
+	if err != nil {
+		return "[REDACTED]"
+	}
+	return redactProviderDraftText(string(encoded))
 }
