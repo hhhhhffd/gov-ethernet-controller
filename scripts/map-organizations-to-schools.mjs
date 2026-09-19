@@ -177,6 +177,13 @@ function syntheticCoordinates(record) {
   return { latitude, longitude, provenance: "server/internal/admin/seed.go", status: "synthetic-only" };
 }
 
+function officialCoordinates(record) {
+  const latitude = Number(record.latitude);
+  const longitude = Number(record.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
 function buildEntry(organization, registryRecords, registryAvailable) {
   const id = organizationId(organization, 0);
   const explicitRegistryId = stringValue(organization.registry_id);
@@ -206,6 +213,7 @@ function buildEntry(organization, registryRecords, registryAvailable) {
       ? "ambiguous_exact_match"
       : top?.match_method ?? "no_exact_match";
   const selectedRegistry = matchStatus === "AUTO_MATCH" ? top.registry.registry_id : null;
+  const selectedCoordinate = selectedRegistry ? officialCoordinates(top.registry) : null;
   return {
     organization_id: id,
     registry_id: selectedRegistry,
@@ -222,8 +230,12 @@ function buildEntry(organization, registryRecords, registryAvailable) {
       locality: stringValue(organization.locality),
       address: stringValue(organization.address),
     },
-    coordinate: null,
-    coordinate_provenance: "none_until_registry_mapping",
+    coordinate: selectedCoordinate,
+    coordinate_provenance: selectedCoordinate
+      ? "official_registry"
+      : selectedRegistry
+        ? "registry_missing_coordinate"
+        : "none_until_registry_mapping",
     backend_chain: preserveBackendChain(organization, id),
     synthetic_seed_coordinates: syntheticCoordinates(organization),
   };
@@ -285,6 +297,8 @@ export function buildOrganizationSchoolMap({ organizations, registry, provenance
     const owners = claims.get(entry.registry_id) ?? [];
     if (entry.registry_id && owners.length > 1) {
       entry.registry_id = null;
+      entry.coordinate = null;
+      entry.coordinate_provenance = "none_until_registry_mapping";
       entry.match_status = "REVIEW_REQUIRED";
       entry.review_required = true;
       entry.match_method = "registry_claim_collision";

@@ -83,8 +83,11 @@ It reads the generated official registry from `web/data/vko-schools.json` when
 available and writes the deterministic
 `web/data/organization-school-map.json` artifact. Missing registry data produces
 explicit `UNMAPPED` entries; it never invents a registry ID or coordinates.
-The seeded `org-42`, `org-07`, and `org-99` coordinates and their measurement
-scenarios are synthetic development data, not official VKO geography or live
+The generated mapping now connects `org-07` to official registry row `16856`
+using an exact name/address match; its map coordinate is sourced from the
+official current-VKO registry. The remaining `org-42` and `org-99` entries are
+explicitly `UNMAPPED`. All seeded organizations still use synthetic
+development measurements; those measurements are not live or official
 monitoring evidence. Registry-only schools remain `UNMONITORED`, and backend
 organization → line → monitoring point → device IDs are preserved in the
 artifact.

@@ -43,6 +43,37 @@ test("normalization is comparison-only and deterministic", () => {
   assert.equal(first.entries[0].match_method, "exact_name_address");
 });
 
+test("exact official match carries authoritative registry coordinates", () => {
+  const result = buildOrganizationSchoolMap({
+    organizations: {
+      organizations: [{
+        organization_id: "org-real",
+        school_id: "school-07",
+        name: "Коммунальное государственное учреждение «Средняя школа №7» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области",
+        district: "Усть-Каменогорск Г.А.",
+        address: "Восточно-Казахстанская область,город Усть-Каменогорск,Бульвар Гагарина,8",
+        synthetic_coordinates: { latitude: 49.972508, longitude: 82.586298 },
+      }],
+    },
+    registry: {
+      schools: [{
+        registry_id: "16856",
+        name: "Коммунальное государственное учреждение «Средняя школа №7» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области",
+        address: "Восточно-Казахстанская область,город Усть-Каменогорск,Бульвар Гагарина,8",
+        latitude: 49.972508,
+        longitude: 82.586298,
+      }],
+    },
+    provenance: { registry_available: true },
+  });
+  const entry = result.entries[0];
+  assert.equal(entry.registry_id, "16856");
+  assert.equal(entry.match_method, "exact_name_address");
+  assert.deepEqual(entry.coordinate, { latitude: 49.972508, longitude: 82.586298 });
+  assert.equal(entry.coordinate_provenance, "official_registry");
+  assert.equal(entry.synthetic_seed_coordinates.status, "synthetic-only");
+});
+
 test("exact identifier, name/locality/address and conservative ambiguity are supported", () => {
   const result = buildOrganizationSchoolMap({
     organizations: {

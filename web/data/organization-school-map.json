@@ -34,31 +34,39 @@
   },
   "counters": {
     "organizations": 3,
-    "auto_mapped": 0,
+    "auto_mapped": 1,
     "review_required": 0,
-    "unmapped": 3,
+    "unmapped": 2,
     "registry_schools": 370,
-    "registry_only_unmonitored": 370
+    "registry_only_unmonitored": 369
   },
   "entries": [
     {
       "organization_id": "org-07",
-      "registry_id": null,
-      "confidence": 0,
-      "match_method": "no_exact_match",
-      "match_status": "UNMAPPED",
+      "registry_id": "16856",
+      "confidence": 0.95,
+      "match_method": "exact_name_address",
+      "match_status": "AUTO_MATCH",
       "review_required": false,
-      "evidence": [],
-      "candidate_registry_ids": [],
+      "evidence": [
+        "name",
+        "address"
+      ],
+      "candidate_registry_ids": [
+        "16856"
+      ],
       "organization": {
         "school_id": "school-07",
-        "name": "Школа №7",
-        "district": "Усть-Каменогорск",
+        "name": "Коммунальное государственное учреждение «Средняя школа №7» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области",
+        "district": "Усть-Каменогорск Г.А.",
         "locality": null,
-        "address": "пр. Абая, 7"
+        "address": "Восточно-Казахстанская область,город Усть-Каменогорск,Бульвар Гагарина,8"
       },
-      "coordinate": null,
-      "coordinate_provenance": "none_until_registry_mapping",
+      "coordinate": {
+        "latitude": 49.972508,
+        "longitude": 82.586298
+      },
+      "coordinate_provenance": "official_registry",
       "backend_chain": {
         "organization_id": "org-07",
         "school_id": "school-07",
@@ -84,8 +92,8 @@
         ]
       },
       "synthetic_seed_coordinates": {
-        "latitude": 49.95,
-        "longitude": 82.61,
+        "latitude": 49.972508,
+        "longitude": 82.586298,
         "provenance": "server/internal/admin/seed.go",
         "status": "synthetic-only"
       }
@@ -581,12 +589,6 @@
     },
     {
       "registry_id": "16854",
-      "monitoring_status": "UNMONITORED",
-      "coordinate": null,
-      "coordinate_provenance": "registry_artifact_only"
-    },
-    {
-      "registry_id": "16856",
       "monitoring_status": "UNMONITORED",
       "coordinate": null,
       "coordinate_provenance": "registry_artifact_only"
