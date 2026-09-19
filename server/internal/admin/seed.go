@@ -103,7 +103,9 @@ func SeedDemo(ctx context.Context, db *database.DB) error {
 }
 
 func ResetDemo(ctx context.Context, db *database.DB) error {
-	for _, table := range []string{"audit_events", "notifications", "situation_members", "situations", "provider_cases", "incident_events", "incidents", "line_state_events", "line_states", "measurement_evaluations", "measurements", "role_scopes", "auth_sessions", "users", "devices", "monitoring_points", "threshold_policy_versions", "contract_versions", "line_context_versions", "lines", "providers", "organizations"} {
+	// Draft generation metadata has a restrictive FK to provider_cases, so it
+	// must be cleared before the demo cases themselves.
+	for _, table := range []string{"audit_events", "notifications", "situation_members", "situations", "provider_case_draft_generations", "provider_cases", "incident_events", "incidents", "line_state_events", "line_states", "measurement_evaluations", "measurements", "role_scopes", "auth_sessions", "users", "devices", "monitoring_points", "threshold_policy_versions", "contract_versions", "line_context_versions", "lines", "providers", "organizations"} {
 		if _, err := db.Pool.Exec(ctx, "DELETE FROM "+table); err != nil {
 			return fmt.Errorf("clear %s: %w", table, err)
 		}
