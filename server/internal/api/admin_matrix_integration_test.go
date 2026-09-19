@@ -108,6 +108,11 @@ func TestAdminMatrixMutationEvidence(t *testing.T) {
 		t.Fatalf("create technology status = %d, want %d", status, http.StatusCreated)
 	}
 	assertAdminAudit(t, db, "technology.created", "technology", createdTechnologyID)
+	status, _ = adminMatrixRequest(t, fixture.server, adminToken, http.MethodPut, "/api/v1/admin/catalogs/technologies/"+createdTechnologyID, map[string]interface{}{"id": createdTechnologyID, "name": fixture.prefix + " Renamed Technology", "active": true})
+	if status != http.StatusOK {
+		t.Fatalf("update technology status = %d, want %d", status, http.StatusOK)
+	}
+	assertAdminAudit(t, db, "technology.updated", "technology", createdTechnologyID)
 
 	createdOrganizationID := fixture.prefix + "-created-org"
 	organization := adminMatrixOrganizationPayload(createdOrganizationID, fixture.districtID)
@@ -251,6 +256,13 @@ func TestAdminMatrixMutationEvidence(t *testing.T) {
 	var firstPolicyID int64
 	if err := db.Pool.QueryRow(context.Background(), `SELECT id FROM threshold_policy_versions WHERE scope_type='LINE' AND scope_id=$1 AND valid_from=$2`, fixture.lineID, policyFrom).Scan(&firstPolicyID); err != nil {
 		t.Fatalf("find first policy version: %v", err)
+	}
+	var firstConfirmCount, firstRecoveryCount int
+	if err := db.Pool.QueryRow(context.Background(), `SELECT confirm_count,recovery_count FROM threshold_policy_versions WHERE id=$1`, firstPolicyID).Scan(&firstConfirmCount, &firstRecoveryCount); err != nil {
+		t.Fatalf("read first policy confirmation rules: %v", err)
+	}
+	if firstConfirmCount != 2 || firstRecoveryCount != 4 {
+		t.Fatalf("first policy confirmation rules = %d/%d, want 2/4", firstConfirmCount, firstRecoveryCount)
 	}
 	assertAdminAudit(t, db, "policy.version_created", "threshold_policy", fmt.Sprint(firstPolicyID))
 
