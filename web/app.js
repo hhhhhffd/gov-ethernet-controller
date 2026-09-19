@@ -53,6 +53,7 @@ function localizeStaticContent() {
   document.querySelectorAll("[data-i18n]").forEach((element) => { element.textContent = i18n.t(element.dataset.i18n); });
   document.querySelectorAll("[data-i18n-aria-label]").forEach((element) => { element.setAttribute("aria-label", i18n.t(element.dataset.i18nAriaLabel)); });
   document.querySelectorAll("[data-i18n-title]").forEach((element) => { element.setAttribute("title", i18n.t(element.dataset.i18nTitle)); });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((element) => { element.setAttribute("placeholder", i18n.t(element.dataset.i18nPlaceholder)); });
   document.querySelectorAll("[data-locale]").forEach((control) => {
     const active = control.dataset.locale === i18n.locale;
     control.toggleAttribute("aria-pressed", active);
@@ -151,6 +152,8 @@ function renderMapStatus() {
   const registry = map.registryStatus();
   if ($("#lineCount")) $("#lineCount").textContent = String(summary.lineCount);
   if ($("#mapVisibleCount")) $("#mapVisibleCount").textContent = String(summary.lineCount);
+  if ($("#mapVisibleSchoolCount")) $("#mapVisibleSchoolCount").textContent = summary.counts ? String(summary.counts.visibleSchoolCount) : presentation.empty();
+  if ($("#mapAttentionCount")) $("#mapAttentionCount").textContent = summary.counts ? String(summary.counts.attentionSchoolCount) : presentation.empty();
   if ($("#mapModeLabel")) $("#mapModeLabel").textContent = summary.modeLabel;
   if ($("#mapFooterNote")) $("#mapFooterNote").textContent = summary.mode === "historical" ? i18n.t("map.historicalSource") : i18n.t("map.currentSource");
   if ($("#registryDataStatus")) { $("#registryDataStatus").textContent = registry.text; $("#registryDataStatus").dataset.state = registry.state; }
@@ -159,10 +162,13 @@ function renderMapStatus() {
     $("#operationalStatus").dataset.state = summary.status;
   }
   if ($("#mapError")) { $("#mapError").hidden = !map.state.operationalError; $("#mapError").textContent = map.state.operationalError ? i18n.t("map.serverUnavailable") : ""; }
+  renderMapFilterControls();
+  renderSchoolSearchResults();
 }
 
 async function loadAuthenticatedMap() {
   if (state.mapLoadPromise) return state.mapLoadPromise;
+  renderMapStatus();
   state.mapLoadPromise = map.loadCurrent()
     .then(() => { state.mapLoaded = true; renderMapStatus(); })
     .catch((error) => { state.mapLoaded = true; renderMapStatus(); showToast(error.status === 403 ? "map.forbidden" : "map.temporarilyUnavailable", "warn"); })
@@ -178,6 +184,87 @@ function initializeAuthenticatedWorkspace() {
   map.init({ containerId: "leafletMap" });
   state.mapInitialized = true;
   loadAuthenticatedMap();
+}
+
+function replaceOptions(selector, options, emptyKey, label = (value) => value) {
+  const select = $(selector);
+  if (!select) return;
+  const selected = select.value;
+  select.replaceChildren();
+  const empty = document.createElement("option");
+  empty.value = "";
+  empty.textContent = i18n.t(emptyKey);
+  select.appendChild(empty);
+  options.forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label(value);
+    select.appendChild(option);
+  });
+  select.value = options.includes(selected) ? selected : "";
+  select.disabled = options.length === 0;
+}
+
+function renderMapFilterControls() {
+  const options = map.filterOptions();
+  const filters = map.state.filters;
+  replaceOptions("#districtFilter", options.districts, "map.anyDistrict");
+  replaceOptions("#providerFilter", options.providers, "map.anyProvider");
+  replaceOptions("#statusFilter", options.statuses, "map.anyStatus", (status) => presentation.status(status).label);
+  if ($("#districtFilter")) $("#districtFilter").value = options.districts.includes(filters.district) ? filters.district : "";
+  if ($("#providerFilter")) $("#providerFilter").value = options.providers.includes(filters.provider) ? filters.provider : "";
+  if ($("#statusFilter")) $("#statusFilter").value = options.statuses.includes(filters.status) ? filters.status : "";
+  if ($("#coverageFilter")) $("#coverageFilter").value = map.state.coverage;
+  if ($("#mapListMode")) $("#mapListMode").value = map.state.mapMode;
+  if ($("#schoolSearch")) $("#schoolSearch").value = filters.query;
+}
+
+function renderSchoolSearchResults() {
+  const results = $("#schoolSearchResults");
+  const status = $("#mapFilterStatus");
+  if (!results || !status) return;
+  const query = map.state.filters.query.trim();
+  results.replaceChildren();
+  status.hidden = true;
+  if (!query) { results.hidden = true; return; }
+  if (map.state.registryLoading) { status.textContent = i18n.t("map.registryLoading"); status.hidden = false; results.hidden = true; return; }
+  if (map.state.registryUnavailable) { status.textContent = i18n.t("map.registryUnavailable"); status.hidden = false; results.hidden = true; return; }
+  const matches = map.searchResults();
+  if (!matches.length) { status.textContent = i18n.t("map.searchEmpty"); status.hidden = false; results.hidden = true; return; }
+  matches.forEach((record) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "school-search-result";
+    button.setAttribute("role", "option");
+    button.dataset.registryId = record.school.registryId;
+    const title = document.createElement("strong");
+    title.textContent = presentation.schoolName(record.school);
+    const description = document.createElement("span");
+    description.textContent = [record.school.district, record.school.address].filter(Boolean).join(" · ");
+    button.append(title, description);
+    button.addEventListener("click", () => selectSearchResult(record.school.registryId));
+    results.appendChild(button);
+  });
+  results.hidden = false;
+}
+
+function selectSearchResult(registryId) {
+  const result = map.focusSchool(registryId);
+  if (!result.ok) {
+    const status = $("#mapFilterStatus");
+    if (status) { status.textContent = i18n.t("map.searchNoCoordinate"); status.hidden = false; }
+    return;
+  }
+  openMapPopup(result.context, result.marker);
+}
+
+function applyMapFilters() {
+  map.setFilters({
+    district: $("#districtFilter")?.value || "",
+    provider: $("#providerFilter")?.value || "",
+    status: $("#statusFilter")?.value || "",
+  });
+  renderMapStatus();
 }
 
 function showToast(messageKey, tone = "") {
@@ -314,7 +401,11 @@ function bindEvents() {
   $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (error) { showToast("error.unknown", "warn"); } });
   $("#themeToggle")?.addEventListener("click", () => theme.toggle());
   $("#refreshButton")?.addEventListener("click", refreshMap);
-  $("#mapFilter")?.addEventListener("submit", (event) => event.preventDefault());
+  $("#mapFilter")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const firstResult = map.searchResults()[0];
+    if (firstResult) selectSearchResult(firstResult.school.registryId);
+  });
   document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => {
     if (router.navigate(button.dataset.route)) $("#accountControl")?.removeAttribute("open");
   }));
@@ -326,6 +417,11 @@ function bindEvents() {
     renderMapStatus();
   });
   $("#coverageFilter")?.addEventListener("change", (event) => { map.setCoverage(event.target.value); renderMapStatus(); });
+  $("#districtFilter")?.addEventListener("change", applyMapFilters);
+  $("#providerFilter")?.addEventListener("change", applyMapFilters);
+  $("#statusFilter")?.addEventListener("change", applyMapFilters);
+  $("#schoolSearch")?.addEventListener("input", (event) => { map.setFilters({ query: event.target.value }); renderMapStatus(); });
+  $("#mapFiltersReset")?.addEventListener("click", () => { map.resetFilters(); renderMapStatus(); });
   $("#mapPopupClose")?.addEventListener("click", () => closeMapPopup());
   $("#mapPopupOpenLine")?.addEventListener("click", () => openLine($("#mapPopupOpenLine").dataset.lineId));
   $("#drawerClose")?.addEventListener("click", closeDrawer);

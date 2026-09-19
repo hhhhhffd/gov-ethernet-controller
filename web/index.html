@@ -39,11 +39,21 @@
             </details>
           </div>
           <form id="mapFilter" class="map-filter-island" data-i18n-aria-label="map.filter">
-            <span class="map-filter-title" data-i18n="map.filter"></span>
-            <label for="mapListMode" data-i18n="map.state"></label>
-            <select id="mapListMode"><option value="current" data-i18n="map.current"></option><option value="historical" data-i18n="map.historical"></option></select>
-            <label for="coverageFilter" data-i18n="map.coverage"></label>
-            <select id="coverageFilter"><option value="all" data-i18n="map.allSchools"></option><option value="monitored" data-i18n="map.monitored"></option></select>
+            <label class="visually-hidden" for="schoolSearch" data-i18n="map.searchLabel"></label>
+            <input id="schoolSearch" type="search" autocomplete="off" data-i18n-placeholder="map.searchPlaceholder" />
+            <div id="schoolSearchResults" class="school-search-results" role="listbox" data-i18n-aria-label="map.searchResults" hidden></div>
+            <p id="mapFilterStatus" class="map-filter-status" role="status" hidden></p>
+            <details class="map-filter-details">
+              <summary data-i18n="map.filter"></summary>
+              <div class="map-filter-fields">
+                <label for="districtFilter" data-i18n="field.district"></label><select id="districtFilter"></select>
+                <label for="providerFilter" data-i18n="field.provider"></label><select id="providerFilter"></select>
+                <label for="statusFilter" data-i18n="field.status"></label><select id="statusFilter"></select>
+                <label for="coverageFilter" data-i18n="map.coverage"></label><select id="coverageFilter"><option value="all" data-i18n="map.allSchools"></option><option value="monitored" data-i18n="map.monitored"></option></select>
+                <label for="mapListMode" data-i18n="map.state"></label><select id="mapListMode"><option value="current" data-i18n="map.current"></option><option value="historical" data-i18n="map.historical"></option></select>
+                <button id="mapFiltersReset" type="button" data-i18n="action.resetFilters"></button>
+              </div>
+            </details>
           </form>
           <div id="mapTileStatus" class="map-tile-status" role="status" hidden></div>
           <div class="map-tools" data-i18n-aria-label="map.controls"><button id="mapZoomIn" type="button" data-i18n-aria-label="action.zoomIn">+</button><button id="mapZoomOut" type="button" data-i18n-aria-label="action.zoomOut">−</button><button id="mapReset" type="button" data-i18n-aria-label="action.resetMap">⌖</button></div>
@@ -51,7 +61,7 @@
             <div class="map-popup-head"><div><h2 id="mapPopupTitle">—</h2><p id="mapPopupSummary">—</p></div><button id="mapPopupClose" type="button" data-i18n-aria-label="action.closeMapCard">×</button></div>
             <div id="mapPopupFields" class="map-popup-fields"></div><button id="mapPopupOpenLine" class="primary-action" type="button" hidden data-i18n="action.openLine"></button>
           </section>
-          <div class="map-meta"><span><b id="lineCount">0</b> <span data-i18n="map.lineCount"></span></span><span class="visually-hidden" id="mapVisibleCount">0</span><span id="mapModeLabel"></span><span id="mapFooterNote"></span></div>
+          <div class="map-meta"><span><b id="mapVisibleSchoolCount">—</b> <span data-i18n="map.visibleSchools"></span></span><span><b id="mapAttentionCount">—</b> <span data-i18n="map.attentionSchools"></span></span><span class="visually-hidden"><b id="lineCount">0</b> <span data-i18n="map.lineCount"></span></span><span class="visually-hidden" id="mapVisibleCount">0</span><span id="mapModeLabel"></span><span id="mapFooterNote"></span></div>
           <p id="mapError" class="state-message error" role="alert" hidden></p>
         </section>
         <div id="mapLiveStatus" class="visually-hidden" aria-live="polite"></div>

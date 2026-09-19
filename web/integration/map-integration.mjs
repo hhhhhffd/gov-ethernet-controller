@@ -1,5 +1,6 @@
 import { apiAliases, unwrapCollection } from "../core/api.mjs";
 import { createPresentation } from "../core/presentation.mjs";
+import { availableMapFilterOptions, filterMapSchools } from "../features/school-search.mjs";
 
 function normalizeLine(raw) {
   const school = raw.school || raw.organization || {};
@@ -43,7 +44,7 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
   let activePresentation = presentation;
   let activeMapPresentation = mapPresentation;
   const state = {
-    lines: [], model: null, mapMode: "current", coverage: "all", historicalByLine: {},
+    lines: [], model: null, mapMode: "current", coverage: "all", filters: { query: "", district: "", provider: "", status: "" }, view: null, historicalByLine: {},
     registryUnavailable: true, mappingUnavailable: true, registryError: null, operationalError: null,
     registryLoading: false, loading: false,
   };
@@ -107,11 +108,12 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
   }
   function render() {
     if (!state.model || !mapApi) return false;
-    const lines = state.coverage === "monitored" ? state.lines : state.lines;
-    const registry = state.coverage === "monitored"
-      ? { ...state.model.registry, schools: state.model.registry.schools.filter((school) => lines.some((line) => line.registryId === school.registryId)) }
-      : state.model.registry;
-    return mapApi.render({ mode: state.mapMode, registry, lines, historicalByLine: state.historicalByLine });
+    state.view = filterMapSchools({
+      schools: state.model.registry.schools,
+      lines: state.lines,
+      filters: { ...state.filters, coverage: state.coverage },
+    });
+    return mapApi.render({ mode: state.mapMode, registry: { ...state.model.registry, schools: state.view.schools }, lines: state.view.lines, historicalByLine: state.historicalByLine });
   }
   return {
     state,
@@ -125,6 +127,23 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
     render,
     setMode(mode) { state.mapMode = mode === "historical" ? "historical" : "current"; if (state.mapMode === "current") state.historicalByLine = {}; return render(); },
     setCoverage(coverage) { state.coverage = coverage === "monitored" ? "monitored" : "all"; return render(); },
+    setFilters(filters = {}) { state.filters = { ...state.filters, ...filters }; return render(); },
+    resetFilters() { state.filters = { query: "", district: "", provider: "", status: "" }; state.coverage = "all"; return render(); },
+    filterOptions() { return state.model ? availableMapFilterOptions({ schools: state.model.registry.schools, lines: state.lines }) : { districts: [], providers: [], statuses: [] }; },
+    searchResults(limit = 8) {
+      if (!state.view?.filters.query) return [];
+      return state.view.records.slice(0, limit);
+    },
+    focusSchool(registryId) {
+      const layers = mapApi?.getLayers?.();
+      const marker = [...(layers?.monitoringMarkers || []), ...(layers?.registryMarkers || [])]
+        .find((candidate) => mapApi?.getMarkerContext?.(candidate)?.registryId === registryId);
+      const context = marker ? mapApi.getMarkerContext(marker) : null;
+      const coordinate = context?.school?.coordinate;
+      if (!context || !coordinate) return { ok: false, reason: "missing-coordinate" };
+      const focused = mapApi?.fitToCoordinates?.([coordinate], { singleZoom: 14 });
+      return focused ? { ok: true, context, marker } : { ok: false, reason: "map-unavailable" };
+    },
     getLine(id) { return state.lines.find((line) => line.id === id) || null; },
     registryStatus() {
       const total = state.model?.registry?.total;
@@ -133,7 +152,16 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
       if (state.mappingUnavailable) return { state: "mapping-unavailable", text: activePresentation.t("map.registryMappingUnavailable", { count: total ?? activePresentation.empty() }) };
       return { state: "available", text: activePresentation.t("map.registryAvailable", { count: total ?? activePresentation.empty() }) };
     },
-    summary() { return { lineCount: state.lines.length, mode: state.mapMode, status: state.operationalError ? "unavailable" : "available", modeLabel: state.mapMode === "historical" ? activePresentation.t("map.historical") : activePresentation.t("map.current") }; },
+    summary() {
+      return {
+        lineCount: state.view?.lines.length ?? 0,
+        counts: state.registryUnavailable ? null : state.view?.counts ?? null,
+        mode: state.mapMode,
+        status: state.operationalError ? "unavailable" : "available",
+        loading: state.loading,
+        modeLabel: state.mapMode === "historical" ? activePresentation.t("map.historical") : activePresentation.t("map.current"),
+      };
+    },
     linePresentation(line) { return { status: activePresentation.status(line?.linkwatchStatus || line?.status).label, observedAt: activePresentation.formatDate(line?.latest?.at, true) }; },
     setPresentation(nextPresentation) {
       if (!nextPresentation || typeof nextPresentation.t !== "function") return;

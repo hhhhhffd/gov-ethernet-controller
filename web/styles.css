@@ -127,10 +127,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .account-role, .account-status { color: var(--ref-text-muted); }
 .account-menu button { height: 32px; padding: 0 11px; border: 1px solid var(--ref-border-soft); border-radius: 8px; background: var(--ref-surface-secondary); color: var(--ref-text-primary); text-align: left; }
 
-.map-filter-island { position: absolute; z-index: 400; top: 82px; left: 20px; display: grid; width: 224px; grid-template-columns: 1fr 1fr; gap: 6px 8px; padding: 10px; border: 1px solid var(--ref-border-soft); border-radius: var(--theme-panel-radius); background: var(--ref-surface-main); box-shadow: 0 8px 20px rgb(0 0 0 / 18%); }
-.map-filter-title { grid-column: 1 / -1; color: var(--ref-text-primary); font-size: 11px; font-weight: 500; }
-.map-filter-island label { color: var(--ref-text-muted); font-size: 9px; }
-.map-filter-island select { width: 100%; height: 34px; padding: 0 8px; border: 1px solid var(--ref-border-soft); border-radius: 8px; background: var(--ref-surface-inset); color: var(--ref-text-primary); font-size: 10px; }
+.map-filter-island { position: absolute; z-index: 400; top: 82px; left: 20px; display: grid; width: 248px; gap: 6px; padding: 8px; border: 1px solid var(--ref-border-soft); border-radius: var(--theme-panel-radius); background: var(--ref-surface-main); box-shadow: 0 8px 20px rgb(0 0 0 / 18%); }
+.map-filter-island input, .map-filter-island select { width: 100%; height: 34px; padding: 0 8px; border: 1px solid var(--ref-border-soft); border-radius: 8px; background: var(--ref-surface-inset); color: var(--ref-text-primary); font-size: 10px; }
+.map-filter-island input::placeholder { color: var(--ref-text-muted); }
+.map-filter-details { border-top: 1px solid var(--ref-border-soft); }
+.map-filter-details summary { padding: 7px 1px 1px; color: var(--ref-text-secondary); font-size: 10px; cursor: pointer; }
+.map-filter-details[open] summary { margin-bottom: 7px; }
+.map-filter-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 7px; }
+.map-filter-fields label { color: var(--ref-text-muted); font-size: 9px; }
+.map-filter-fields select { grid-column: 1 / -1; }
+.map-filter-fields button { grid-column: 1 / -1; height: 30px; border: 1px solid var(--ref-border-soft); border-radius: 8px; background: var(--ref-surface-secondary); color: var(--ref-text-secondary); font-size: 10px; }
+.school-search-results { display: grid; max-height: 208px; overflow: auto; border-top: 1px solid var(--ref-border-soft); }
+.school-search-result { display: grid; gap: 2px; width: 100%; padding: 7px 2px; border: 0; border-bottom: 1px solid var(--ref-border-soft); background: transparent; color: var(--ref-text-primary); text-align: left; }
+.school-search-result:hover { background: var(--ref-surface-secondary); }
+.school-search-result span { color: var(--ref-text-muted); font-size: 9px; }
+.map-filter-status { margin: 0; color: var(--ref-text-secondary); font-size: 10px; }
 
 .map-tools { position: absolute; z-index: 400; top: 50%; right: 25px; display: grid; gap: 5px; transform: translateY(-50%); }
 .map-tools button { font-size: 16px; }
@@ -192,7 +203,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .shell-top-left { left: 14px; gap: 14px; }
   .shell-top-right { right: 14px; }
   .reference-nav-item { min-width: 72px; padding-inline: 11px; }
-  .map-filter-island { top: 68px; left: 12px; width: 204px; transform: none; }
+  .map-filter-island { top: 68px; left: 12px; width: 224px; transform: none; }
   .map-tools { right: 14px; }
   .map-meta { bottom: 14px; left: 14px; }
 }
@@ -205,7 +216,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .shell-top-right { top: 16px; right: 10px; gap: 4px; }
   .reference-icon-button, .account-button, .map-tools button { width: 34px; height: 34px; }
   .account-button { max-width: 90px; padding-inline: 8px; }
-  .map-filter-island { top: 62px; left: 10px; width: 190px; padding: 8px; }
+  .map-filter-island { top: 62px; left: 10px; width: 208px; padding: 8px; }
   .map-tools { right: 10px; }
   .map-meta { right: 10px; left: 10px; }
   .map-popup { top: 132px; left: 10px; width: min(320px, calc(100% - 20px)); }
