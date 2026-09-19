@@ -88,6 +88,7 @@ type incident struct {
 	ID            int64
 	LineID        string
 	ViolationType string
+	Mode          string
 	Status        string
 	RecoveryState string
 	StartedAt     time.Time
@@ -792,9 +793,13 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Tim
 	}
 	var confirmedRows []recentEvaluation
 	confirmedCode := ""
+	incidentMode := mode
 	if active != nil {
 		confirmedCode = active.ViolationType
-		confirmedRows = confirmedByCode[keyFor(lineID, confirmedCode, mode)]
+		if active.Mode != "" {
+			incidentMode = active.Mode
+		}
+		confirmedRows = confirmedByCode[keyFor(lineID, confirmedCode, incidentMode)]
 	} else {
 		for _, code := range violationCodes(result) {
 			if strings.HasPrefix(code, "BASELINE_") || code == "NO_INTERNET" {
@@ -820,7 +825,7 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Tim
 	// An active incident can only be changed by an observation that measured
 	// the same metric in the same mode. Missing/foreign metrics are evidence
 	// for their own stream, never confirmation or recovery for this incident.
-	if active != nil && (len(recent) == 0 || !relevantEvidence(recent[0], keyFor(lineID, active.ViolationType, mode))) {
+	if active != nil && (len(recent) == 0 || !relevantEvidence(recent[0], keyFor(lineID, active.ViolationType, incidentMode))) {
 		return nil
 	}
 	if len(confirmedRows) > 0 {
@@ -879,7 +884,7 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Tim
 	healthyStreak := false
 	if healthyObservation && current != nil && (current.ConnectionState == "NO_INTERNET" || current.ConnectionState == "DEGRADED") {
 		if active != nil {
-			healthyStreak = len(confirmedForCode(lineID, recent, mode, recoveryPolicy, active.ViolationType, true)) > 0
+			healthyStreak = len(confirmedForCode(lineID, recent, incidentMode, recoveryPolicy, active.ViolationType, true)) > 0
 		}
 	}
 	connectionState := connectionStateForResult(result)
@@ -908,7 +913,7 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Tim
 	if err := writeState(ctx, tx, lineID, at, "FRESH", connectionState, contractState, recoveryState, result.Reason, []int64{measurementID}, policy, contract); err != nil {
 		return err
 	}
-	return updateRecovery(ctx, tx, lineID, mode, at, recent, recoveryPolicy)
+	return updateRecovery(ctx, tx, lineID, incidentMode, at, recent, recoveryPolicy)
 }
 
 type pendingNotification struct {
@@ -1092,6 +1097,9 @@ func activeIncident(ctx context.Context, q interface {
 	if err := json.Unmarshal(raw, &item.Opening); err != nil {
 		return nil, fmt.Errorf("decode incident snapshot: %w", err)
 	}
+	if item.Opening != nil {
+		item.Mode, _ = item.Opening["mode"].(string)
+	}
 	return item, nil
 }
 
@@ -1103,7 +1111,11 @@ func createIncident(ctx context.Context, tx pgx.Tx, lineID string, at time.Time,
 	if len(evidence) > 0 {
 		started = evidence[len(evidence)-1].ObservedAt
 	}
-	snapshot, err := json.Marshal(map[string]interface{}{"line_id": lineID, "confirmed_at": at.UTC().Format(time.RFC3339), "violation_type": violationType, "evidence_measurement_ids": ids(evidence), "violations": result.Violations, "policy": result.PolicySnapshot, "contract": result.ContractSnapshot, "reason": result.Reason})
+	incidentMode := ""
+	if len(evidence) > 0 {
+		incidentMode = evidence[0].Mode
+	}
+	snapshot, err := json.Marshal(map[string]interface{}{"line_id": lineID, "mode": incidentMode, "confirmed_at": at.UTC().Format(time.RFC3339), "violation_type": violationType, "evidence_measurement_ids": ids(evidence), "violations": result.Violations, "policy": result.PolicySnapshot, "contract": result.ContractSnapshot, "reason": result.Reason})
 	if err != nil {
 		return 0, fmt.Errorf("marshal incident snapshot: %w", err)
 	}
