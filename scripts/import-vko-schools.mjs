@@ -77,6 +77,7 @@ const REGION_FIELDS = [
   "area_name",
   "areaName",
   "admin_area",
+  "region_nam",
 ];
 
 const FIELD_ALIASES = {
@@ -127,7 +128,7 @@ const FIELD_ALIASES = {
   ],
   status: ["status", "status_of_org", "active", "статус", "состояние"],
   latitude: ["latitude", "lat", "широта"],
-  longitude: ["longitude", "lon", "lng", "долгота"],
+  longitude: ["longitude", "lon", "lng", "long", "долгота"],
   coordinates: ["coordinates", "coordinate", "geo_coord", "координаты"],
 };
 
