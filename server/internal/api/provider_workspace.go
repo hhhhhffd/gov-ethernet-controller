@@ -93,6 +93,7 @@ func (s *Server) providerCaseWorkspaceDetail(w http.ResponseWriter, r *http.Requ
 	}
 	item["scope_enforced"] = true
 	item["human_send_gate"] = item["status"] != "SENT"
+	item["timeline"] = []map[string]interface{}{}
 	var incidentID *int64
 	_ = s.DB.Pool.QueryRow(r.Context(), `SELECT incident_id FROM provider_cases WHERE id=$1`, id).Scan(&incidentID)
 	if incidentID != nil {
@@ -119,7 +120,6 @@ func (s *Server) providerCaseWorkspaceDetail(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	item["evidence_chain"] = evidence
-	item["timeline"] = []map[string]interface{}{}
 	writeProviderWorkspaceDetail(w, item)
 }
 

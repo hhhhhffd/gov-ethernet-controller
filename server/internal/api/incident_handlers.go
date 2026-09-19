@@ -3,11 +3,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"linkwatch/server/internal/auth"
 	"linkwatch/server/internal/measurements"
@@ -688,9 +691,8 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		return
 	}
 	var ticket, draft, existingFinal, currentStatus *string
-	var attempts int
 	var createdAt time.Time
-	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT ticket_no,draft_text,final_text,status,delivery_attempts,created_at FROM provider_cases WHERE id=$1`, id).Scan(&ticket, &draft, &existingFinal, &currentStatus, &attempts, &createdAt); err != nil {
+	if err := s.DB.Pool.QueryRow(r.Context(), `SELECT ticket_no,draft_text,final_text,status,created_at FROM provider_cases WHERE id=$1`, id).Scan(&ticket, &draft, &existingFinal, &currentStatus, &createdAt); err != nil {
 		writeError(w, 404, "provider case not found")
 		return
 	}
@@ -737,12 +739,16 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		return
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	if _, err = s.DB.Pool.Exec(r.Context(), `UPDATE provider_cases SET final_text=$1,ticket_no=COALESCE($2::text,ticket_no),delivery_status='DELIVERING',delivery_attempts=delivery_attempts+1,delivery_error=NULL,delivery_retryable=TRUE,next_attempt_at=NULL,delivery_started_at=$4 WHERE id=$3`, *final, payload.TicketNo, id, now); err != nil {
+	var attempt int
+	if err = s.DB.Pool.QueryRow(r.Context(), `UPDATE provider_cases SET final_text=$1,ticket_no=COALESCE($2::text,ticket_no),delivery_status='DELIVERING',delivery_attempts=delivery_attempts+1,delivery_error=NULL,delivery_retryable=TRUE,next_attempt_at=NULL,delivery_started_at=$4 WHERE id=$3 AND status <> 'SENT' AND delivery_status IN ('PENDING','FAILED') RETURNING delivery_attempts`, *final, payload.TicketNo, id, now).Scan(&attempt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "provider case is already being delivered or has already been sent")
+			return
+		}
 		s.Logger.Error("could not record provider case attempt", "case_id", id, "error", err)
 		writeError(w, 500, "could not record provider attempt")
 		return
 	}
-	attempt := attempts + 1
 	var incident incidentRecord
 	if incidentID != 0 {
 		var visible bool
@@ -774,7 +780,7 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		}
 		var nextAttempt interface{}
 		if retryable {
-			exponent := attempts
+			exponent := attempt - 1
 			if exponent > 5 {
 				exponent = 5
 			}
