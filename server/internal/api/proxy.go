@@ -75,15 +75,20 @@ func authClientKey(r *http.Request) string {
 }
 
 func authClientKeyWithTrustedProxies(r *http.Request, trustedProxyCIDRs []*net.IPNet) string {
-	peer := normalizePeerIP(r.RemoteAddr)
-	if peer == "" {
-		peer = "unknown"
-	}
+	peer := immediatePeerKey(r)
 	if !isTrustedProxy(peer, trustedProxyCIDRs) {
 		return peer
 	}
 	if client := firstForwardedIP(r.Header.Values("X-Forwarded-For")); client != "" {
 		return client
+	}
+	return peer
+}
+
+func immediatePeerKey(r *http.Request) string {
+	peer := normalizePeerIP(r.RemoteAddr)
+	if peer == "" {
+		return "unknown"
 	}
 	return peer
 }

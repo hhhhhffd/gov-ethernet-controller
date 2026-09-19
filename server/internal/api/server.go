@@ -307,7 +307,7 @@ func (s *Server) principal(w http.ResponseWriter, r *http.Request) (*auth.Princi
 
 func (s *Server) device(w http.ResponseWriter, r *http.Request) (*auth.Device, bool) {
 	deviceID := strings.TrimSpace(r.Header.Get("X-Device-ID"))
-	clientKey := s.authClientKey(r) + ":" + deviceID
+	clientKey := immediatePeerKey(r) + ":" + deviceID
 	allowed, retryAfter, err := auth.CheckRateLimit(r.Context(), s.DB, "device", clientKey, authRateLimit("LINKWATCH_DEVICE_AUTH_RATE_LIMIT", 20), time.Minute)
 	if err != nil {
 		s.Logger.Error("could not check device auth rate limit", "error", err)
