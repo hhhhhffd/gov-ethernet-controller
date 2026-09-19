@@ -80,6 +80,44 @@ func TestAdminMatrixAuthorization(t *testing.T) {
 	}
 }
 
+func TestOrganizationsEndpointReturnsRowsWithNullableContactTimestamp(t *testing.T) {
+	t.Setenv("LINKWATCH_ENV", "development")
+	t.Setenv("LINKWATCH_AUTH_DISABLED", "0")
+	db := openAdminMatrixDB(t)
+	t.Cleanup(db.Close)
+	fixture := createAdminMatrixFixture(t, db)
+
+	for _, path := range []string{"/api/v1/organizations", "/api/organizations"} {
+		t.Run(path, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request.Header.Set("Authorization", "Bearer "+fixture.adminToken)
+			recorder := httptest.NewRecorder()
+			fixture.server.Handler().ServeHTTP(recorder, request)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("GET %s returned HTTP %d, want %d; body=%s", path, recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+			var organizations []map[string]interface{}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &organizations); err != nil {
+				t.Fatalf("decode GET %s response: %v; body=%s", path, err, recorder.Body.String())
+			}
+			var fixtureOrganization map[string]interface{}
+			for _, organization := range organizations {
+				if organization["id"] == fixture.organizationID {
+					fixtureOrganization = organization
+					break
+				}
+			}
+			if fixtureOrganization == nil {
+				t.Fatalf("GET %s organizations = %#v, want the fixture organization", path, organizations)
+			}
+			if value, ok := fixtureOrganization["contact_updated_at"]; !ok || value != nil {
+				t.Fatalf("GET %s contact_updated_at = %#v, want JSON null for the legacy nullable row", path, value)
+			}
+		})
+	}
+}
+
 func TestAdminMatrixMutationEvidence(t *testing.T) {
 	t.Setenv("LINKWATCH_ENV", "development")
 	t.Setenv("LINKWATCH_AUTH_DISABLED", "0")

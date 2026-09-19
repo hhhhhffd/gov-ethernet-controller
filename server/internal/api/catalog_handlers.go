@@ -121,7 +121,8 @@ func (s *Server) listOrganizations(w http.ResponseWriter, r *http.Request) {
 		var districtID *string
 		var lat, lon *float64
 		var active bool
-		var created, contactUpdatedAt time.Time
+		var created time.Time
+		var contactUpdatedAt *time.Time
 		if err := rows.Scan(&id, &school, &name, &district, &districtID, &address, &lat, &lon, &contact, &phone, &role, &email, &contactUpdatedAt, &active, &created); err != nil {
 			writeError(w, 500, "could not read organizations")
 			return
