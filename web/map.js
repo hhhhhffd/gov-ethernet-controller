@@ -12,6 +12,7 @@
   const state = {
     map: null, tileLayer: null, config: null, layers: null, lastRender: null, resizeObserver: null, onMarkerClick: null, tileError: false,
     presentation: { t: () => "", schoolName: (school) => school?.officialName ?? school?.name ?? "" },
+    mapPresentation: { theme: "dark", locale: "ru", style: "alidade-smooth-dark", fallback: null, labels: "application-presentation" },
   };
   function mapText(key, values) { return state.presentation?.t?.(key, values) || ""; }
   function schoolName(school, fallback) { return state.presentation?.schoolName?.(school, fallback) || fallback || ""; }
@@ -26,6 +27,23 @@
     if (!status) return;
     status.hidden = !unavailable;
     status.textContent = unavailable ? mapText("map.tileUnavailable") : "";
+  }
+  function applyMapPresentation(nextPresentation) {
+    if (!nextPresentation || nextPresentation.style !== "alidade-smooth-dark") return false;
+    state.mapPresentation = {
+      theme: nextPresentation.theme === "light" ? "light" : "dark",
+      locale: nextPresentation.locale === "kk" ? "kk" : "ru",
+      style: "alidade-smooth-dark",
+      fallback: nextPresentation.fallback || null,
+      labels: nextPresentation.labels || "application-presentation",
+    };
+    const container = document.getElementById("leafletMap");
+    if (container?.setAttribute) {
+      container.setAttribute("data-map-theme", state.mapPresentation.theme);
+      container.setAttribute("data-map-style", state.mapPresentation.style);
+      container.setAttribute("data-map-locale", state.mapPresentation.locale);
+    }
+    return true;
   }
 
   function validCoordinate(value) {
@@ -256,5 +274,7 @@
       if (state.tileError) setTileAvailability(true);
       if (state.lastRender?.context) render(state.lastRender.context);
     },
+    setMapPresentation: applyMapPresentation,
+    getMapPresentation: () => ({ ...state.mapPresentation }),
   };
 })(window);

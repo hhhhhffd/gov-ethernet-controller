@@ -83,6 +83,9 @@ mapApi.setPresentation({
   schoolName(school, fallback) { return school?.officialName || fallback || ""; },
 });
 assert.equal(mapApi.init({ containerId: "leafletMap" }), map);
+assert.equal(mapApi.setMapPresentation({ theme: "light", locale: "kk", style: "alidade-smooth-dark", fallback: "preserve-canonical-dark-basemap", labels: "application-presentation" }), true);
+assert.equal(JSON.stringify(mapApi.getMapPresentation()), JSON.stringify({ theme: "light", locale: "kk", style: "alidade-smooth-dark", fallback: "preserve-canonical-dark-basemap", labels: "application-presentation" }));
+assert.equal(mapApi.getConfig().tileUrl, mapApi.DEFAULT_CONFIG.tileUrl, "light presentation must retain the canonical map URL");
 tileLayer.handlers.tileerror();
 assert.equal(tileStatus.hidden, false, "tile failure must be visible without disabling the map");
 assert.equal(tileStatus.textContent, "Подложка карты временно недоступна");
@@ -141,7 +144,7 @@ assert.match(indexSource, /id="mapZoomIn"[\s\S]*id="mapZoomOut"[\s\S]*id="mapRes
 assert.doesNotMatch(indexSource, /class="(session-bar|map-controls|sidebar|dashboard-grid|kpi-grid|activity-panel|rail)"/, "legacy full-width shell surfaces must stay deleted");
 assert.match(fs.readFileSync("web/styles.css", "utf8"), /--ref-canvas-0:\s*#111111/, "Appendix A canvas palette must be applied");
 assert.match(browserHarnessSource, /task006-shell-1355x880\.png/, "canonical TASK-006 shell screenshot must be captured");
-for (const boundary of ["core/api.mjs", "core/session.mjs", "core/capabilities.mjs", "core/i18n.mjs", "core/theme.mjs", "core/router.mjs", "core/presentation.mjs", "integration/map-integration.mjs", "features/lines.mjs", "features/incidents.mjs", "features/reports.mjs", "features/notifications.mjs", "features/admin.mjs", "features/audit.mjs", "features/provider-case.mjs"]) {
+for (const boundary of ["core/api.mjs", "core/session.mjs", "core/capabilities.mjs", "core/i18n.mjs", "core/theme.mjs", "core/map-presentation.mjs", "core/router.mjs", "core/presentation.mjs", "integration/map-integration.mjs", "features/lines.mjs", "features/incidents.mjs", "features/reports.mjs", "features/notifications.mjs", "features/admin.mjs", "features/audit.mjs", "features/provider-case.mjs"]) {
   assert.match(appSource + fs.readFileSync(`web/${boundary}`, "utf8"), new RegExp(boundary.replace(".", "\\.")), `${boundary} must remain part of the frontend boundary`);
 }
 assert.match(browserHarnessSource, /BROWSER_MAP_FIXTURE/, "explicit browser fixture must remain in acceptance harness");

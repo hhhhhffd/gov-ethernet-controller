@@ -1,5 +1,10 @@
 :root {
   color-scheme: dark;
+  --theme-control-size: 37px;
+  --theme-control-radius: 10px;
+  --theme-shell-top: 20px;
+  --theme-shell-right: 25px;
+  --theme-panel-radius: 12px;
   --ref-canvas-0: #111111;
   --ref-canvas-1: #131313;
   --ref-nav-inactive: #1b1b1b;
@@ -51,8 +56,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .locale-switch {
   position: fixed;
   z-index: 1300;
-  top: 20px;
-  right: 205px;
+  top: var(--theme-shell-top);
+  right: 247px;
   display: inline-flex;
   overflow: hidden;
   border: 1px solid var(--ref-border-soft);
@@ -84,12 +89,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .reference-nav-item {
   display: inline-flex;
   min-width: 83px;
-  height: 37px;
+  height: var(--theme-control-size);
   align-items: center;
   justify-content: center;
   padding: 0 16px;
   border: 1px solid rgb(255 255 255 / 3%);
-  border-radius: 10px;
+  border-radius: var(--theme-control-radius);
   background: var(--ref-nav-inactive);
   color: var(--ref-text-primary);
   font-size: 11px;
@@ -100,29 +105,29 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .reference-nav-item[aria-current="page"] { background: var(--ref-nav-active); }
 .reference-nav-item:hover { background: var(--ref-nav-active); }
 
-.shell-top-right { position: absolute; z-index: 400; top: 20px; right: 25px; gap: 5px; }
+.shell-top-right { position: absolute; z-index: 400; top: var(--theme-shell-top); right: var(--theme-shell-right); gap: 5px; }
 .reference-icon-button, .account-button, .map-tools button, .map-popup-head button, .drawer-head button {
   display: inline-flex;
-  width: 37px;
-  height: 37px;
+  width: var(--theme-control-size);
+  height: var(--theme-control-size);
   align-items: center;
   justify-content: center;
   padding: 0;
   border: 1px solid rgb(255 255 255 / 3%);
-  border-radius: 10px;
+  border-radius: var(--theme-control-radius);
   background: var(--ref-surface-secondary);
   color: var(--ref-text-primary);
 }
 .reference-icon-button { font-size: 17px; }
 .reference-icon-button:hover, .account-button:hover, .map-tools button:hover { background: var(--ref-surface-main); }
 .account-control { position: relative; }
-.account-button { width: auto; min-width: 37px; max-width: 132px; padding: 0 12px; list-style: none; font-size: 11px; font-weight: 500; }
+.account-button { width: auto; min-width: var(--theme-control-size); max-width: 132px; padding: 0 12px; list-style: none; font-size: 11px; font-weight: 500; }
 .account-button::-webkit-details-marker { display: none; }
 .account-menu { position: absolute; top: 42px; right: 0; z-index: 500; display: grid; min-width: 180px; gap: 7px; padding: 11px; border: 1px solid var(--ref-border-medium); border-radius: 12px; background: var(--ref-surface-main); box-shadow: 0 8px 20px rgb(0 0 0 / 18%); }
 .account-role, .account-status { color: var(--ref-text-muted); }
 .account-menu button { height: 32px; padding: 0 11px; border: 1px solid var(--ref-border-soft); border-radius: 8px; background: var(--ref-surface-secondary); color: var(--ref-text-primary); text-align: left; }
 
-.map-filter-island { position: absolute; z-index: 400; top: 82px; left: 20px; display: grid; width: 224px; grid-template-columns: 1fr 1fr; gap: 6px 8px; padding: 10px; border: 1px solid var(--ref-border-soft); border-radius: 12px; background: var(--ref-surface-main); box-shadow: 0 8px 20px rgb(0 0 0 / 18%); }
+.map-filter-island { position: absolute; z-index: 400; top: 82px; left: 20px; display: grid; width: 224px; grid-template-columns: 1fr 1fr; gap: 6px 8px; padding: 10px; border: 1px solid var(--ref-border-soft); border-radius: var(--theme-panel-radius); background: var(--ref-surface-main); box-shadow: 0 8px 20px rgb(0 0 0 / 18%); }
 .map-filter-title { grid-column: 1 / -1; color: var(--ref-text-primary); font-size: 11px; font-weight: 500; }
 .map-filter-island label { color: var(--ref-text-muted); font-size: 9px; }
 .map-filter-island select { width: 100%; height: 34px; padding: 0 8px; border: 1px solid var(--ref-border-soft); border-radius: 8px; background: var(--ref-surface-inset); color: var(--ref-text-primary); font-size: 10px; }
@@ -135,7 +140,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .map-meta b { color: var(--ref-text-primary); font-weight: 500; }
 .state-message.error { position: absolute; z-index: 650; top: 140px; left: 20px; width: min(280px, calc(100% - 40px)); margin: 0; padding: 10px; border: 1px solid rgb(236 95 104 / 35%); border-radius: 8px; background: var(--ref-surface-main); color: var(--ref-red); }
 
-.map-popup { position: absolute; z-index: 700; top: 154px; left: 20px; width: min(320px, calc(100% - 40px)); padding: 14px; border: 1px solid var(--ref-border-medium); border-radius: 12px; background: var(--ref-surface-main); box-shadow: 0 12px 28px rgb(0 0 0 / 22%); }
+.map-popup { position: absolute; z-index: 700; top: 154px; left: 20px; width: min(320px, calc(100% - 40px)); padding: 14px; border: 1px solid var(--ref-border-medium); border-radius: var(--theme-panel-radius); background: var(--ref-surface-main); box-shadow: 0 12px 28px rgb(0 0 0 / 22%); }
 .map-popup-head, .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .map-popup h2, .drawer-head h2, .auth-form h1 { margin: 0; color: var(--ref-text-primary); font-size: 14px; font-weight: 600; }
 .map-popup p, .drawer-head p { margin: 3px 0 12px; color: var(--ref-text-secondary); }
@@ -167,8 +172,15 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .toast { padding: 9px 12px; border: 1px solid var(--ref-border-medium); border-radius: 8px; background: var(--ref-surface-main); color: var(--ref-text-primary); box-shadow: 0 8px 20px rgb(0 0 0 / 18%); }
 .toast.warn { color: var(--ref-red); }
 
+/* Light shell keeps the canonical raster basemap until a verified light URL is configured. */
+.leaflet-map[data-map-theme="light"][data-map-style="alidade-smooth-dark"] .leaflet-control-attribution {
+  border-color: var(--ref-border-medium);
+  background: color-mix(in srgb, var(--ref-surface-main) 88%, transparent);
+  color: var(--ref-text-secondary);
+}
+
 @media (max-width: 1199px) {
-  .locale-switch { top: 16px; right: 195px; }
+  .locale-switch { top: 16px; right: 237px; }
   .shell-top-left { top: 16px; left: 20px; gap: 22px; }
   .shell-top-right { top: 16px; right: 20px; }
   .map-tools { right: 20px; }
@@ -176,7 +188,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 
 @media (max-width: 900px) {
-  .locale-switch { right: 185px; }
+  .locale-switch { right: 225px; }
   .shell-top-left { left: 14px; gap: 14px; }
   .shell-top-right { right: 14px; }
   .reference-nav-item { min-width: 72px; padding-inline: 11px; }
@@ -186,7 +198,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 
 @media (max-width: 620px) {
-  .locale-switch { top: 12px; right: 10px; }
+  .locale-switch { top: 56px; right: 10px; }
   .shell-top-left { gap: 8px; }
   .shell-logo { width: 18px; }
   .reference-nav-item { min-width: 62px; height: 34px; padding-inline: 8px; border-radius: 9px; font-size: 10px; }

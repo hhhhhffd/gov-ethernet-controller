@@ -39,8 +39,9 @@ function historicalByLine(aggregate, analytics) {
   return result;
 }
 
-export function createMapIntegration({ api, reports, mapApi = globalThis.LinkwatchMap, dataModel = globalThis.LinkwatchDataModel, presentation = createPresentation() } = {}) {
+export function createMapIntegration({ api, reports, mapApi = globalThis.LinkwatchMap, dataModel = globalThis.LinkwatchDataModel, presentation = createPresentation(), mapPresentation = null } = {}) {
   let activePresentation = presentation;
+  let activeMapPresentation = mapPresentation;
   const state = {
     lines: [], model: null, mapMode: "current", coverage: "all", historicalByLine: {},
     registryUnavailable: true, mappingUnavailable: true, registryError: null, operationalError: null,
@@ -114,7 +115,11 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
   }
   return {
     state,
-    init(options = {}) { mapApi?.setPresentation?.(activePresentation); return mapApi?.init(options); },
+    init(options = {}) {
+      mapApi?.setMapPresentation?.(activeMapPresentation);
+      mapApi?.setPresentation?.(activePresentation);
+      return mapApi?.init(options);
+    },
     loadCurrent,
     loadHistorical,
     render,
@@ -134,6 +139,11 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
       if (!nextPresentation || typeof nextPresentation.t !== "function") return;
       activePresentation = nextPresentation;
       mapApi?.setPresentation?.(activePresentation);
+    },
+    setMapPresentation(nextMapPresentation) {
+      if (!nextMapPresentation || typeof nextMapPresentation.style !== "string") return;
+      activeMapPresentation = nextMapPresentation;
+      mapApi?.setMapPresentation?.(activeMapPresentation);
     },
   };
 }

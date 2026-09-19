@@ -4,6 +4,7 @@ import { createI18n } from "./core/i18n.mjs";
 import { createPresentation, escapeHtml } from "./core/presentation.mjs";
 import { createShellRouter } from "./core/router.mjs";
 import { createSession } from "./core/session.mjs";
+import { createMapPresentationAdapter } from "./core/map-presentation.mjs";
 import { createThemeState } from "./core/theme.mjs";
 import { createMapIntegration } from "./integration/map-integration.mjs";
 import { createAdminBoundary } from "./features/admin.mjs";
@@ -27,8 +28,9 @@ const api = createApiClient({
 });
 session = createSession({ api, onChange: handleSessionChange });
 const theme = createThemeState();
+const mapPresentationAdapter = createMapPresentationAdapter({ theme: theme.theme, locale: i18n.locale });
 const reports = createReportsBoundary(api);
-const map = createMapIntegration({ api, reports, presentation });
+const map = createMapIntegration({ api, reports, presentation, mapPresentation: mapPresentationAdapter.snapshot() });
 const lines = createLinesBoundary(api);
 const router = createShellRouter({
   canAccess(view) {
@@ -56,6 +58,26 @@ function localizeStaticContent() {
     control.toggleAttribute("aria-pressed", active);
     control.setAttribute("aria-label", i18n.t("locale.switch"));
   });
+  renderThemeControl();
+}
+
+function renderThemeControl() {
+  const control = $("#themeToggle");
+  if (!control) return;
+  const switchTo = theme.theme === "dark" ? "light" : "dark";
+  const key = "theme.switchTo" + (switchTo === "light" ? "Light" : "Dark");
+  control.textContent = switchTo === "light" ? "☼" : "☾";
+  control.dataset.theme = theme.theme;
+  control.setAttribute("aria-label", i18n.t(key));
+  control.setAttribute("title", i18n.t(key));
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.theme === "light" ? "#eef0ee" : "#08131f");
+}
+
+function refreshTheme() {
+  mapPresentationAdapter.setTheme(theme.theme);
+  mapPresentationAdapter.setLocale(i18n.locale);
+  map.setMapPresentation(mapPresentationAdapter.snapshot());
+  renderThemeControl();
 }
 
 function showLogin(messageKey = "auth.enterCredentials", resolving = false) {
@@ -290,6 +312,7 @@ function bindEvents() {
     finally { submit.disabled = false; }
   });
   $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (error) { showToast("error.unknown", "warn"); } });
+  $("#themeToggle")?.addEventListener("click", () => theme.toggle());
   $("#refreshButton")?.addEventListener("click", refreshMap);
   $("#mapFilter")?.addEventListener("submit", (event) => event.preventDefault());
   document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => {
@@ -316,6 +339,8 @@ function bindEvents() {
 
 function refreshLocale() {
   localizeStaticContent();
+  mapPresentationAdapter.setLocale(i18n.locale);
+  map.setMapPresentation(mapPresentationAdapter.snapshot());
   map.setPresentation(presentation);
   renderRoute();
   renderSession();
@@ -328,6 +353,7 @@ async function boot() {
   localizeStaticContent();
   bindEvents();
   i18n.subscribe(refreshLocale);
+  theme.subscribe(refreshTheme);
   renderSession();
   if (!session.hasToken()) return;
   try {
