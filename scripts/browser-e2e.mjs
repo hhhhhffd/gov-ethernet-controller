@@ -641,9 +641,18 @@ async function main() {
       check(await admin.locator("#manualIncidentButton").isVisible(), "manual incident action is hidden for ADMIN");
       const invalid = await apiRequest(admin, "/api/v1/incidents", { method: "POST", body: { line_id: "", description: "browser-e2e validation probe", source: "MANUAL" } });
       expectStatus(invalid, [404, 422], "invalid manual incident");
-      const incidents = unwrap((await apiRequest(admin, "/api/v1/incidents")).body);
+      const manualDescription = "browser-e2e bounded manual incident fixture";
+      let incidents = unwrap((await apiRequest(admin, "/api/v1/incidents")).body);
+      if (!incidents.some((item) => item.source === "MANUAL" && item.description === manualDescription)) {
+        const activeLineIDs = new Set(incidents.filter((item) => String(item.status).toUpperCase() !== "CLOSED").map((item) => item.line_id));
+        const manualLine = liveLines.find((line) => !activeLineIDs.has(line.id)) || primaryLine;
+        const created = await apiRequest(admin, "/api/v1/incidents", { method: "POST", body: { line_id: manualLine.id, description: manualDescription, source: "MANUAL" } });
+        expectStatus(created, 201, "valid manual incident");
+        check((created.body?.source || created.body?.data?.source) === "MANUAL", "valid manual incident response did not preserve MANUAL source");
+        incidents = unwrap((await apiRequest(admin, "/api/v1/incidents")).body);
+      }
       check(incidents.some((item) => item.source === "MANUAL"), "live incident list has no manual incident evidence");
-      return `manual action visible; invalid mutation returned ${invalid.status} without creating an object; existing MANUAL incident is visible`;
+      return `manual action visible; invalid mutation returned ${invalid.status} without creating an object; bounded MANUAL incident fixture is visible`;
     });
 
     await surface("notifications", async () => {

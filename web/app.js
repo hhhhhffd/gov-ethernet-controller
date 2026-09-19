@@ -338,7 +338,7 @@
   function syncModeControls() {
     const historical = isHistoricalMode();
     const status = $("#statusFilter");
-    if (status) { status.disabled = false; status.title = historical ? "Фильтр применяется к historical evidence, а не к current LineState" : ""; const label = status.closest("label")?.querySelector(".filter-label"); if (label) label.textContent = historical ? "Статус historical evidence" : "Статус current state"; }
+    if (status) { status.disabled = historical; status.title = historical ? "Фильтр current state недоступен в historical режиме" : ""; const label = status.closest("label")?.querySelector(".filter-label"); if (label) label.textContent = "Статус current state"; }
     $$('[data-table-view]').forEach((button) => { button.disabled = historical; button.title = historical ? "Представление historical evidence использует строки линий" : ""; });
   }
   function coverageRows() {
