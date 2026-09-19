@@ -9,11 +9,18 @@
   });
   const STATUS_PRIORITY = Object.freeze(["NO_INTERNET", "DEGRADED", "NO_DATA", "OK", "UNKNOWN"]);
   const STATUS_SET = new Set(STATUS_PRIORITY);
-  const state = { map: null, tileLayer: null, config: null, layers: null, lastRender: null, resizeObserver: null, onMarkerClick: null };
+  const state = { map: null, tileLayer: null, config: null, layers: null, lastRender: null, resizeObserver: null, onMarkerClick: null, tileError: false };
 
   function mapConfig() {
     const overrides = window.LINKWATCH_MAP_CONFIG || {};
     return { ...DEFAULT_MAP_CONFIG, ...overrides, tileUrl: overrides.tileUrl || overrides.tileTemplate || DEFAULT_MAP_CONFIG.tileUrl };
+  }
+  function setTileAvailability(unavailable) {
+    state.tileError = unavailable;
+    const status = document.getElementById("mapTileStatus");
+    if (!status) return;
+    status.hidden = !unavailable;
+    status.textContent = unavailable ? "Подложка карты временно недоступна" : "";
   }
 
   function validCoordinate(value) {
@@ -147,11 +154,15 @@
     if (!container) {
       const mapWrap = document.getElementById("mapWrap"); if (!mapWrap) return null;
       container = document.createElement("div"); container.id = options.containerId || "leafletMap"; container.className = "leaflet-map"; container.setAttribute("role", "application"); container.setAttribute("aria-label", "Карта Восточно-Казахстанской области"); mapWrap.insertBefore(container, mapWrap.firstChild);
-      const legacyMap = mapWrap.querySelector(".vko-map"); if (legacyMap) legacyMap.hidden = true; const legacyGrid = mapWrap.querySelector(".map-gridlines"); if (legacyGrid) legacyGrid.hidden = true;
     }
     if (!container || !window.L) return null;
     state.config = mapConfig(); state.map = window.L.map(container, { attributionControl: true, zoomControl: false, minZoom: state.config.minZoom, maxZoom: state.config.maxZoom }).setView(state.config.center, state.config.zoom);
-    state.tileLayer = window.L.tileLayer(state.config.tileUrl, { attribution: state.config.attribution, maxZoom: state.config.maxZoom }).addTo(state.map);
+    state.tileLayer = window.L.tileLayer(state.config.tileUrl, { attribution: state.config.attribution, maxZoom: state.config.maxZoom });
+    if (typeof state.tileLayer.on === "function") {
+      state.tileLayer.on("tileerror", () => setTileAvailability(true));
+      state.tileLayer.on("tileload", () => setTileAvailability(false));
+    }
+    state.tileLayer.addTo(state.map);
     state.layers = { registryMarkers: [], registryClusters: layerGroup(), monitoringMarkers: [], monitoring: layerGroup() };
     if (typeof state.map.on === "function") state.map.on("zoomend", rebuildRegistryClusters);
     if (typeof window.ResizeObserver === "function") { state.resizeObserver = new window.ResizeObserver(refreshSize); state.resizeObserver.observe(container); }

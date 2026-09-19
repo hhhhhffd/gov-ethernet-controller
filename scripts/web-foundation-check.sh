@@ -30,7 +30,7 @@ const map = {
 const window = {
   L: {
     map(container, options) { calls.map += 1; map.container = container; map.options = options; return map; },
-    tileLayer(url, options) { calls.tiles += 1; map.tile = { url, options }; return { addTo() { return this; } }; },
+    tileLayer(url, options) { calls.tiles += 1; map.tile = { url, options }; return { on(name, callback) { if (name === "tileerror") map.tileError = callback; return this; }, addTo() { return this; } }; },
   },
   setTimeout(callback) { callback(); },
   LINKWATCH_MAP_CONFIG: { tileTemplate: "https://tiles.example/{z}/{x}/{y}.png" },
@@ -48,6 +48,7 @@ assert.equal(calls.tiles, 1, "tile layer must be created once");
 assert.equal(map.tile.url, "https://tiles.example/{z}/{x}/{y}.png");
 foundation.render({ mode: "historical", lineCount: 3 });
 assert.equal(calls.invalidations, 1);
+assert.equal(typeof map.tileError, "function", "tile failures must be handled by the map foundation");
 console.log("web foundation stub: PASS");
 NODE
 

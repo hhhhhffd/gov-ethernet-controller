@@ -35,10 +35,16 @@ const map = {
   invalidateSize() {},
 };
 const container = { id: "leafletMap" };
+const tileLayer = {
+  handlers: {},
+  on(name, callback) { this.handlers[name] = callback; return this; },
+  addTo() { return this; },
+};
+const tileStatus = { hidden: true, textContent: "" };
 const window = {
   L: {
     map() { return map; },
-    tileLayer() { return { addTo() { return this; } }; },
+    tileLayer() { return tileLayer; },
     layerGroup: createLayer,
     marker: createMarker,
     divIcon(options) { return options; },
@@ -47,7 +53,7 @@ const window = {
   dispatchEvent() {},
   setTimeout(callback) { callback(); },
 };
-const document = { getElementById() { return container; } };
+const document = { getElementById(id) { return id === "mapTileStatus" ? tileStatus : container; } };
 const context = vm.createContext({ window, document });
 vm.runInContext(fs.readFileSync("web/map.js", "utf8"), context);
 
@@ -64,11 +70,16 @@ const lines = [
   { id: "line-data", registryId: "school-1", registrySchool: registry.schools[0], registryCoordinate: registry.schools[0].coordinate, linkwatchStatus: "NO_DATA", latest: { download: 999 } },
   { id: "line-degraded", registryId: "school-1", registrySchool: registry.schools[0], registryCoordinate: registry.schools[0].coordinate, linkwatchStatus: "DEGRADED" },
   { id: "line-down", registryId: "school-1", registrySchool: registry.schools[0], registryCoordinate: registry.schools[0].coordinate, linkwatchStatus: "NO_INTERNET" },
-  { id: "line-pseudo", registryId: "school-3", school_name: "legacy coordinates", coordinates: [350, 170], status: "NO_INTERNET" },
+  { id: "line-no-coordinate", registryId: "school-3", school_name: "legacy coordinates", map_x: 350, map_y: 170, status: "NO_INTERNET" },
 ];
 
 const mapApi = window.LinkwatchMap;
 assert.equal(mapApi.init({ containerId: "leafletMap" }), map);
+tileLayer.handlers.tileerror();
+assert.equal(tileStatus.hidden, false, "tile failure must be visible without disabling the map");
+assert.equal(tileStatus.textContent, "Подложка карты временно недоступна");
+tileLayer.handlers.tileload();
+assert.equal(tileStatus.hidden, true, "tile status must clear after recovery");
 assert.equal(mapApi.render({ mode: "current", registry, lines }), true);
 const current = mapApi.getLastRender();
 assert.equal(current.registryMarkerCount, 3, "invalid registry coordinates must not render markers");
@@ -88,5 +99,15 @@ mapApi.render({ mode: "historical", registry, lines: lines.slice(0, 1), historic
 const historicalContext = mapApi.getMarkerContext(mapApi.getLayers().monitoring.items[0]);
 assert.equal(historicalContext.status, "UNKNOWN", "historical mode must not reuse current state");
 assert.equal(historicalContext.evidence[0].status, "UNKNOWN", "historical marker evidence must come from the historical summary");
+
+const appSource = fs.readFileSync("web/app.js", "utf8");
+const indexSource = fs.readFileSync("web/index.html", "utf8");
+const mapSource = fs.readFileSync("web/map.js", "utf8");
+assert.doesNotMatch(appSource, /map_x|map_y|index \* 59|index \* 37/, "production app must not synthesize map coordinates");
+assert.doesNotMatch(indexSource, /<svg[^>]*class=\"vko-map\"|class=\"map-gridlines\"|id=\"mapMarkers\"/, "Leaflet must be the only production map");
+assert.doesNotMatch(mapSource, /fetch\s*\(/, "markers must not issue per-school API calls");
+assert.doesNotMatch(mapSource, /permanent\s*:\s*true/, "schools must not receive permanent labels");
+assert.match(appSource, /demoMode.*URLSearchParams\(window\.location\.search\)\.get\("demo"\) === "1"/, "demo mode must be explicit");
+assert.match(appSource, /state\.lines = state\.demoMode \? sampleLines\.map\(normalizeLine\) : \[\]/, "API failure must not silently use demo lines");
 
 console.log("web map marker checks: PASS");
