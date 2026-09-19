@@ -38,6 +38,7 @@ run_psql() {
 
 stamp="$(date -u +%s)"
 device_id="p0-t020-${stamp}"
+fixture_line_id="line-99-primary"
 register_body="$tmp_dir/register.json"
 register_status="$(curl -sS -o "$register_body" -w '%{http_code}' -X POST "$base_url/api/v1/admin/devices/register" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "{\"device_id\":\"$device_id\",\"monitoring_point_id\":\"point-99-primary\",\"display_name\":\"P0 T020 fixture $stamp\",\"agent_version\":\"p0-test\"}")"
 device_token="$(sed -n 's/.*"device_token":"\([^"]*\)".*/\1/p' "$register_body")"
@@ -67,18 +68,48 @@ EOF
     record_fail "three measurement ingest accepted" "HTTP $ingest_status $(tr '\n' ' ' <"$ingest_response")"
   fi
   measured="$(run_psql "SELECT COUNT(*) FROM measurements WHERE device_id='$device_id' AND client_event_id LIKE 'p0-t020-${stamp}-%';")"
-  incident="$(run_psql "SELECT COUNT(*) FROM incidents WHERE line_id='line-99-primary' AND violation_type IN ('BASELINE_DOWNLOAD','CONTRACT_DOWNLOAD','BASELINE_UPLOAD','CONTRACT_UPLOAD','BASELINE_PING','BASELINE_PACKET_LOSS');")"
-  state="$(run_psql "SELECT data_state || '|' || contract_state FROM line_states WHERE line_id='line-99-primary';")"
+  incident="$(run_psql "SELECT COUNT(*) FROM incidents WHERE line_id='$fixture_line_id' AND violation_type IN ('BASELINE_DOWNLOAD','CONTRACT_DOWNLOAD','BASELINE_UPLOAD','CONTRACT_UPLOAD','BASELINE_PING','BASELINE_PACKET_LOSS');")"
+  incident_id="$(run_psql "SELECT id FROM incidents WHERE line_id='$fixture_line_id' AND status IN ('NEW','SENT_TO_PROVIDER','IN_PROGRESS','WAITING_INFO','RESOLVED') ORDER BY id DESC LIMIT 1;")"
+  state="$(run_psql "SELECT data_state || '|' || contract_state FROM line_states WHERE line_id='$fixture_line_id';")"
   if [[ "$measured" == "3" && "$incident" -ge 1 && "$state" == "FRESH|DEVIATES" ]]; then
     record_pass "ingest to confirmed state/incident evidence (count=3)"
   else
     record_fail "ingest to confirmed state/incident evidence" "measurements=$measured incidents=$incident state=$state"
   fi
-  closed_duration="$(run_psql "SELECT COUNT(*) FROM incidents WHERE status='CLOSED' AND duration_minutes IS NOT NULL AND duration_minutes > 0;")"
-  if [[ "$closed_duration" -ge 1 ]]; then
+
+  # A confirmed incident is not historical/closed until the real recovery
+  # policy has been satisfied. Drive that transition through authenticated
+  # ingest so this check proves persistence rather than counting an unrelated
+  # row left by another fixture.
+  recovery_0="$(date -u -d '45 seconds ago' +%Y-%m-%dT%H:%M:%SZ)"
+  recovery_1="$(date -u -d '30 seconds ago' +%Y-%m-%dT%H:%M:%SZ)"
+  recovery_2="$(date -u -d '15 seconds ago' +%Y-%m-%dT%H:%M:%SZ)"
+  recovery_body="$tmp_dir/recovery.json"
+  cat >"$recovery_body" <<EOF
+{"measurements":[
+ {"client_event_id":"p0-t020-${stamp}-recovery-1","observed_at":"$recovery_0","mode":"PERFORMANCE","download":100,"upload":100,"ping":20,"jitter":1,"packet_loss":0,"availability":100,"connection_status":"OK"},
+ {"client_event_id":"p0-t020-${stamp}-recovery-2","observed_at":"$recovery_1","mode":"PERFORMANCE","download":100,"upload":100,"ping":20,"jitter":1,"packet_loss":0,"availability":100,"connection_status":"OK"},
+ {"client_event_id":"p0-t020-${stamp}-recovery-3","observed_at":"$recovery_2","mode":"PERFORMANCE","download":100,"upload":100,"ping":20,"jitter":1,"packet_loss":0,"availability":100,"connection_status":"OK"}
+]}
+EOF
+  recovery_response="$tmp_dir/recovery-response.json"
+  recovery_status="$(curl -sS -o "$recovery_response" -w '%{http_code}' -X POST "$base_url/api/v1/agent/measurements:batch" -H "X-Device-ID: $device_id" -H "X-Device-Token: $device_token" -H 'Content-Type: application/json' --data-binary "@$recovery_body")"
+  if [[ "$recovery_status" == "200" ]] && grep -Fq '"accepted":3' "$recovery_response"; then
+    record_pass "three recovery measurements accepted"
+  else
+    record_fail "three recovery measurements accepted" "HTTP $recovery_status $(tr '\n' ' ' <"$recovery_response")"
+  fi
+
+  closed_duration=0
+  incident_state="missing"
+  if [[ "$incident_id" =~ ^[0-9]+$ ]]; then
+    incident_state="$(run_psql "SELECT status || '|' || recovery_state || '|' || COALESCE(duration_minutes::text,'NULL') FROM incidents WHERE id=$incident_id;")"
+    closed_duration="$(run_psql "SELECT COUNT(*) FROM incidents WHERE id=$incident_id AND status='CLOSED' AND recovery_state='CONFIRMED' AND closed_at IS NOT NULL AND duration_minutes IS NOT NULL AND duration_minutes > 0 AND duration_minutes = EXTRACT(EPOCH FROM (closed_at-started_at))/60;")"
+  fi
+  if [[ "$closed_duration" == "1" ]]; then
     record_pass "historical confirmed incident duration persisted"
   else
-    record_fail "historical confirmed incident duration persisted"
+    record_fail "historical confirmed incident duration persisted" "incident_id=$incident_id state=$incident_state"
   fi
 fi
 
@@ -86,7 +117,7 @@ fi
 # Ollama adapter with its unavailable local endpoint. The failure must be
 # durable and must not bypass human review/send gating.
 case_body="$tmp_dir/case.json"
-case_status="$(curl -sS -o "$case_body" -w '%{http_code}' -X POST "$base_url/api/v1/provider-cases" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d '{"line_id":"line-99-primary","comment":"P0 unavailable Ollama fixture"}')"
+case_status="$(curl -sS -o "$case_body" -w '%{http_code}' -X POST "$base_url/api/v1/provider-cases" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -d "{\"line_id\":\"$fixture_line_id\",\"comment\":\"P0 unavailable Ollama fixture\"}")"
 case_id="$(sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p' "$case_body")"
 if [[ "$case_status" != "201" || -z "$case_id" ]]; then
   record_fail "create editable ProviderCase fixture" "HTTP $case_status"

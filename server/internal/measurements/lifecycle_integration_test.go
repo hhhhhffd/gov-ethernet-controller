@@ -3,6 +3,7 @@ package measurements
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -93,8 +94,12 @@ func TestIncidentLifecycleRegressionPreservesHistoryAndCurrentState(t *testing.T
 	if incident.Status != "CLOSED" || incident.Recovery != "CONFIRMED" {
 		t.Fatalf("confirmed recovery = status %s recovery %s, want CLOSED/CONFIRMED", incident.Status, incident.Recovery)
 	}
-	if incident.Duration == nil || *incident.Duration < 0 {
-		t.Fatalf("closed incident duration = %v, want non-negative", incident.Duration)
+	if incident.ClosedAt == nil || incident.Duration == nil || *incident.Duration <= 0 {
+		t.Fatalf("closed incident duration = %v, closed_at = %v, want persisted positive duration", incident.Duration, incident.ClosedAt)
+	}
+	expectedDuration := incident.ClosedAt.Sub(incident.StartedAt).Minutes()
+	if math.Abs(*incident.Duration-expectedDuration) > 0.000001 {
+		t.Fatalf("closed incident duration = %v, want started_at to closed_at duration %v", *incident.Duration, expectedDuration)
 	}
 	recoveryEvidence := incidentEvidenceIDsFromEvent(t, db, incident.ID, "RECOVERY_CONFIRMED")
 	if len(recoveryEvidence) != 2 || recoveryEvidence[0] != lastRecovery.MeasurementID || recoveryEvidence[1] != secondRecovery.MeasurementID {
