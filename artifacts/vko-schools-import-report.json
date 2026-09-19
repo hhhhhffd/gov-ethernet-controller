@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "region": "current-vko",
+  "counters": {
+    "official_schools_total": 370,
+    "vko_schools": 370,
+    "official_coordinates": 370,
+    "matched_osm": 0,
+    "osm_only": 189,
+    "ambiguous": 0,
+    "review_required": 0,
+    "unmatched": 370,
+    "without_coordinates": 0,
+    "duplicates_removed": 2,
+    "invalid_or_outside_coordinates": 0,
+    "review_queue": 0
+  },
+  "consistency": {
+    "registry_count_matches_vko_schools": true,
+    "coordinate_partition": true,
+    "review_queue_matches_review_required": true,
+    "review_queue_matches_rendered": true
+  },
+  "sources": {
+    "official_registry": "egov-current-registry",
+    "state_coordinates": "egov-state-schools",
+    "osm": "overpass"
+  }
+}

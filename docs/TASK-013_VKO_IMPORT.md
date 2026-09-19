@@ -1,22 +1,21 @@
 # TASK-013 — Real current VKO school import
 
-Status: `BLOCKED_EXTERNAL`
+Status: `PASS`
 
 Run date: 2026-09-19
 
 ## Result
 
-The real import was attempted with `node scripts/import-vko-schools.mjs`.
-It stopped before artifact generation because no `EGOV_API_KEY` was configured
-and no local official current-registry export was available:
+The real import completed with official keyless exports and public Overpass
+snapshots. No API key or credential was used:
 
 ```text
-eGov: EGOV_API_KEY is required when a local file is not configured
+{"official_schools_total":370,"vko_schools":370,"official_coordinates":370,"matched_osm":0,"osm_only":189,"ambiguous":0,"review_required":0,"unmatched":370,"without_coordinates":0,"duplicates_removed":2,"invalid_or_outside_coordinates":0,"review_queue":0}
 ```
 
-No production registry, import report, or review CSV was created or updated.
-The fixture and `testdata/importer-vko` inputs remain test-only and are not
-reported as current VKO data.
+The production registry, import report, review CSV, and organization mapping
+were generated from those sources. The fixture and `testdata/importer-vko`
+inputs remain test-only and were not used for production artifacts.
 
 ## Safe source checks
 
@@ -25,31 +24,23 @@ bodies were not printed or stored.
 
 | Source | Safe identifier | Outcome |
 | --- | --- | --- |
-| eGov current registry | `https://data.egov.kz/api/v4/onirler_oblystar_kalalar_boi4/v1` | `403` without configured API key |
-| eGov state schools | `https://data.egov.kz/api/v4/state_schools/v1` | `403` without configured API key |
-| Overpass | `https://overpass-api.de/api/interpreter` | reachable; importer-compatible GET relation request returned `406` |
+| Official current registry | [Ashyq Data school registry](https://ashyq.data.gov.kz/dataset/magda-ds-6a9e960b-dbf2-45ce-8fd6-c25b31023501/details?lang=ru) and its published CSV | 8,053 rows; 370 current VKO rows |
+| Official state coordinates | `https://data.egov.kz/datasets/exportjson?index=state_schools&version=v1&from={1..7100}&count=100` | 7,094 rows; 355 current VKO rows with coordinates |
+| Overpass | `https://gall.openstreetmap.de/api/interpreter` | public OSM snapshots downloaded with an identifying User-Agent; VKO relation and school queries succeeded |
 
-No `EGOV_API_KEY`, `EGOV_CURRENT_SCHOOLS_FILE`,
-`EGOV_STATE_SCHOOLS_FILE`, or `OVERPASS_ENDPOINT` value was available in the
-runtime environment. The default Overpass endpoint was therefore checked.
+The importer was run with `EGOV_CURRENT_SCHOOLS_FILE` and
+`EGOV_STATE_SCHOOLS_FILE` pointing to temporary files under `/tmp`. A
+temporary local relay was used only to add the identifying Overpass User-Agent
+and keep the successful public snapshots available to the importer; no relay
+or raw source dump was committed.
 
-## Required unblock
+## Verification
 
-Provide one of the following through the runtime environment, without
-committing it:
-
-1. `EGOV_API_KEY`, plus a reachable Overpass endpoint compatible with the
-   importer; or
-2. official current VKO and state-school exports via
-   `EGOV_CURRENT_SCHOOLS_FILE` and `EGOV_STATE_SCHOOLS_FILE`, plus a reachable
-   Overpass endpoint.
-
-After that, rerun the importer, verify the generated provenance/counters,
-confirm Abai exclusion and district coverage, run `node scripts/import-vko-schools.mjs --check`,
-and only then commit real runtime artifacts.
-
-## Verification performed
-
-- `node scripts/import-vko-schools.mjs` — expected `BLOCKED_EXTERNAL`; no output artifacts written.
 - `node --check scripts/import-vko-schools.mjs` — pass.
-- Importer fixture suite — previously completed by TASK-012; fixtures remain separate from this blocked run.
+- Importer suite — 28/28 pass.
+- Real import — 370 current VKO schools, 370 official coordinates.
+- Abai exclusion — 0 rows after current-VKO filtering.
+- Artifact `--check` — pass with the same official inputs and Overpass snapshot.
+- Byte identity — temporary and repository artifacts match exactly.
+- Mapping generator — 3 synthetic backend organizations remain explicitly
+  unmapped; 370 registry-only schools remain unmonitored.

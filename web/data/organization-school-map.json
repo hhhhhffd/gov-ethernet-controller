@@ -7,9 +7,9 @@
   "provenance": {
     "organizations_input": "scripts/fixtures/organization-school-map/demo-organizations.json",
     "registry_input": "web/data/vko-schools.json",
-    "registry_available": false,
-    "registry_schema_version": null,
-    "registry_source": "unavailable; no official generated registry artifact",
+    "registry_available": true,
+    "registry_schema_version": 1,
+    "registry_source": "vko-schools-import-artifact",
     "organization_source": "server/internal/admin/seed.go",
     "generated_at": "omitted to keep artifact deterministic"
   },
@@ -25,7 +25,7 @@
     "unknown_registry": "reject"
   },
   "disclosure": {
-    "geography_status": "registry-not-available",
+    "geography_status": "registry-backed-or-review",
     "measurements_status": "synthetic-development-fixture",
     "registry_coordinates_are_authoritative": true,
     "synthetic_seed_coordinates_must_not_be_used_as_registry_coordinates": true,
@@ -37,15 +37,15 @@
     "auto_mapped": 0,
     "review_required": 0,
     "unmapped": 3,
-    "registry_schools": 0,
-    "registry_only_unmonitored": 0
+    "registry_schools": 370,
+    "registry_only_unmonitored": 370
   },
   "entries": [
     {
       "organization_id": "org-07",
       "registry_id": null,
       "confidence": 0,
-      "match_method": "registry_unavailable",
+      "match_method": "no_exact_match",
       "match_status": "UNMAPPED",
       "review_required": false,
       "evidence": [],
@@ -94,7 +94,7 @@
       "organization_id": "org-42",
       "registry_id": null,
       "confidence": 0,
-      "match_method": "registry_unavailable",
+      "match_method": "no_exact_match",
       "match_status": "UNMAPPED",
       "review_required": false,
       "evidence": [],
@@ -160,7 +160,7 @@
       "organization_id": "org-99",
       "registry_id": null,
       "confidence": 0,
-      "match_method": "registry_unavailable",
+      "match_method": "no_exact_match",
       "match_status": "UNMAPPED",
       "review_required": false,
       "evidence": [],
@@ -206,5 +206,2226 @@
       }
     }
   ],
-  "registry_only": []
+  "registry_only": [
+    {
+      "registry_id": "16270",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16280",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16282",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16290",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16292",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16364",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16374",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16382",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16383",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16400",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16418",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16433",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16437",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16439",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16455",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16461",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16479",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16480",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16498",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16504",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16505",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16507",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16509",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16533",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16536",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16539",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16549",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16560",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16562",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16564",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16568",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16570",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16593",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16595",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16604",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16617",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16623",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16625",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16627",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16643",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16646",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16653",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16658",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16679",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16682",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16684",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16693",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16699",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16704",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16728",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16730",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16739",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16753",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16758",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16785",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16786",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16789",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16808",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16819",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16824",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16831",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16842",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16854",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16856",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16867",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16868",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16872",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16877",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16884",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16888",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16893",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16898",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16909",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16919",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16920",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16922",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16924",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16926",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16929",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16946",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16948",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16949",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16956",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16958",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16959",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16964",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16971",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16983",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16984",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16989",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16997",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16999",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17001",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17008",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17027",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17031",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17038",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17041",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17045",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17047",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17057",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17067",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17074",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17079",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17091",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17101",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17108",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17111",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17126",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17128",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17149",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17155",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17159",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17164",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17171",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17175",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17192",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17205",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17208",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17213",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17214",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17219",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17227",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17228",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17231",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17259",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17262",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17268",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17270",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17274",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17276",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17277",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17280",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17283",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17302",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17304",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17318",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17320",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17322",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17325",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17330",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17338",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17354",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17360",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17362",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17369",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17378",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17382",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17393",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17398",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17410",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17413",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17423",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17427",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17433",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17434",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17449",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17477",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17489",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17496",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17501",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17512",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17514",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17533",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17540",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17542",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17548",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17557",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17558",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17586",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17597",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17598",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17599",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17608",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17615",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17616",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17632",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17638",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17642",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17655",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17667",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17674",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17675",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17685",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17691",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17720",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17724",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17731",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17740",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17751",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17752",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17762",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17763",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17779",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17782",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17791",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17792",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17793",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17803",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17812",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17821",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17822",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17824",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17826",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17831",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17844",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17845",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17854",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17857",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17872",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17873",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17879",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17882",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17893",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17894",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17895",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17899",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17900",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17902",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17916",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17917",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17933",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17937",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17939",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17941",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17959",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17962",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17963",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17969",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17970",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17971",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17972",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17978",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17992",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "17999",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18002",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18009",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18011",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18019",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18022",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18023",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18030",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18040",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18052",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18057",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18058",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18060",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18065",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18073",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18074",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18075",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18093",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18095",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18097",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18107",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18110",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18115",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18126",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18146",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18158",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18161",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18163",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18164",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18165",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18168",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18170",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18171",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18191",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18193",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18196",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18200",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18203",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18205",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18207",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18245",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18255",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18267",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18268",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18271",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18278",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18292",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18300",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18301",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18304",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18305",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18308",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18311",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18322",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18353",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18358",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18368",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18373",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18374",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18379",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18383",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18392",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18394",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18395",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18400",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18411",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18412",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18415",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18419",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18426",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18435",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18445",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18446",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18461",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18462",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18467",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18470",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18477",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18497",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18503",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18505",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18506",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18527",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18534",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18537",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18550",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18551",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18558",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18561",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18571",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18578",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18583",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18585",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18597",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18603",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18605",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18608",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18617",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18618",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18637",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18638",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18658",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18665",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18677",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18687",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18715",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18743",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18778",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18817",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18840",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18875",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18909",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "18998",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "19014",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "19034",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "19053",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "19071",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "19077",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "19081",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "19084",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "19086",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "19087",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "23886",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "24702",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "26931",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "27192",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "28322",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "29723",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "30367",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "30925",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "30926",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "30927",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "31092",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "31135",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "31257",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "31417",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    }
+  ]
 }
