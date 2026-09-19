@@ -39,6 +39,12 @@ run_go_test() {
 cd "$repo_dir"
 mkdir -p "$go_path" "$go_cache" "$go_mod_cache"
 
+if node --check web/app.js; then
+  record_pass "frontend JavaScript syntax"
+else
+  record_fail "frontend JavaScript syntax"
+fi
+
 run_go_test \
   "evaluation axes, snapshots, NO_DATA/NO_INTERNET and SUSPECT semantics" \
   -race -count=1 \
