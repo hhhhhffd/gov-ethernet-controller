@@ -1,0 +1,84 @@
+{
+  "data": [
+    {
+      "school_id": "fixture-id-001",
+      "bin": "111111111111",
+      "name_full_ru": "Средняя школа № 1",
+      "name_full_kk": "№ 1 орта мектебі",
+      "legal_address_ru": "ул. Абая, 1",
+      "region_name": "Восточно-Казахстанская область",
+      "district_name": "Уланский район",
+      "city_name": "с. Таврическое",
+      "status": "Действует"
+    },
+    {
+      "school_id": "fixture-exact-002",
+      "bin": "222222222222",
+      "name_full_ru": "Школа точного имени",
+      "name_full_kk": "Дәл атаулы мектеп",
+      "legal_address_ru": "ул. Центральная, 2",
+      "region_name": "Шығыс Қазақстан облысы",
+      "district_name": "Уланский район",
+      "city_name": "с. Таврическое",
+      "status": "active"
+    },
+    {
+      "school_id": "fixture-boundary-075",
+      "bin": "333333333333",
+      "name_full_ru": "Школа Северная Восточная",
+      "legal_address_ru": "ул. Северная, 3",
+      "region_name": "63",
+      "district_name": "Уланский район",
+      "city_name": "с. Таврическое",
+      "status": "active"
+    },
+    {
+      "school_id": "fixture-boundary-090",
+      "bin": "444444444444",
+      "name_full_ru": "Школа Центральная",
+      "legal_address_ru": "ул. Центральная, 4",
+      "region_name": "ВКО",
+      "latitude": 50.4004,
+      "longitude": 82.4004,
+      "district_name": "Уланский район",
+      "city_name": "с. Таврическое",
+      "status": "active"
+    },
+    {
+      "school_id": "fixture-ambiguous-005",
+      "bin": "555555555555",
+      "name_full_ru": "Школа для проверки",
+      "legal_address_ru": "ул. Проверочная, 5",
+      "region_name": "East Kazakhstan Region",
+      "district_name": "Уланский район",
+      "city_name": "с. Таврическое",
+      "status": "active"
+    },
+    {
+      "school_id": "fixture-no-coordinate-006",
+      "bin": "666666666666",
+      "name_full_ru": "Школа без координат",
+      "legal_address_ru": "ул. Безымянная, 6",
+      "region_name": "ВКО",
+      "district_name": "Уланский район",
+      "city_name": "с. Таврическое",
+      "status": "active"
+    },
+    {
+      "school_id": "fixture-abai-007",
+      "bin": "777777777777",
+      "name_full_ru": "Школа Абай",
+      "legal_address_ru": "ул. Абая, 7",
+      "region_name": "Абайская область",
+      "status": "active"
+    },
+    {
+      "school_id": "fixture-closed-008",
+      "bin": "888888888888",
+      "name_full_ru": "Закрытая школа",
+      "legal_address_ru": "ул. Закрытая, 8",
+      "region_name": "East Kazakhstan Region",
+      "status": "closed"
+    }
+  ]
+}

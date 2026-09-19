@@ -1,0 +1,122 @@
+{
+  "elements": [
+    {
+      "type": "node",
+      "id": 910001,
+      "lat": 50.1001,
+      "lon": 82.1001,
+      "tags": {
+        "amenity": "school",
+        "name": "Средняя школа № 1",
+        "ref": "fixture-id-001",
+        "addr:street": "Абая",
+        "addr:housenumber": "1"
+      }
+    },
+    {
+      "type": "node",
+      "id": 910002,
+      "lat": 50.2002,
+      "lon": 82.2002,
+      "tags": {
+        "amenity": "school",
+        "name": "Школа точного имени",
+        "addr:city": "Таврическое",
+        "addr:district": "Уланский район",
+        "addr:street": "Центральная",
+        "addr:housenumber": "2"
+      }
+    },
+    {
+      "type": "node",
+      "id": 910003,
+      "lat": 50.3003,
+      "lon": 82.3003,
+      "tags": {
+        "amenity": "school",
+        "name": "Школа Северная Западная",
+        "addr:city": "Таврическое",
+        "addr:district": "Уланский район"
+      }
+    },
+    {
+      "type": "node",
+      "id": 910004,
+      "lat": 50.4004,
+      "lon": 82.4004,
+      "tags": {
+        "amenity": "school",
+        "name": "Shkola Tsentralnaya",
+        "addr:city": "Таврическое",
+        "addr:district": "Уланский район"
+      }
+    },
+    {
+      "type": "node",
+      "id": 910005,
+      "lat": 50.5005,
+      "lon": 82.5005,
+      "tags": {
+        "amenity": "school",
+        "name": "Школа для проверки",
+        "addr:city": "Таврическое",
+        "addr:district": "Уланский район"
+      }
+    },
+    {
+      "type": "way",
+      "id": 910006,
+      "center": { "lat": 50.50051, "lon": 82.50051 },
+      "tags": {
+        "amenity": "school",
+        "name": "Школа для проверки",
+        "addr:city": "Таврическое",
+        "addr:district": "Уланский район"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 910007,
+      "center": { "lat": 50.50052, "lon": 82.50052 },
+      "tags": {
+        "amenity": "school",
+        "name": "Школа для проверки",
+        "addr:city": "Таврическое",
+        "addr:district": "Уланский район"
+      }
+    },
+    {
+      "type": "node",
+      "id": 910010,
+      "lat": 50.502,
+      "lon": 82.502,
+      "tags": {
+        "amenity": "school",
+        "name": "Школа для проверки",
+        "addr:city": "Таврическое",
+        "addr:district": "Уланский район"
+      }
+    },
+    {
+      "type": "node",
+      "id": 910008,
+      "lat": 49.1001,
+      "lon": 79.1001,
+      "tags": {
+        "amenity": "school",
+        "name": "Школа Абай",
+        "addr:state": "Абайская область"
+      }
+    },
+    {
+      "type": "node",
+      "id": 910009,
+      "lat": 50.6006,
+      "lon": 82.6006,
+      "tags": {
+        "amenity": "school",
+        "name": "OSM only fixture school"
+      }
+    }
+  ]
+}

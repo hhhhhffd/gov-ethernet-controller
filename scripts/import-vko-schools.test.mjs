@@ -21,7 +21,9 @@ import {
   normalizeAddress,
   normalizeCurrentRegistryRows,
   normalizeName,
+  normalizeLocality,
   normalizeStateSchoolRows,
+  normalizeOverpassSchools,
   parseSourceText,
   resolveSchoolCoordinate,
   selectCurrentVkoRelation,
@@ -31,9 +33,36 @@ import {
 } from "./import-vko-schools.mjs";
 
 const fixtureDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "import-vko");
+const authoritativeFixtureDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "testdata", "importer-vko");
 
 async function fixture(name) {
   return readFile(path.join(fixtureDirectory, name), "utf8");
+}
+
+async function authoritativeFixture(name) {
+  return readFile(path.join(authoritativeFixtureDirectory, name), "utf8");
+}
+
+async function authoritativeSnapshot() {
+  const currentRows = parseSourceText(
+    await authoritativeFixture("egov-schools.json"),
+    "authoritative eGov fixture",
+  );
+  const stateRows = parseSourceText(
+    await authoritativeFixture("state-schools.json"),
+    "authoritative state-schools fixture",
+  );
+  const relations = JSON.parse(await authoritativeFixture("overpass-relations.json"));
+  const schools = JSON.parse(await authoritativeFixture("overpass-schools.json"));
+  const relation = selectCurrentVkoRelation(relations);
+  return createImportSnapshot({
+    currentRows,
+    stateRows,
+    overpass: {
+      relation: { id: relation.id, tags: relation.tags },
+      schools: normalizeOverpassSchools(schools),
+    },
+  });
 }
 
 test("JSON API and local CSV inputs normalize equivalently", async () => {
@@ -352,7 +381,7 @@ function artifactSnapshot() {
   };
 }
 
-test("artifact builder emits registry provenance, consistent counters, and empty review queue", () => {
+test("artifact builder emits registry provenance, consistent counters, and missing-coordinate review queue", () => {
   const artifacts = buildImportArtifacts({ snapshot: artifactSnapshot() });
   assert.equal(artifacts.registry.schools.length, 2);
   assert.deepEqual(Object.keys(artifacts.registry.schools[0]).sort(), [
@@ -366,10 +395,12 @@ test("artifact builder emits registry provenance, consistent counters, and empty
   assert.equal(artifacts.report.counters.matched_osm, 1);
   assert.equal(artifacts.report.counters.osm_only, 1);
   assert.equal(artifacts.report.counters.without_coordinates, 1);
+  assert.equal(artifacts.report.counters.review_queue, 1);
   assert.equal(artifacts.report.counters.duplicates_removed, 0);
   assert.equal(artifacts.report.consistency.coordinate_partition, true);
+  assert.equal(artifacts.report.consistency.review_queue_matches_rendered, true);
   assert.match(artifacts.reviewCsv, /^registry_id,official_name,/);
-  assert.equal(artifacts.reviewCsv.trimEnd().split("\n").length, 1);
+  assert.match(artifacts.reviewCsv, /vko-002/);
 });
 
 function ambiguousSnapshot() {
@@ -514,6 +545,191 @@ test("main --check validates fixture inputs without writing artifacts", async ()
     await main(paths, env, fetchImpl);
     overpassCalls = 0;
     await main([...paths, "--check"], env, fetchImpl);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("authoritative fixtures cover identity, bilingual normalization, geography, and exclusions", async () => {
+  const snapshot = await authoritativeSnapshot();
+  const current = snapshot.current_schools;
+  assert.deepEqual(current.map((school) => school.school_id), [
+    "fixture-id-001",
+    "fixture-exact-002",
+    "fixture-boundary-075",
+    "fixture-boundary-090",
+    "fixture-ambiguous-005",
+    "fixture-no-coordinate-006",
+  ]);
+
+  const official = current[0];
+  assert.equal(official.name, "Средняя школа № 1");
+  assert.equal(official.name_kk, "№ 1 орта мектебі");
+  assert.equal(normalizeName(official.name), "средняя школа number 1");
+  assert.equal(normalizeName(official.name_kk), "number 1 орта мектебі");
+  assert.equal(normalizeName("No 1 orta mektebi"), "number 1 orta mektebi");
+  assert.equal(normalizeAddress(official.address), "улица абая 1");
+  assert.equal(official.locality, "с. Таврическое");
+  assert.equal(normalizeLocality(official.locality), normalizeName("Таврическое"));
+
+  assert.equal(snapshot.overpass.relation.id, 900002);
+  assert.equal(snapshot.overpass.schools.some((school) => school.name === "Школа Абай"), true);
+  assert.equal(snapshot.current_schools.some((school) => school.school_id === "fixture-abai-007"), false);
+  assert.equal(snapshot.current_schools.some((school) => school.school_id === "fixture-closed-008"), false);
+});
+
+test("authoritative fixture artifacts preserve match boundaries, provenance, review cases, and counters", async () => {
+  const snapshot = await authoritativeSnapshot();
+  const boundary = JSON.parse(await authoritativeFixture("boundary.json"));
+  const artifacts = buildImportArtifacts({ snapshot, boundary });
+  const byId = new Map(artifacts.registry.schools.map((school) => [school.registry_id, school]));
+  const matchesById = new Map(artifacts.matches.map((match) => [match.registry.school_id, match]));
+
+  assert.equal(byId.get("fixture-id-001").match_method, "official_id");
+  assert.equal(matchesById.get("fixture-id-001").match_status, "AUTO_MATCH");
+  assert.equal(byId.get("fixture-id-001").identity_source, "egov-current-registry");
+  assert.equal(byId.get("fixture-id-001").coordinate_source, "official");
+  assert.equal(byId.get("fixture-id-001").official_name, "Средняя школа № 1");
+  assert.equal(byId.get("fixture-id-001").locality, "с. Таврическое");
+  assert.equal(byId.get("fixture-id-001").address, "ул. Абая, 1");
+
+  assert.equal(byId.get("fixture-boundary-075").confidence, 0.75);
+  assert.equal(byId.get("fixture-boundary-075").match_method, "fuzzy_name_area");
+  assert.equal(matchesById.get("fixture-boundary-075").match_status, "REVIEW_REQUIRED");
+  assert.equal(byId.get("fixture-boundary-075").coordinate_source, null);
+  assert.equal(byId.get("fixture-boundary-090").confidence, 0.9);
+  assert.equal(byId.get("fixture-boundary-090").match_method, "transliterated_name_area");
+  assert.equal(matchesById.get("fixture-boundary-090").match_status, "AUTO_MATCH");
+  assert.equal(byId.get("fixture-boundary-090").coordinate_source, "official");
+  assert.equal(matchesById.get("fixture-ambiguous-005").match_status, "REVIEW_REQUIRED");
+  assert.equal(matchesById.get("fixture-ambiguous-005").ambiguous, true);
+  assert.equal(matchesById.get("fixture-no-coordinate-006").match_status, "UNMATCHED");
+
+  assert.equal(artifacts.report.counters.duplicates_removed, 2);
+  assert.equal(artifacts.report.counters.ambiguous, 1);
+  assert.equal(artifacts.report.counters.review_required, 2);
+  assert.equal(artifacts.report.counters.unmatched, 1);
+  assert.equal(artifacts.report.counters.without_coordinates, 3);
+  assert.equal(artifacts.report.counters.invalid_or_outside_coordinates, 1);
+  assert.equal(artifacts.report.counters.review_queue, 3);
+  assert.equal(artifacts.report.consistency.coordinate_partition, true);
+  assert.equal(artifacts.report.consistency.review_queue_matches_review_required, true);
+  assert.equal(artifacts.report.consistency.review_queue_matches_rendered, true);
+  assert.match(artifacts.reviewCsv, /fixture-ambiguous-005/);
+  assert.match(artifacts.reviewCsv, /fixture-boundary-075/);
+  assert.match(artifacts.reviewCsv, /fixture-no-coordinate-006/);
+  assert.match(artifacts.reviewCsv, /official_coordinate_outside_vko/);
+  assert.match(artifacts.reviewCsv, /missing_valid_coordinate/);
+
+  const overrideArtifacts = buildImportArtifacts({
+    snapshot,
+    boundary,
+    reviewedOverrides: [{
+      registry_id: "fixture-ambiguous-005",
+      latitude: 50.7,
+      longitude: 82.7,
+      reviewed: true,
+      provenance: "authoritative-review-fixture",
+    }],
+  });
+  const overridden = overrideArtifacts.registry.schools.find((school) => school.registry_id === "fixture-ambiguous-005");
+  assert.equal(overridden.coordinate_source, "reviewed_override");
+  assert.equal(overridden.coordinate_provenance, "authoritative-review-fixture");
+});
+
+test("authoritative fixture local files and API adapters are equivalent", async () => {
+  const currentJson = await authoritativeFixture("egov-schools.json");
+  const stateJson = await authoritativeFixture("state-schools.json");
+  const relationsJson = await authoritativeFixture("overpass-relations.json");
+  const schoolsJson = await authoritativeFixture("overpass-schools.json");
+  const currentFile = path.join(authoritativeFixtureDirectory, "egov-schools.json");
+  const stateFile = path.join(authoritativeFixtureDirectory, "state-schools.json");
+  const createFetch = () => {
+    let overpassCall = 0;
+    return async (url) => {
+      let body;
+      if (url.includes("onirler_oblystar_kalalar_boi4")) body = currentJson;
+      else if (url.includes("state_schools")) body = stateJson;
+      else body = overpassCall++ === 0 ? relationsJson : schoolsJson;
+      return { ok: true, status: 200, text: async () => body };
+    };
+  };
+  const apiSources = await loadImportSources({
+    env: { EGOV_API_KEY: "fixture-key", OVERPASS_ENDPOINT: "https://overpass.test/api/interpreter" },
+    fetchImpl: createFetch(),
+  });
+  const fileSources = await loadImportSources({
+    env: {
+      EGOV_CURRENT_SCHOOLS_FILE: currentFile,
+      EGOV_STATE_SCHOOLS_FILE: stateFile,
+      OVERPASS_ENDPOINT: "https://overpass.test/api/interpreter",
+    },
+    fetchImpl: createFetch(),
+  });
+  assert.deepEqual(apiSources.currentRows, fileSources.currentRows);
+  assert.deepEqual(apiSources.stateRows, fileSources.stateRows);
+  assert.deepEqual(apiSources.overpass, fileSources.overpass);
+});
+
+test("CLI --check accepts authoritative local fixture paths without credentials", async () => {
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "vko-authoritative-check-"));
+  try {
+    const relationsJson = await authoritativeFixture("overpass-relations.json");
+    const schoolsJson = await authoritativeFixture("overpass-schools.json");
+    let overpassCalls = 0;
+    const fetchImpl = async () => ({
+      ok: true,
+      status: 200,
+      text: async () => (overpassCalls++ === 0 ? relationsJson : schoolsJson),
+    });
+    const env = {
+      EGOV_CURRENT_SCHOOLS_FILE: path.join(authoritativeFixtureDirectory, "egov-schools.json"),
+      EGOV_STATE_SCHOOLS_FILE: path.join(authoritativeFixtureDirectory, "state-schools.json"),
+      OVERPASS_ENDPOINT: "https://overpass.test/api/interpreter",
+    };
+    const args = [
+      "--registry-output", path.join(temporaryDirectory, "registry.json"),
+      "--report-output", path.join(temporaryDirectory, "report.json"),
+      "--review-output", path.join(temporaryDirectory, "review.csv"),
+      "--overrides", path.join(temporaryDirectory, "missing-overrides.json"),
+      "--boundary", path.join(authoritativeFixtureDirectory, "boundary.json"),
+    ];
+    await main(args, env, fetchImpl);
+    overpassCalls = 0;
+    await main([...args, "--check"], env, fetchImpl);
+  } finally {
+    await rm(temporaryDirectory, { recursive: true, force: true });
+  }
+});
+
+test("authoritative fixture artifacts are byte-identical across independent runs and --check", async () => {
+  const snapshot = await authoritativeSnapshot();
+  const boundary = JSON.parse(await authoritativeFixture("boundary.json"));
+  const firstArtifacts = buildImportArtifacts({ snapshot, boundary });
+  const secondArtifacts = buildImportArtifacts({ snapshot, boundary });
+  const temporaryDirectory = await mkdtemp(path.join(os.tmpdir(), "vko-authoritative-"));
+  try {
+    const firstPaths = {
+      registryPath: path.join(temporaryDirectory, "first-registry.json"),
+      reportPath: path.join(temporaryDirectory, "first-report.json"),
+      reviewPath: path.join(temporaryDirectory, "first-review.csv"),
+    };
+    const secondPaths = {
+      registryPath: path.join(temporaryDirectory, "second-registry.json"),
+      reportPath: path.join(temporaryDirectory, "second-report.json"),
+      reviewPath: path.join(temporaryDirectory, "second-review.csv"),
+    };
+    await writeImportArtifacts(firstArtifacts, firstPaths);
+    await writeImportArtifacts(secondArtifacts, secondPaths);
+    for (const [firstPath, secondPath] of [
+      [firstPaths.registryPath, secondPaths.registryPath],
+      [firstPaths.reportPath, secondPaths.reportPath],
+      [firstPaths.reviewPath, secondPaths.reviewPath],
+    ]) {
+      assert.equal(await readFile(firstPath, "utf8"), await readFile(secondPath, "utf8"));
+    }
+    await checkImportArtifacts(firstArtifacts, firstPaths);
+    await checkImportArtifacts(secondArtifacts, secondPaths);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true });
   }

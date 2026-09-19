@@ -1,0 +1,49 @@
+{
+  "data": [
+    {
+      "id": "fixture-id-001",
+      "name": "Средняя школа № 1",
+      "address": "ул. Абая, 1",
+      "region": "63",
+      "latitude": 50.1001,
+      "longitude": 82.1001,
+      "status": "active"
+    },
+    {
+      "id": "fixture-exact-002",
+      "name": "Школа точного имени",
+      "address": "ул. Центральная, 2",
+      "region": "Восточно-Казахстанская область",
+      "latitude": 50.2002,
+      "longitude": 82.2002,
+      "status": "active"
+    },
+    {
+      "id": "fixture-boundary-075",
+      "name": "Школа Северная Восточная",
+      "address": "ул. Северная, 3",
+      "region": "ВКО",
+      "latitude": 49.2,
+      "longitude": 82.3,
+      "status": "active"
+    },
+    {
+      "id": "fixture-boundary-090",
+      "name": "Школа Центральная",
+      "address": "ул. Центральная, 4",
+      "region": "ВКО",
+      "latitude": 50.4,
+      "longitude": 82.4,
+      "status": "active"
+    },
+    {
+      "id": "fixture-abai-007",
+      "name": "Школа Абай",
+      "address": "ул. Абая, 7",
+      "region": "KZ-10",
+      "latitude": 49.1,
+      "longitude": 79.1,
+      "status": "active"
+    }
+  ]
+}

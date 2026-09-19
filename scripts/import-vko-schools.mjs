@@ -921,9 +921,15 @@ const REVIEW_CSV_HEADERS = [
   "confidence", "match_method", "review_reasons", "candidate_count", "candidate_osm_ids",
 ];
 
+function isReviewQueueMatch(match) {
+  return match.match_status === "REVIEW_REQUIRED"
+    || match.ambiguous
+    || (match.review_reasons ?? []).length > 0;
+}
+
 export function renderReviewCsv(matches) {
   const rows = matches
-    .filter((match) => match.match_status === "REVIEW_REQUIRED" || match.ambiguous)
+    .filter(isReviewQueueMatch)
     .sort((left, right) => registryIdFor(left.registry).localeCompare(registryIdFor(right.registry), "en"))
     .map((match) => [
       registryIdFor(match.registry),
@@ -981,14 +987,18 @@ export function buildImportArtifacts({ snapshot, reviewedOverrides, boundary } =
     without_coordinates: schools.filter((school) => school.latitude === null || school.longitude === null).length,
     duplicates_removed: resolvedMatches.duplicates.length,
     invalid_or_outside_coordinates: countInvalidCoordinates(resolvedMatches.matches),
+    review_queue: resolvedMatches.matches.filter(isReviewQueueMatch).length,
   };
+  const reviewQueueMatches = resolvedMatches.matches.filter(isReviewQueueMatch);
+  const reviewRequiredMatches = resolvedMatches.matches.filter((match) => match.match_status === "REVIEW_REQUIRED");
   const consistency = {
     registry_count_matches_vko_schools: counters.vko_schools === schools.length,
     coordinate_partition: counters.official_coordinates
       + schools.filter((school) => school.coordinate_source === "osm").length
       + schools.filter((school) => school.coordinate_source === "reviewed_override").length
       + counters.without_coordinates === counters.vko_schools,
-    review_queue_matches_review_required: renderReviewCsv(resolvedMatches.matches).trimEnd().split("\n").length - 1 === counters.review_required,
+    review_queue_matches_review_required: reviewRequiredMatches.every((match) => reviewQueueMatches.includes(match)),
+    review_queue_matches_rendered: renderReviewCsv(resolvedMatches.matches).trimEnd().split("\n").length - 1 === counters.review_queue,
   };
   if (!Object.values(consistency).every(Boolean)) {
     throw new ImportInputError("artifacts", "generated artifact counters are inconsistent");
