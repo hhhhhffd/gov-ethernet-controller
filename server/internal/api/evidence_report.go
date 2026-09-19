@@ -42,7 +42,7 @@ func renderEvidenceReport(rows []reportRow, metadata evidenceReportMetadata) (st
 	}
 	var body strings.Builder
 	write := func(value string) { body.WriteString(html.EscapeString(value)) }
-	body.WriteString("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">")
+	body.WriteString("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"historical_only\" content=\"true\">")
 	body.WriteString("<meta name=\"generator\" content=\"Linkwatch evidence report ")
 	write(metadata.TemplateVersion)
 	body.WriteString("\"><title>Linkwatch evidence report</title><style>")

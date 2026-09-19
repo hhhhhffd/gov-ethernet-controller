@@ -38,7 +38,7 @@ func TestRenderEvidenceReportExplicitNoData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, `data-state="NO_DATA"`) || !strings.Contains(content, "UNKNOWN") {
+	if !strings.Contains(content, `data-state="NO_DATA"`) || !strings.Contains(content, "UNKNOWN") || !strings.Contains(content, `name="historical_only" content="true"`) {
 		t.Fatal("NO_DATA/UNKNOWN state is not explicit")
 	}
 }
