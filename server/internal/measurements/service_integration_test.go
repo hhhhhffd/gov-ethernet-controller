@@ -182,6 +182,7 @@ func createMeasurementIntegrationFixture(t *testing.T, db *database.DB, contract
 		deviceID:       prefix + "-device",
 	}
 	now := time.Now().UTC().Truncate(time.Second)
+	validFrom := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	exec := func(query string, args ...interface{}) {
 		t.Helper()
 		if _, err := db.Pool.Exec(context.Background(), query, args...); err != nil {
@@ -194,9 +195,9 @@ func createMeasurementIntegrationFixture(t *testing.T, db *database.DB, contract
 	exec(`INSERT INTO lines(id,organization_id,provider_id,role,technology,status,created_at) VALUES ($1,$2,$3,'PRIMARY','FIBER','ACTIVE',$4)`, fixture.lineID, fixture.organizationID, fixture.providerID, now)
 	exec(`INSERT INTO monitoring_points(id,line_id,location,is_primary,created_at) VALUES ($1,$2,'integration',TRUE,$3)`, fixture.pointID, fixture.lineID, now)
 	exec(`INSERT INTO devices(id,monitoring_point_id,auth_token_hash,created_at) VALUES ($1,$2,'integration-test',$3)`, fixture.deviceID, fixture.pointID, now)
-	exec(`INSERT INTO line_context_versions(line_id,provider_id,technology,role,valid_from,version,reason,changed_by,created_at) VALUES ($1,$2,'FIBER','PRIMARY',$3,1,'integration fixture','integration-test',$3)`, fixture.lineID, fixture.providerID, now)
-	exec(`INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,confirm_duration_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ('LINE',$1,$2,1,20,20,100,30,2,99,3,0,NULL,$3,0,86400,'integration-test',$2)`, fixture.lineID, now, recoveryCount)
-	exec(`INSERT INTO contract_versions(line_id,valid_from,contract_no,contract_date,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,created_by,created_at) VALUES ($1,$2,$3,$2,NULL,$4,NULL,NULL,NULL,NULL,'integration-test',$2)`, fixture.lineID, now, prefix+"-contract", contractUploadMinimum)
+	exec(`INSERT INTO line_context_versions(line_id,provider_id,technology,role,valid_from,version,reason,changed_by,created_at) VALUES ($1,$2,'FIBER','PRIMARY',$3,1,'integration fixture','integration-test',$4)`, fixture.lineID, fixture.providerID, validFrom, now)
+	exec(`INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,confirm_duration_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ('LINE',$1,$2,1,20,20,100,30,2,99,3,0,NULL,$3,0,86400,'integration-test',$4)`, fixture.lineID, validFrom, recoveryCount, now)
+	exec(`INSERT INTO contract_versions(line_id,valid_from,contract_no,contract_date,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,created_by,created_at) VALUES ($1,$2,$3,$2,NULL,$4,NULL,NULL,NULL,NULL,'integration-test',$5)`, fixture.lineID, validFrom, prefix+"-contract", contractUploadMinimum, now)
 	return fixture
 }
 
