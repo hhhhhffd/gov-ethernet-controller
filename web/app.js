@@ -1,7 +1,7 @@
 import { createApiClient } from "./core/api.mjs";
 import { createCapabilityState } from "./core/capabilities.mjs";
 import { createI18n } from "./core/i18n.mjs";
-import { escapeHtml, formatDate, formatNumber, humanRole, humanStatus, statusPresentation } from "./core/presentation.mjs";
+import { escapeHtml, formatDate, formatNumber, humanRole, humanStatus, humanUserRole, statusPresentation } from "./core/presentation.mjs";
 import { createShellRouter } from "./core/router.mjs";
 import { createSession } from "./core/session.mjs";
 import { createThemeState } from "./core/theme.mjs";
@@ -15,7 +15,7 @@ import { createProviderCaseBoundary } from "./features/provider-case.mjs";
 import { createReportsBoundary } from "./features/reports.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
-const state = { capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, mapLoaded: false, mapLoadPromise: null, toastTimer: null };
+const state = { capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null };
 
 let session;
 const api = createApiClient({
@@ -49,15 +49,23 @@ const boundaries = {
   audit: createAuditBoundary(api),
 };
 
-function showLogin(message = "Введите рабочие учётные данные.") {
+function showLogin(message = "Введите рабочие учётные данные.", resolving = false) {
   const backdrop = $("#authBackdrop");
   if (!backdrop) return;
   $("#authMessage").textContent = message;
+  $("#loginUsername").disabled = resolving;
+  $("#loginPassword").disabled = resolving;
+  $("#loginSubmit").disabled = resolving;
   backdrop.hidden = false;
-  $("#loginUsername").value ? $("#loginPassword").focus() : $("#loginUsername").focus();
+  if (!resolving) $("#loginUsername").value ? $("#loginPassword").focus() : $("#loginUsername").focus();
 }
 
-function hideLogin() { if ($("#authBackdrop")) $("#authBackdrop").hidden = true; }
+function hideLogin() {
+  if ($("#authBackdrop")) $("#authBackdrop").hidden = true;
+  $("#loginUsername").disabled = false;
+  $("#loginPassword").disabled = false;
+  $("#loginSubmit").disabled = false;
+}
 
 function renderRoute(snapshot = router.getState()) {
   const workspace = $("#authenticatedWorkspace");
@@ -80,35 +88,42 @@ function renderPrimaryNav() {
     incidents: state.capabilities.canRead("incident"),
     reports: state.capabilities.canRead("report"),
   };
-  document.querySelectorAll("[data-route]").forEach((button) => {
+  document.querySelectorAll("#primaryNav [data-route]").forEach((button) => {
     button.hidden = !destinations[button.dataset.route];
+  });
+  document.querySelectorAll("[data-capability]").forEach((control) => {
+    control.hidden = !state.capabilities.has(control.dataset.capability);
   });
   const current = router.getState().view;
   if (!destinations[current]) router.navigate("map");
   else renderRoute();
 }
 
-function renderSession() {
-  const authenticated = session.authenticated;
+function renderSession(snapshot = session.getState()) {
+  const authenticated = snapshot.authenticated;
   const workspace = $("#authenticatedWorkspace");
   if (workspace) workspace.hidden = !authenticated;
-  if (authenticated) hideLogin(); else showLogin();
+  if (authenticated) hideLogin();
+  else if (snapshot.resolving) showLogin("Проверяем сохранённую сессию…", true);
+  else showLogin();
   const user = session.user || {};
   const userName = $("#sessionUser");
   const userRole = $("#sessionRole");
   if (userName) userName.textContent = user.name || user.full_name || user.username || "—";
-  if (userRole) userRole.textContent = user.role_label || humanRole(user.role);
-  const status = $("#sessionStatus");
-  if (status) status.textContent = authenticated ? `Сессия активна · ${userRole?.textContent || ""}` : "Требуется вход";
+  if (userRole) userRole.textContent = user.role_label || humanUserRole(user.role);
   document.documentElement.dataset.authenticated = authenticated ? "true" : "false";
 }
 
 function handleSessionChange(snapshot) {
   state.capabilities = createCapabilityState(snapshot.user);
   document.documentElement.dataset.capabilities = state.capabilities.capabilities.join(" ");
-  renderSession();
+  if (!snapshot.authenticated) {
+    state.mapLoaded = false;
+    state.mapLoadPromise = null;
+  }
+  renderSession(snapshot);
   renderPrimaryNav();
-  if (snapshot.authenticated && !state.mapLoaded) loadAuthenticatedMap();
+  if (snapshot.authenticated) initializeAuthenticatedWorkspace();
 }
 
 function renderMapStatus() {
@@ -140,6 +155,16 @@ async function loadAuthenticatedMap() {
     .catch((error) => { state.mapLoaded = true; renderMapStatus(); showToast(error.status === 403 ? "Карта недоступна для текущего scope" : "Карта временно недоступна", "warn"); })
     .finally(() => { state.mapLoadPromise = null; });
   return state.mapLoadPromise;
+}
+
+function initializeAuthenticatedWorkspace() {
+  if (!session.authenticated || state.mapInitialized) {
+    if (session.authenticated && !state.mapLoaded) loadAuthenticatedMap();
+    return;
+  }
+  map.init({ containerId: "leafletMap" });
+  state.mapInitialized = true;
+  loadAuthenticatedMap();
 }
 
 function showToast(message, tone = "") {
@@ -266,10 +291,12 @@ function bindEvents() {
     catch (error) { showLogin(error.status === 401 ? "Не удалось войти. Проверьте имя пользователя и пароль." : "Сервис авторизации пока недоступен."); }
     finally { submit.disabled = false; }
   });
-  $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (_) { showToast("Сеанс не удалось завершить на сервере", "warn"); session.clear(); } });
+  $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (_) { showToast("Сеанс не удалось завершить на сервере", "warn"); } });
   $("#refreshButton")?.addEventListener("click", refreshMap);
   $("#mapFilter")?.addEventListener("submit", (event) => event.preventDefault());
-  document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => router.navigate(button.dataset.route)));
+  document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => {
+    if (router.navigate(button.dataset.route)) $("#accountControl")?.removeAttribute("open");
+  }));
   $("#mapListMode")?.addEventListener("change", async (event) => {
     const mode = event.target.value === "historical" ? "historical" : "current";
     if (mode === "current") map.setMode(mode);
@@ -294,7 +321,6 @@ function mapApiAction(action) {
 }
 
 async function boot() {
-  map.init({ containerId: "leafletMap" });
   bindEvents();
   renderSession();
   if (!session.hasToken()) return;
@@ -302,7 +328,9 @@ async function boot() {
     await session.bootstrap();
     const requestedRoute = globalThis.location?.hash?.slice(1);
     if (requestedRoute) router.navigate(requestedRoute);
-  } catch (_) { showLogin("Сессия недействительна. Войдите снова."); }
+  } catch (error) {
+    showLogin(error.status === 401 || error.status === 403 ? "Сессия недействительна. Войдите снова." : "Сервис авторизации пока недоступен.");
+  }
 }
 
 globalThis.LinkwatchApp = { i18n, theme, router, state, boundaries, refreshMap, openLine, openMapPopup };

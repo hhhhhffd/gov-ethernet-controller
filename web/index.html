@@ -27,7 +27,8 @@
               <summary id="accountButton" class="account-button" aria-label="Учётная запись"><span id="sessionUser">—</span></summary>
               <div class="account-menu">
                 <span id="sessionRole" class="account-role">—</span>
-                <span id="sessionStatus" class="account-status">Требуется вход</span>
+                <button id="adminMenuButton" data-route="admin" data-capability="admin.manage" type="button" hidden>Управление</button>
+                <button id="auditMenuButton" data-route="audit" data-capability="audit.read" type="button" hidden>Журнал действий</button>
                 <button id="logoutButton" type="button">Выйти</button>
               </div>
             </details>

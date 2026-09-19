@@ -4,6 +4,7 @@ const STATUS_LABELS = Object.freeze({
   NOT_MONITORED: "Не подключена", UNKNOWN: "Недостаточно данных",
 });
 const ROLE_LABELS = Object.freeze({ PRIMARY: "Основная", RESERVE: "Резервная", INACTIVE: "Неактивная" });
+const USER_ROLE_LABELS = Object.freeze({ ADMIN: "Администратор", OBLAST: "Областной оператор", DISTRICT: "Районный оператор", PROVIDER: "Провайдер", SCHOOL: "Школа" });
 const INCIDENT_LABELS = Object.freeze({ NEW: "Новый", SENT_TO_PROVIDER: "Передан провайдеру", IN_PROGRESS: "В работе", WAITING_INFO: "Ожидает информации", RESOLVED: "Устранён · проверка", CLOSED: "Закрыт" });
 const DELIVERY_LABELS = Object.freeze({ PENDING: "Ожидает доставки", GENERATED: "Сформировано", DELIVERING: "Доставляется", SENT: "Доставлено", FAILED: "Ошибка доставки" });
 
@@ -33,9 +34,10 @@ export function statusPresentation(status) {
 }
 export const humanStatus = (value) => statusPresentation(value).label;
 export const humanRole = (value) => ROLE_LABELS[String(value || "").toUpperCase()] || value || "—";
+export const humanUserRole = (value) => USER_ROLE_LABELS[String(value || "").toUpperCase()] || value || "—";
 export const humanIncidentStatus = (value) => INCIDENT_LABELS[String(value || "").toUpperCase()] || value || "Новый";
 export const humanDeliveryStatus = (value) => DELIVERY_LABELS[String(value || "").toUpperCase()] || value || "Неизвестно";
 
 export function presentationMaps() {
-  return { statuses: STATUS_LABELS, roles: ROLE_LABELS, incidents: INCIDENT_LABELS, deliveries: DELIVERY_LABELS };
+  return { statuses: STATUS_LABELS, roles: ROLE_LABELS, userRoles: USER_ROLE_LABELS, incidents: INCIDENT_LABELS, deliveries: DELIVERY_LABELS };
 }
