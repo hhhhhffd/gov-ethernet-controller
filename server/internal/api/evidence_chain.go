@@ -14,8 +14,37 @@ func evidenceChain(item measurementRecord) map[string]interface{} {
 		decodeJSONBytes(item.Violations), item.Valid, item.Reason,
 		decodeJSONBytes(item.PolicySnapshot), decodeJSONBytes(item.ContractSnapshot),
 		decodeJSONBytes(item.LineContextSnapshot), item.VerificationStatus, nil)
+	addVerificationEvidence(chain, item)
 	addEvidenceLinks(chain, item.LineID)
 	return chain
+}
+
+func addVerificationEvidence(chain map[string]interface{}, item measurementRecord) {
+	if item.VerificationStatus == "" && item.VerificationReason == "" && len(item.CandidateSnapshot) == 0 && item.VerifyingMeasurementID == nil && len(item.VerifyingSnapshot) == 0 && item.VerificationVerifiedAt == nil {
+		return
+	}
+	verification, ok := chain["verification"].(map[string]interface{})
+	if !ok {
+		verification = map[string]interface{}{}
+		chain["verification"] = verification
+	}
+	verification["reason"] = item.VerificationReason
+	verification["candidate_snapshot"] = nil
+	if len(item.CandidateSnapshot) > 0 {
+		verification["candidate_snapshot"] = decodeJSONBytes(item.CandidateSnapshot)
+	}
+	verification["verifying_measurement_id"] = nil
+	if item.VerifyingMeasurementID != nil {
+		verification["verifying_measurement_id"] = *item.VerifyingMeasurementID
+	}
+	verification["verifying_snapshot"] = nil
+	if len(item.VerifyingSnapshot) > 0 {
+		verification["verifying_snapshot"] = decodeJSONBytes(item.VerifyingSnapshot)
+	}
+	verification["verified_at"] = nil
+	if item.VerificationVerifiedAt != nil {
+		verification["verified_at"] = item.VerificationVerifiedAt
+	}
 }
 
 func evidenceChainFromSnapshots(id int64, observedAt time.Time, baseline, contract string, violations interface{}, valid bool, reason string, policy, contractSnapshot, contextSnapshot interface{}, verification string, extra map[string]interface{}) map[string]interface{} {

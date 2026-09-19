@@ -316,16 +316,29 @@ func updateVerification(ctx context.Context, tx pgx.Tx, lineID string, measureme
 	if err != nil {
 		return fmt.Errorf("load pending verifications: %w", err)
 	}
-	defer rows.Close()
-	outcome := VerificationOutcome(evaluated.Valid, evaluated.BaselineState, evaluated.ContractState, input.ConnectionStatus)
+	type pendingVerification struct {
+		ID          int64
+		Status      string
+		CandidateAt time.Time
+		ExpiresAt   time.Time
+	}
+	pending := []pendingVerification{}
 	for rows.Next() {
-		var id int64
-		var status string
-		var candidateAt, expiresAt time.Time
-		if err := rows.Scan(&id, &status, &candidateAt, &expiresAt); err != nil {
+		var item pendingVerification
+		if err := rows.Scan(&item.ID, &item.Status, &item.CandidateAt, &item.ExpiresAt); err != nil {
+			rows.Close()
 			return err
 		}
-		next, changed := TransitionVerification(VerificationCandidate{Status: status, CandidateAt: candidateAt, ExpiresAt: expiresAt}, input.ObservedAt, outcome)
+		pending = append(pending, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	outcome := VerificationOutcome(evaluated.Valid, evaluated.BaselineState, evaluated.ContractState, input.ConnectionStatus)
+	for _, item := range pending {
+		next, changed := TransitionVerification(VerificationCandidate{Status: item.Status, CandidateAt: item.CandidateAt, ExpiresAt: item.ExpiresAt}, input.ObservedAt, outcome)
 		if !changed {
 			continue
 		}
@@ -342,17 +355,22 @@ func updateVerification(ctx context.Context, tx pgx.Tx, lineID string, measureme
 		if next == VerificationExpired {
 			reason = "no eligible subsequent evidence before expiry"
 		}
-		_, err = tx.Exec(ctx, `UPDATE measurement_verifications SET status=$1,verifying_measurement_id=CASE WHEN $1=$2 THEN $3 ELSE NULL END,verifying_snapshot_json=CASE WHEN $1=$2 THEN $4::jsonb ELSE NULL END,reason=$5,updated_at=$6,verified_at=$6 WHERE id=$7 AND status=$8`, next, VerificationExpired, measurementID, string(verifyingSnapshot), reason, now, id, VerificationPending)
+		_, err = tx.Exec(ctx, `UPDATE measurement_verifications SET status=$1,verifying_measurement_id=CASE WHEN $1 IN ($2,$3) THEN $4::bigint ELSE NULL END,verifying_snapshot_json=CASE WHEN $1 IN ($2,$3) THEN $5::jsonb ELSE NULL END,reason=$6,updated_at=$7,verified_at=$7 WHERE id=$8 AND status=$9`, next, VerificationConfirmed, VerificationNotConfirmed, measurementID, string(verifyingSnapshot), reason, now, item.ID, VerificationPending)
 		if err != nil {
 			return fmt.Errorf("update verification: %w", err)
 		}
+		auditPayload := map[string]interface{}{"status": next, "verifying_measurement_id": nil, "reason": reason}
+		if next == VerificationConfirmed || next == VerificationNotConfirmed {
+			auditPayload["verifying_measurement_id"] = measurementID
+		}
+		auditSnapshot, marshalErr := json.Marshal(auditPayload)
+		if marshalErr != nil {
+			return fmt.Errorf("marshal verification audit snapshot: %w", marshalErr)
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO audit_events(actor_type,actor_id,action,object_type,object_id,after_json,created_at)
-            VALUES ('SYSTEM','system',$1,'measurement_verification',$2,$3::jsonb,$4)`, "measurement.verification_"+strings.ToLower(next), strconv.FormatInt(id, 10), fmt.Sprintf(`{"status":%q,"verifying_measurement_id":%d}`, next, measurementID), now); err != nil {
+            VALUES ('SYSTEM','system',$1,'measurement_verification',$2,$3::jsonb,$4)`, "measurement.verification_"+strings.ToLower(next), strconv.FormatInt(item.ID, 10), string(auditSnapshot), now); err != nil {
 			return fmt.Errorf("audit verification transition: %w", err)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
 	}
 	return nil
 }

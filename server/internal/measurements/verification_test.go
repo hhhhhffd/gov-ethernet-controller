@@ -30,6 +30,10 @@ func TestVerificationTransitionsAreTerminalAndExpireDeterministically(t *testing
 	if got, changed := TransitionVerification(VerificationCandidate{Status: VerificationPending, ExpiresAt: base.Add(time.Hour)}, base.Add(time.Hour), ""); got != VerificationExpired || !changed {
 		t.Fatalf("expiry transition = %q, %v", got, changed)
 	}
+	boundaryCandidate := VerificationCandidate{Status: VerificationPending, CandidateAt: base, ExpiresAt: base.Add(time.Hour)}
+	if got, changed := TransitionVerification(boundaryCandidate, base.Add(time.Hour), VerificationConfirmed); got != VerificationConfirmed || !changed {
+		t.Fatalf("boundary evidence transition = %q, %v", got, changed)
+	}
 }
 
 func TestVerificationLateEvidenceCannotConfirmExpiredCandidate(t *testing.T) {
