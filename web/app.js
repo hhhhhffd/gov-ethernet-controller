@@ -411,7 +411,15 @@
       const rows = filteredLines();
       $("#mapVisibleCount").textContent = rows.length;
       $("#mapFooterNote").textContent = historical ? `Historical evidence · ${periodLabel()} · current LineState не используется` : "Текущее состояние из latest LineState";
-      window.LinkwatchMap.render({ containerId: "leafletMap", mode: historical ? "historical" : "current", lineCount: rows.length });
+      window.LinkwatchMap.render({
+        containerId: "leafletMap",
+        mode: historical ? "historical" : "current",
+        lineCount: rows.length,
+        lines: rows,
+        model: state.frontendModel,
+        registry: state.frontendModel?.registry,
+        historicalByLine: state.historicalByLine,
+      });
       return;
     }
     const root = $("#mapMarkers"); if (!root) return;

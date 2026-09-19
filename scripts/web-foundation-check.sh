@@ -7,6 +7,7 @@ cd "$repo_root"
 node --check web/map.js
 node --check web/app.js
 node --check web/vendor/leaflet/leaflet.js
+node scripts/web-map.test.cjs
 
 node - <<'NODE'
 const assert = require("node:assert/strict");

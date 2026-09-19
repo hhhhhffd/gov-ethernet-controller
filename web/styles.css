@@ -100,3 +100,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .leaflet-map .leaflet-control-attribution a { color: var(--cyan); }
 .leaflet-map .leaflet-control-attribution a:hover { color: var(--text); }
 .map-popup, .map-legend, .map-scale { z-index: 5; }
+.leaflet-map .linkwatch-registry-marker,
+.leaflet-map .linkwatch-monitoring-marker,
+.leaflet-map .linkwatch-registry-cluster { display: flex; align-items: center; justify-content: center; border: 0; background: transparent; }
+.leaflet-map .linkwatch-registry-marker span { display: block; width: 8px; height: 8px; border: 2px solid rgba(189, 224, 224, .9); border-radius: 50%; background: rgba(44, 91, 104, .92); box-shadow: 0 0 0 3px rgba(143, 200, 202, .16); }
+.leaflet-map .linkwatch-monitoring-marker span { display: block; width: 14px; height: 14px; border: 3px solid #071b28; border-radius: 50%; background: var(--muted-2); box-shadow: 0 0 0 3px currentColor, 0 0 18px currentColor; }
+.leaflet-map .linkwatch-status-ok { color: var(--cyan); }.leaflet-map .linkwatch-status-degraded { color: var(--amber); }.leaflet-map .linkwatch-status-no_internet { color: var(--coral); }.leaflet-map .linkwatch-status-no_data, .leaflet-map .linkwatch-status-unknown { color: var(--muted-2); }
+.leaflet-map .linkwatch-status-ok span { background: var(--cyan); }.leaflet-map .linkwatch-status-degraded span { background: var(--amber); }.leaflet-map .linkwatch-status-no_internet span { background: var(--coral); }
+.leaflet-map .linkwatch-historical-marker { color: var(--blue); }.leaflet-map .linkwatch-historical-marker span { background: var(--blue); border-style: dashed; }
+.leaflet-map .linkwatch-registry-cluster { color: var(--cyan); }.leaflet-map .linkwatch-registry-cluster span { display: flex; align-items: center; justify-content: center; width: 25px; height: 25px; border: 2px solid var(--cyan); border-radius: 50%; color: #061823; background: var(--cyan); box-shadow: 0 0 0 5px rgba(121, 228, 208, .16); font-size: 10px; font-weight: 750; }
