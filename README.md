@@ -70,6 +70,25 @@ retryable-флаг и backoff; notification доставляется через 
 
 ## Configuration and API
 
+### VKO school registry mapping
+
+The import-time mapping tool is deliberately separate from browser rendering:
+
+```bash
+node scripts/map-organizations-to-schools.mjs
+node scripts/map-organizations-to-schools.mjs --check
+```
+
+It reads the generated official registry from `web/data/vko-schools.json` when
+available and writes the deterministic
+`web/data/organization-school-map.json` artifact. Missing registry data produces
+explicit `UNMAPPED` entries; it never invents a registry ID or coordinates.
+The seeded `org-42`, `org-07`, and `org-99` coordinates and their measurement
+scenarios are synthetic development data, not official VKO geography or live
+monitoring evidence. Registry-only schools remain `UNMONITORED`, and backend
+organization → line → monitoring point → device IDs are preserved in the
+artifact.
+
 Основные маршруты: `/health`, `/health/ready`, `/api/v1/auth/login`,
 `/api/v1/agent/measurements:batch`, `/api/v1/agent/heartbeat`,
 `/api/v1/agent/config`, `/api/v1/agent/probe/download`,

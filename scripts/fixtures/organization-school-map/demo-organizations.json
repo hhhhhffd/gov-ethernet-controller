@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "source": "server/internal/admin/seed.go",
+  "geography_status": "synthetic-demo",
+  "measurements_status": "synthetic-development-fixture",
+  "organizations": [
+    {
+      "organization_id": "org-42",
+      "school_id": "school-42",
+      "name": "Школа №42",
+      "district": "Алтай",
+      "address": "ул. Центральная, 42",
+      "synthetic_coordinates": { "latitude": 50.35, "longitude": 82.62 },
+      "lines": [
+        {
+          "line_id": "line-42-primary",
+          "canonical_status_source": "backend.line_state",
+          "monitoring_points": [
+            {
+              "monitoring_point_id": "point-42-primary",
+              "devices": ["device-42-primary"]
+            }
+          ]
+        },
+        {
+          "line_id": "line-42-reserve",
+          "canonical_status_source": "backend.line_state",
+          "monitoring_points": [
+            {
+              "monitoring_point_id": "point-42-reserve",
+              "devices": ["device-42-reserve"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "organization_id": "org-07",
+      "school_id": "school-07",
+      "name": "Школа №7",
+      "district": "Усть-Каменогорск",
+      "address": "пр. Абая, 7",
+      "synthetic_coordinates": { "latitude": 49.95, "longitude": 82.61 },
+      "lines": [
+        {
+          "line_id": "line-07-primary",
+          "canonical_status_source": "backend.line_state",
+          "monitoring_points": [
+            {
+              "monitoring_point_id": "point-07-primary",
+              "devices": ["device-07-primary"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "organization_id": "org-99",
+      "school_id": "school-99",
+      "name": "Школа №99",
+      "district": "Алтай",
+      "address": "ул. Школьная, 1",
+      "synthetic_coordinates": { "latitude": 50.31, "longitude": 82.59 },
+      "lines": [
+        {
+          "line_id": "line-99-primary",
+          "canonical_status_source": "backend.line_state",
+          "monitoring_points": [
+            {
+              "monitoring_point_id": "point-99-primary",
+              "devices": ["device-99-primary"]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
