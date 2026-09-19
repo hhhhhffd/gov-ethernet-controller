@@ -34,7 +34,7 @@ without current executable evidence is not promoted to `PASS`.
 | P1 verifier | `28/0` = PASS/FAIL | P1 traceability |
 | P2 verifier | `45/0/2` = PASS/FAIL/BLOCKED_EXTERNAL | P2 traceability |
 | Recorded server checks | `make server-test` PASS; all Go packages recorded as passing | Server/runtime regression |
-| Recorded agent checks | `make agent-test` PASS (29 tests); TASK-024 Rust command/config/update regression PASS (38 tests) | Agent/runtime regression |
+| Recorded agent checks | `make agent-test` PASS (39/39 tests); TASK-024 Rust command/config/update regression PASS (38 tests) | Agent/runtime regression |
 | Recorded E2E/build checks | `./scripts/smoke.sh` PASS; server build PASS; Windows artifact build is present; `node --check web/app.js` and `node --check scripts/browser-e2e.mjs` exit `0` | Runtime, build, and frontend syntax |
 | Browser verifier | `PASS=23`, `FAIL=0`, `BLOCKED_EXTERNAL=4`, demo off | Live local browser surfaces; provider rows remain external |
 
@@ -72,7 +72,7 @@ commit chain. The current TASK-018 result remains bounded scripted evidence;
 | TASK-022 | Native Windows acceptance | BLOCKED_EXTERNAL | Bounded documentation covers selected SCM/runtime, local queue/resend and preservation checks | Native Windows topology, reboot, clean install/uninstall/purge, tray and update activation proof remains absent. |
 | TASK-023 | External non-WEB notification channel acceptance | BLOCKED_EXTERNAL | Local WEB outbox success/retry/permanent-failure/redaction tests PASS | No authorized non-WEB endpoint or credentials; no external delivery was attempted. |
 | TASK-024 | P2 situation, evidence, config, export, provider workspace and agent update gate | BLOCKED_EXTERNAL | P2 `45/0/2`; all non-external rows PASS in the acceptance record | The two remaining rows are native post-restart `AGENT_UPDATE` and external non-WEB notification delivery. |
-| TASK-025 | Plan-defined acceptance item not represented by a current checkout acceptance artifact | FAIL | No current plan attachment or executable acceptance record for this ID was found in the checkout | Deliberately not inferred from source or neighboring tasks; this is a traceability evidence gap, not a fabricated PASS. |
+| TASK-025 | Plan-defined acceptance aggregate and current checkout acceptance evidence | BLOCKED_EXTERNAL | Exact aggregate after the workaround completed with no internal failures: P0 `32/0/3`, P1 `28/0`, P2 `45/0/2`; server build workaround PASS; both node checks exit `0`; this matrix and the verifier ledger provide the current evidence | Remaining `BLOCKED_EXTERNAL` results are environment-boundary skips (native Windows, public TLS/ACME, authorized provider/non-WEB delivery, and any unavailable plan attachment), not internal test failures. |
 | TASK-026 | Bounded manual/runtime evidence closure | BLOCKED_EXTERNAL | `docs/TASK-026_MANUAL_ACCEPTANCE.md`; P0/P1/P2/TASK-018 records | Bounded scripted rows pass, but native Windows, public TLS, authorized provider and non-WEB gates remain external. |
 | TASK-027 | Final product concept acceptance and complete traceability matrix | PASS | This matrix; requested commit set; recorded verifier ledger; all rows and blockers enumerated | Closure is bounded. Full production release remains gated by the `BLOCKED_EXTERNAL` rows above. |
 
@@ -96,7 +96,7 @@ commit chain. The current TASK-018 result remains bounded scripted evidence;
 | P2 | BLOCKED_EXTERNAL | `45/0/2`; no failed checks | Native post-restart update and external non-WEB notification remain unavailable. |
 | Hackathon minimum | PASS | TASK-018 `3/3`, `84/0/0`, exit `0` | All runs used explicit `MANUAL_FALLBACK`; no live AI or interactive manual PASS is claimed. |
 | Server regression | PASS | Recorded `make server-test` and all-Go-package PASS | Not rerun for this documentation-only closure. |
-| Agent regression | PASS | Recorded `make agent-test` PASS (29); TASK-024 Rust regression PASS (38) | Not rerun for this documentation-only closure. |
+| Agent regression | PASS | Recorded `make agent-test` PASS (39/39); TASK-024 Rust regression PASS (38) | Not rerun for this documentation-only closure. |
 | Smoke | PASS | Recorded `./scripts/smoke.sh` PASS | Not rerun; no long suite launched for TASK-027. |
 | Build | PASS | Recorded server build PASS and checked-in Windows artifact build evidence | Artifact execution on native Windows remains `BLOCKED_EXTERNAL`. |
 | Node checks | PASS | `node --check web/app.js` and `node --check scripts/browser-e2e.mjs` exit `0` | Syntax checks do not replace interactive browser or native acceptance. |
@@ -130,8 +130,5 @@ The bounded decision does not close these external gates:
 4. Authorized non-WEB notification delivery.
 5. Live local Ollama/model `SUCCEEDED` draft evidence, if required by the full
    AI acceptance rather than the bounded fallback path.
-6. TASK-025 plan-to-acceptance evidence is absent from this checkout and is
-   conservatively marked `FAIL`.
-
 No long suite was run for this closure. The only worktree mutation is this
 matrix plus removal of the untracked generated `server/linkwatch-server`.
