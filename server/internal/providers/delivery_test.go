@@ -138,6 +138,60 @@ func TestPostJSONDuplicateAttemptsCarrySameIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestPostJSONReusesIdempotencyKeyAfterAcceptedResponseLoss(t *testing.T) {
+	t.Setenv("LINKWATCH_ENV", "test")
+	t.Setenv("LINKWATCH_ALLOW_INSECURE_WEBHOOK", "1")
+	const idempotencyKey = "linkwatch-provider-case-43"
+	var mu sync.Mutex
+	calls := 0
+	var receivedKeys []string
+	server := testWebhookServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		calls++
+		callNumber := calls
+		receivedKeys = append(receivedKeys, r.Header.Get("Idempotency-Key"))
+		mu.Unlock()
+
+		if callNumber == 1 {
+			// The provider has accepted the request, but the client loses the
+			// response. A retry must be safe because it carries the same key.
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Errorf("test server does not support connection hijacking")
+				return
+			}
+			connection, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Errorf("hijack accepted response connection: %v", err)
+				return
+			}
+			_ = connection.Close()
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ticket_no":"EXT-LOST-43"}`)
+	}))
+	t.Setenv("LINKWATCH_PROVIDER_WEBHOOK_URL", server.URL)
+
+	_, err := postJSON(context.Background(), server.URL, map[string]string{"case": "43"}, "", idempotencyKey)
+	deliveryErr := requireDeliveryError(t, err)
+	if !deliveryErr.Retryable {
+		t.Fatalf("lost response error = %+v, want retryable", deliveryErr)
+	}
+
+	response, err := postJSON(context.Background(), server.URL, map[string]string{"case": "43"}, "", idempotencyKey)
+	if err != nil || responseID(response) != "EXT-LOST-43" {
+		t.Fatalf("reconciliation response=%v err=%v, want external reference", response, err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if calls != 2 || len(receivedKeys) != 2 || receivedKeys[0] != idempotencyKey || receivedKeys[1] != idempotencyKey {
+		t.Fatalf("accepted-response-loss calls=%d idempotency keys=%#v", calls, receivedKeys)
+	}
+}
+
 func TestPostJSONRejectsMalformedSuccessfulResponse(t *testing.T) {
 	t.Setenv("LINKWATCH_ENV", "test")
 	t.Setenv("LINKWATCH_ALLOW_INSECURE_WEBHOOK", "1")
