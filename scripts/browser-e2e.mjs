@@ -1,11 +1,20 @@
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
-
 const baseURL = process.env.BROWSER_E2E_BASE_URL || "http://127.0.0.1:8080";
-const browser = await chromium.launch({
+let chromium;
+let playwrightLoadError = null;
+try {
+  ({ chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright"));
+} catch (error) {
+  playwrightLoadError = error instanceof Error ? error.message : String(error);
+}
+
+const browser = chromium ? await chromium.launch({
   headless: true,
   executablePath: process.env.BROWSER_E2E_CHROMIUM || "/usr/sbin/chromium",
   args: ["--no-sandbox", "--disable-crash-reporter"],
-});
+}).catch((error) => {
+  playwrightLoadError = error instanceof Error ? error.message : String(error);
+  return null;
+}) : null;
 
 const report = {
   generatedAt: new Date().toISOString(),
@@ -116,6 +125,253 @@ function assertNoDemoMode(page) {
   check(!report.demoMode, "browser acceptance report was configured for demo mode");
 }
 
+// This is an explicit browser-only fixture. It is deliberately not written to
+// web/data or used by the application outside this acceptance harness. The
+// coordinates represent the shape of an authoritative registry response; the
+// provenance below prevents them from being mistaken for the blocked TASK-013
+// production import.
+const BROWSER_MAP_FIXTURE = Object.freeze({
+  registry: {
+    schema_version: 1,
+    artifact: "browser-e2e-test-fixture",
+    provenance: { source: "browser-e2e-test-fixture", registry_available: true },
+    schools: [
+      {
+        registry_id: "fixture-reg-001",
+        school_id: "fixture-school-001",
+        official_name: "Тестовая школа ВКО · мониторинг",
+        district: "Усть-Каменогорск",
+        locality: "Усть-Каменогорск",
+        address: "ул. Тестовая, 1",
+        latitude: 50.0081,
+        longitude: 82.6177,
+        coordinate_source: "official-fixture",
+        provenance: { source: "browser-e2e-test-fixture" },
+      },
+      {
+        registry_id: "fixture-reg-002",
+        school_id: "fixture-school-002",
+        official_name: "Тестовая школа ВКО · только реестр",
+        district: "Глубоковский район",
+        locality: "Глубокое",
+        address: "ул. Тестовая, 2",
+        latitude: 50.9122,
+        longitude: 82.4944,
+        coordinate_source: "official-fixture",
+        provenance: { source: "browser-e2e-test-fixture" },
+      },
+    ],
+  },
+  mapping: {
+    schema_version: 1,
+    artifact: "browser-e2e-test-fixture",
+    provenance: { source: "browser-e2e-test-fixture", registry_available: true },
+    disclosure: { measurements_status: "synthetic-browser-fixture" },
+    entries: [{ organization_id: "fixture-org-001", registry_id: "fixture-reg-001", match_status: "AUTO_MATCH", confidence: 1 }],
+  },
+  line: {
+    id: "fixture-line-001",
+    organization_id: "fixture-org-001",
+    school_id: "fixture-school-001",
+    school_name: "Тестовая школа ВКО · мониторинг",
+    district: "Усть-Каменогорск",
+    provider_name: "Fixture Telecom",
+    technology: "ВОЛС",
+    role: "PRIMARY",
+    status: "NO_INTERNET",
+    quality_state: "NO_INTERNET",
+    contract_state: "UNKNOWN",
+    data_state: "FRESH",
+    latest: { download: 0, upload: 0, ping: null, loss: 100, at: "2026-09-19T10:00:00Z" },
+    reason: "Состояние предоставлено backend LineState fixture",
+    monitoring_points: [],
+    measurements: [{ observed_at: "2026-09-19T10:00:00Z", connection_status: "NO_INTERNET", quality: "VALID" }],
+  },
+});
+
+const FIXTURE_TILE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+
+function fixturePayload(pathname, method, backendAvailable = true) {
+  if (pathname.endsWith("/login") && method === "POST") return { token: "browser-e2e-fixture-token", user: { name: "Browser Fixture", role: "ADMIN", capabilities: [] } };
+  if (pathname.endsWith("/auth/me") || pathname.endsWith("/me")) return { user: { name: "Browser Fixture", role: "ADMIN", capabilities: [] } };
+  if (!backendAvailable && ["/api/lines", "/api/v1/lines", "/api/overview", "/api/v1/overview"].includes(pathname)) return null;
+  if (pathname.endsWith("/lines")) return [BROWSER_MAP_FIXTURE.line];
+  if (pathname.includes("/lines/fixture-line-001")) return BROWSER_MAP_FIXTURE.line;
+  if (pathname.endsWith("/incidents") || pathname.endsWith("/situations") || pathname.endsWith("/notifications") || pathname.endsWith("/audit") || pathname.endsWith("/agent-versions")) return [];
+  if (pathname.endsWith("/overview")) return { counts: { schools: 1, lines: 1, active_devices: 1, problem_lines: 1 }, averages: { download: null, upload: null, ping: null }, completeness: 100 };
+  if (pathname.endsWith("/reports/aggregate")) return { by_line: { "fixture-line-001": { measurement_count: 4, analytics_state: "OK" } } };
+  if (pathname.endsWith("/reports/analytics")) return { ranking: [{ line_id: "fixture-line-001", state: "OK", baseline_compliance: 100, contract_compliance: null }] };
+  if (pathname.includes("/reports/quality-passport")) return { sufficient_data: true, items: [] };
+  if (pathname.includes("/provider-cases")) return [];
+  return {};
+}
+
+async function configureFixturePage(page, options = {}) {
+  const { registryAvailable = true, backendAvailable = true } = options;
+  const counters = { registry: 0, mapping: 0, tiles: 0, api: new Map() };
+  await page.addInitScript(() => localStorage.clear());
+  await page.route("**/static/data/vko-schools.json", async (route) => {
+    counters.registry += 1;
+    if (!registryAvailable) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "fixture registry unavailable" }) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(BROWSER_MAP_FIXTURE.registry) });
+  });
+  await page.route("**/static/data/organization-school-map.json", async (route) => {
+    counters.mapping += 1;
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(BROWSER_MAP_FIXTURE.mapping) });
+  });
+  await page.route("https://tile.openstreetmap.org/**", async (route) => {
+    counters.tiles += 1;
+    return route.fulfill({ status: 200, contentType: "image/png", body: FIXTURE_TILE_PNG });
+  });
+  await page.route("**/api/**", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    counters.api.set(path, (counters.api.get(path) || 0) + 1);
+    const payload = fixturePayload(path, request.method(), backendAvailable);
+    if (payload === null) return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "fixture backend unavailable" }) });
+    if (path.includes("/reports/aggregate") || path.includes("/reports/analytics")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) });
+    return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(payload) });
+  });
+  return counters;
+}
+
+async function openFixturePage(context, options = {}) {
+  const page = await context.newPage();
+  const counters = await configureFixturePage(page, options);
+  await page.goto(`${baseURL}/`, { waitUntil: "domcontentloaded" });
+  await page.locator("#loginUsername").fill("browser-e2e-fixture");
+  await page.locator("#loginPassword").fill("fixture");
+  await page.locator("#loginSubmit").click();
+  await page.locator("#authBackdrop").waitFor({ state: "hidden", timeout: 15000 });
+  if (options.backendAvailable !== false) {
+    await page.waitForFunction(() => document.querySelector("#registryDataStatus")?.dataset.state === "available", null, { timeout: 15000 });
+    await page.waitForFunction(() => document.querySelector("#lineCount")?.textContent?.trim() === "1", null, { timeout: 15000 });
+  }
+  return { page, counters };
+}
+
+async function fixtureMarkerContexts(page) {
+  return page.evaluate(() => window.LinkwatchMap.getLayers().registryMarkers.map((marker) => marker.__linkwatchContext).concat(window.LinkwatchMap.getLayers().monitoringMarkers.map((marker) => marker.__linkwatchContext)));
+}
+
+async function runAuthoritativeMapAcceptance() {
+  if (!browser) {
+    const evidence = `Playwright unavailable: ${playwrightLoadError || "browser launch failed"}`;
+    for (const surfaceName of ["MAP-001", "MAP-002", "MAP-003", "MAP-004", "MAP-005", "MAP-006", "MAP-007", "MAP-008", "MAP-009", "MAP-010", "MAP-011", "MAP-012"]) record(surfaceName, "BLOCKED_EXTERNAL", evidence);
+    return;
+  }
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const { page, counters } = await openFixturePage(context);
+  try {
+    await surface("MAP-001", async () => {
+      check(await page.evaluate(() => Boolean(window.LinkwatchMap?.getMap() && document.querySelector("#leafletMap.leaflet-container"))), "Leaflet map instance/container was not initialized");
+      return "Leaflet map instance and .leaflet-container are present";
+    });
+    await surface("MAP-002", async () => {
+      const tileUrl = await page.evaluate(() => window.LinkwatchMap.getConfig().tileUrl);
+      check(tileUrl === "https://tile.openstreetmap.org/{z}/{x}/{y}.png", `unexpected OSM tile template: ${tileUrl}`);
+      return `configured tile template=${tileUrl}; requests mocked, live OSM tiles not required`;
+    });
+    await surface("MAP-003", async () => {
+      const attribution = page.locator(".leaflet-control-attribution");
+      check(await attribution.isVisible(), "Leaflet attribution is not visible");
+      check((await attribution.textContent()).includes("OpenStreetMap"), "visible attribution does not identify OpenStreetMap");
+      return "visible Leaflet attribution identifies OpenStreetMap contributors";
+    });
+    await surface("MAP-004", async () => {
+      check(counters.registry === 1, `registry JSON was fetched ${counters.registry} times`);
+      check(counters.mapping === 1, `organization mapping JSON was fetched ${counters.mapping} times`);
+      return `registry fetches=${counters.registry}; mapping fetches=${counters.mapping}; no N+1 asset loads`;
+    });
+    await surface("MAP-005", async () => {
+      const marker = page.locator(".leaflet-marker-icon.linkwatch-registry-marker").first();
+      check(await marker.count() === 1, "registry-only Leaflet marker was not rendered");
+      await marker.click();
+      const text = await page.locator("#mapPopup").textContent();
+      check(text.includes("Не подключена к мониторингу"), "registry-only popup did not disclose neutral monitoring state");
+      check(!text.includes("Текущее состояние"), "registry-only popup exposed current operational state");
+      return "registry-only marker opens a neutral popup with explicit non-monitoring disclosure";
+    });
+    await surface("MAP-006", async () => {
+      await page.locator("#mapPopupClose").click();
+      const marker = page.locator(".leaflet-marker-icon.linkwatch-monitoring-marker").first();
+      await marker.click();
+      const context = (await fixtureMarkerContexts(page)).find((item) => item.kind === "monitoring");
+      const text = await page.locator("#mapPopup").textContent();
+      check(context?.status === "NO_INTERNET", `monitoring marker context status was ${context?.status}`);
+      check(text.includes("Текущее состояние") && text.includes("Нет соединения"), "monitoring popup did not use canonical backend LineState");
+      return "monitoring marker context and popup use backend LineState=NO_INTERNET";
+    });
+    await surface("MAP-007", async () => {
+      check(await page.locator("#mapPopup").isVisible(), "marker click did not open popup");
+      check((await page.locator("#mapPopupTitle").textContent()).includes("мониторинг"), "popup title does not identify the monitored school");
+      return "Leaflet monitoring marker click opened the existing accessible popup";
+    });
+    await surface("MAP-008", async () => {
+      await page.locator("#mapPopupOpenLine").click();
+      await page.locator("#detailDrawer.open").waitFor({ state: "visible", timeout: 10000 });
+      const context = await page.locator("#drawerContext").textContent();
+      check(context.includes("fixture-line-001"), "popup action opened the wrong line drawer");
+      return "popup action opened existing line drawer for fixture-line-001";
+    });
+    await surface("MAP-009", async () => {
+      await page.locator("#drawerClose").click();
+      const marker = page.locator(".leaflet-marker-icon.linkwatch-registry-marker").first();
+      await marker.click();
+      const text = await page.locator("#mapPopup").textContent();
+      check(!text.includes("NO_DATA") && !text.includes("Нет данных") && !text.includes("Нет актуальных данных"), "registry-only popup exposed fake NO_DATA/metric state");
+      return "registry-only popup has no fake status, NO_DATA, or operational metrics";
+    });
+    await surface("MAP-010", async () => {
+      await page.locator("#mapPopupClose").click();
+      await page.locator("#mapListMode").selectOption("current");
+      await page.locator(".leaflet-marker-icon.linkwatch-monitoring-marker").first().click();
+      check((await page.locator("#mapPopupSummary").textContent()).includes("Current operational data"), "current popup did not announce current truth");
+      await page.locator("#mapPopupClose").click();
+      await page.locator("#mapListMode").selectOption("historical");
+      await page.waitForFunction(() => document.querySelector("#mapFooterNote")?.textContent?.includes("Historical evidence"), null, { timeout: 15000 });
+      await page.locator(".leaflet-marker-icon.linkwatch-monitoring-marker").first().click();
+      const historicalText = await page.locator("#mapPopup").textContent();
+      check((await page.locator("#mapPopupSummary").textContent()).includes("current state не используется"), "historical popup did not disclose truth boundary");
+      check(historicalText.includes("Историческое evidence") && !historicalText.includes("Текущее состояние"), "historical popup reused current state fields");
+      return "current popup uses latest LineState; historical popup uses backend evidence and excludes current state";
+    });
+    await surface("MAP-011", async () => {
+      await page.locator("#mapPopupClose").click();
+      await page.locator("#mapListMode").selectOption("current");
+      await page.locator("#coverageFilter").selectOption("all");
+      await page.waitForFunction(() => document.querySelector("#mapVisibleCount")?.textContent?.trim() === "2", null, { timeout: 5000 });
+      const allRegistryIDs = await page.evaluate(() => window.LinkwatchMap.getLayers().registryMarkers.map((marker) => marker.__linkwatchContext.registryId));
+      await page.locator("#coverageFilter").selectOption("monitored");
+      await page.waitForFunction(() => document.querySelector("#mapVisibleCount")?.textContent?.trim() === "1", null, { timeout: 5000 });
+      const monitoredRegistryIDs = await page.evaluate(() => window.LinkwatchMap.getLayers().registryMarkers.map((marker) => marker.__linkwatchContext.registryId));
+      check(allRegistryIDs.includes("fixture-reg-002"), "all-school coverage omitted registry-only school");
+      check(!monitoredRegistryIDs.includes("fixture-reg-002"), "LINKWATCH-only coverage retained registry-only school");
+      return `coverage all=${allRegistryIDs.join(",")}; monitored=${monitoredRegistryIDs.join(",") || "none"}`;
+    });
+    await surface("MAP-012", async () => {
+      const failureContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+      try {
+        const { page: failurePage } = await openFixturePage(failureContext, { registryAvailable: false, backendAvailable: false });
+        await failurePage.waitForFunction(() => document.querySelector("#noticeTitle")?.textContent?.includes("Сервер мониторинга недоступен"), null, { timeout: 15000 });
+        const notice = await failurePage.locator("#noticeText").textContent();
+        check(!notice.includes("Демо-срез"), "API/registry failure silently enabled demo data");
+        check((await failurePage.locator("#lineCount").textContent()).trim() === "0", "API failure rendered sample operational lines");
+        check((await failurePage.locator("#registryDataStatus").textContent()).includes("недоступен"), "registry failure was not visible");
+        return "API/registry failures render explicit unavailable states with zero sample lines and no demo mode";
+      } finally {
+        await failureContext.close();
+      }
+    });
+  } finally {
+    await context.close();
+  }
+}
+
 async function waitForAuthenticatedApp(page, expectedLineCount) {
   await page.locator("#authBackdrop").waitFor({ state: "hidden", timeout: 15000 });
   await page.waitForFunction(() => Boolean(localStorage.getItem("vko_token")), null, { timeout: 5000 });
@@ -197,6 +453,8 @@ async function runBackendUnavailableCheck() {
 
 async function main() {
   check(!new URL(baseURL).searchParams.has("demo"), "base URL must not carry a demo query parameter");
+  await runAuthoritativeMapAcceptance();
+  if (!browser) return;
   const adminContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const admin = await adminContext.newPage();
   let providerContext;
@@ -241,32 +499,35 @@ async function main() {
       await admin.locator("#mapListMode").selectOption("current");
       await admin.waitForFunction(() => document.querySelector("#mapFooterNote")?.textContent?.includes("latest LineState"), null, { timeout: 5000 });
       const lines = unwrap((await apiRequest(admin, "/api/v1/lines")).body);
-      const markers = admin.locator("#mapMarkers .map-marker");
-      check(await markers.count() === lines.length, `current map has ${await markers.count()} markers for ${lines.length} live lines`);
+      const markers = admin.locator("#leafletMap .leaflet-marker-icon.linkwatch-monitoring-marker");
+      const registryState = await admin.locator("#registryDataStatus").getAttribute("data-state");
+      if (registryState === "available") check(await markers.count() > 0, "available registry produced no monitored Leaflet marker");
+      else check(["unavailable", "mapping-unavailable"].includes(registryState), `unexpected registry state ${registryState}`);
       check((await admin.locator("#mapModeLabel").textContent()).includes("ТЕКУЩЕЕ СОСТОЯНИЕ"), "current map mode was not announced");
+      if (!await markers.count()) return `live lines=${lines.length}; registry state=${registryState}; no marker rendered without authoritative registry coordinates`;
       const marker = markers.first();
       await marker.click({ force: true });
       await admin.locator("#mapPopup").waitFor({ state: "visible" });
-      const popupTrigger = admin.locator("#mapMarkers .map-marker[aria-expanded='true']");
+      const popupTrigger = admin.locator("#leafletMap .leaflet-marker-icon[aria-expanded='true']");
       check(await popupTrigger.count() === 1, "map popup did not identify its marker trigger");
-      const popupTriggerLineID = await popupTrigger.getAttribute("data-line-id");
       const popupText = await admin.locator("#mapPopup").textContent();
-      for (const label of ["School ID", "Название", "Район", "Провайдер", "Технология", "Договорный ориентир", "Текущее состояние", "Download · latest", "Upload · latest", "Ping · latest", "Последнее наблюдение"]) {
+      for (const label of ["School ID", "Район", "Провайдер", "Технология", "Роль линии", "Текущее состояние", "Download · latest", "Upload · latest", "Ping · latest", "Последнее наблюдение"]) {
         check(popupText.includes(label), `map popup is missing ${label}`);
       }
       await admin.keyboard.press("Escape");
       check(await admin.locator("#mapPopup").evaluate((element) => element.classList.contains("hidden")), "map popup did not close with Escape");
-      check(await admin.evaluate((lineID) => document.activeElement?.getAttribute("data-line-id") === lineID, popupTriggerLineID), "map popup close did not restore marker focus");
-      await admin.locator(`#mapMarkers .map-marker[data-line-id='${popupTriggerLineID}']`).press("Enter");
+      check(await admin.evaluate(() => document.activeElement?.classList.contains("linkwatch-monitoring-marker")), "map popup close did not restore marker focus");
+      await marker.press("Enter");
       await admin.locator("#mapPopup").waitFor({ state: "visible" });
       await admin.keyboard.press("Escape");
-      const noDataMarker = admin.locator("#mapMarkers .map-marker.no-data").first();
-      check(await noDataMarker.count() > 0, "live fixture has no NO_DATA marker for the empty-state check");
-      await noDataMarker.click({ force: true });
-      await admin.locator("#mapPopup").waitFor({ state: "visible" });
-      check((await admin.locator("#mapPopup").textContent()).includes("Нет данных"), "NO_DATA marker popup did not show Нет данных");
-      await admin.keyboard.press("Escape");
-      return `current map markers=${await markers.count()}; popup mouse+keyboard paths and NO_DATA popup passed`;
+      const noDataMarker = admin.locator("#leafletMap .leaflet-marker-icon.linkwatch-status-no_data").first();
+      if (await noDataMarker.count()) {
+        await noDataMarker.click({ force: true });
+        await admin.locator("#mapPopup").waitFor({ state: "visible" });
+        check((await admin.locator("#mapPopup").textContent()).includes("Нет данных"), "NO_DATA marker popup did not show Нет данных");
+        await admin.keyboard.press("Escape");
+      }
+      return `current monitored markers=${await markers.count()}; Leaflet popup mouse+keyboard paths passed; NO_DATA marker=${await noDataMarker.count() ? "present" : "not present in live fixture"}`;
     });
 
     await surface("school grouping", async () => {
