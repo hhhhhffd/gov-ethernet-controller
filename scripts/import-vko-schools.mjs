@@ -1183,17 +1183,22 @@ async function readSourceFile(filePath, source) {
   return parseSourceText(text, source);
 }
 
-async function fetchText(url, source, fetchImpl, headers = {}) {
+async function fetchText(url, source, fetchImpl, headers = {}, requestOptions = {}) {
   let response;
   try {
     response = await fetchImpl(url, {
+      ...requestOptions,
       headers,
       signal: AbortSignal.timeout(SOURCE_TIMEOUT_MS),
     });
   } catch (error) {
     throw new ImportSourceError(source, `request failed for ${url}`, error);
   }
-  if (!response.ok) throw new ImportSourceError(source, `HTTP ${response.status} from ${url}`);
+  if (!response.ok) {
+    const error = new ImportSourceError(source, `HTTP ${response.status} from ${url}`);
+    error.status = response.status;
+    throw error;
+  }
   try {
     return await response.text();
   } catch (error) {
@@ -1297,27 +1302,51 @@ export function normalizeOverpassSchools(payload) {
     .filter(Boolean);
 }
 
-async function loadJson(url, source, fetchImpl) {
-  const text = await fetchText(url, source, fetchImpl, { accept: "application/json" });
+const OVERPASS_FALLBACK_STATUSES = new Set([405, 406]);
+
+function overpassQueryUrl(endpoint, query) {
+  return `${endpoint}?data=${encodeURIComponent(query)}`;
+}
+
+async function fetchOverpassQuery({ endpoint, query, fetchImpl }) {
+  const postBody = `data=${encodeURIComponent(query)}`;
+  try {
+    return await fetchText(
+      endpoint,
+      OVERPASS_SOURCE,
+      fetchImpl,
+      {
+        accept: "application/json",
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      { method: "POST", body: postBody },
+    );
+  } catch (error) {
+    if (!(error instanceof ImportSourceError) || !OVERPASS_FALLBACK_STATUSES.has(error.status)) {
+      throw error;
+    }
+  }
+  return fetchText(
+    overpassQueryUrl(endpoint, query),
+    OVERPASS_SOURCE,
+    fetchImpl,
+    { accept: "application/json" },
+  );
+}
+
+async function loadOverpassJson(endpoint, query, fetchImpl) {
+  const text = await fetchOverpassQuery({ endpoint, query, fetchImpl });
   try {
     return JSON.parse(text);
   } catch (error) {
-    throw new ImportInputError(source, "invalid JSON response", error);
+    throw new ImportInputError(OVERPASS_SOURCE, "invalid JSON response", error);
   }
 }
 
 export async function fetchOverpassSnapshot({ endpoint = DEFAULT_OVERPASS_ENDPOINT, fetchImpl = fetch } = {}) {
-  const relationPayload = await loadJson(
-    `${endpoint}?data=${encodeURIComponent(OVERPASS_RELATION_QUERY)}`,
-    OVERPASS_SOURCE,
-    fetchImpl,
-  );
+  const relationPayload = await loadOverpassJson(endpoint, OVERPASS_RELATION_QUERY, fetchImpl);
   const relation = selectCurrentVkoRelation(relationPayload);
-  const schoolPayload = await loadJson(
-    `${endpoint}?data=${encodeURIComponent(buildOverpassSchoolQuery(relation.id))}`,
-    OVERPASS_SOURCE,
-    fetchImpl,
-  );
+  const schoolPayload = await loadOverpassJson(endpoint, buildOverpassSchoolQuery(relation.id), fetchImpl);
   return {
     relation: {
       id: relation.id,

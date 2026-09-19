@@ -158,8 +158,8 @@ test("Overpass selects the current VKO level-4 relation and excludes Abai", asyn
   const calls = [];
   const snapshot = await fetchOverpassSnapshot({
     endpoint: "https://overpass.test/api/interpreter",
-    fetchImpl: async (url) => {
-      calls.push(url);
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
       return {
         ok: true,
         status: 200,
@@ -169,7 +169,76 @@ test("Overpass selects the current VKO level-4 relation and excludes Abai", asyn
   });
   assert.equal(snapshot.relation.id, 123456);
   assert.equal(snapshot.schools.length, 2);
-  assert.match(calls[1], /area\(3600123456\)/);
+  assert.match(decodeURIComponent(calls[1].options.body.slice("data=".length)), /area\(3600123456\)/);
+});
+
+test("Overpass uses form-encoded POST while preserving query provenance", async () => {
+  const relations = JSON.parse(await fixture("overpass-relations.json"));
+  const schools = JSON.parse(await fixture("overpass-schools.json"));
+  const calls = [];
+  const snapshot = await fetchOverpassSnapshot({
+    endpoint: "https://overpass.test/api/interpreter",
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(calls.length === 1 ? relations : schools),
+      };
+    },
+  });
+
+  assert.equal(snapshot.relation.id, 123456);
+  assert.equal(snapshot.schools[0].source, "overpass");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, "https://overpass.test/api/interpreter");
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(calls[0].options.headers.accept, "application/json");
+  assert.equal(calls[0].options.headers["content-type"], "application/x-www-form-urlencoded");
+  assert.match(calls[0].options.body, /^data=%5Bout%3Ajson%5D/);
+  assert.match(decodeURIComponent(calls[1].options.body.slice("data=".length)), /area\(3600123456\)/);
+});
+
+test("Overpass falls back to GET only for compatible POST status codes", async () => {
+  const relations = JSON.parse(await fixture("overpass-relations.json"));
+  const schools = JSON.parse(await fixture("overpass-schools.json"));
+  const calls = [];
+  const snapshot = await fetchOverpassSnapshot({
+    endpoint: "https://overpass.test/api/interpreter",
+    fetchImpl: async (url, options = {}) => {
+      calls.push({ url, options });
+      const query = options.method === "POST"
+        ? decodeURIComponent(options.body.slice("data=".length))
+        : new URL(url).searchParams.get("data");
+      const payload = query.includes("area(3600123456)") ? schools : relations;
+      if (options.method === "POST") return { ok: false, status: 406, text: async () => "not acceptable" };
+      return { ok: true, status: 200, text: async () => JSON.stringify(payload) };
+    },
+  });
+
+  assert.equal(snapshot.relation.id, 123456);
+  assert.deepEqual(calls.map(({ options }) => options.method ?? "GET"), ["POST", "GET", "POST", "GET"]);
+  assert.match(calls[1].url, /\?data=/);
+  assert.match(new URL(calls[3].url).searchParams.get("data"), /area\(3600123456\)/);
+});
+
+test("Overpass POST failures remain explicit and do not silently fallback", async () => {
+  const calls = [];
+  await assert.rejects(
+    () => fetchOverpassSnapshot({
+      endpoint: "https://overpass.test/api/interpreter",
+      fetchImpl: async (url, options = {}) => {
+        calls.push({ url, options });
+        return { ok: false, status: 503, text: async () => "unavailable" };
+      },
+    }),
+    (error) => error instanceof ImportSourceError
+      && error.code === "SOURCE_UNAVAILABLE"
+      && error.source === "overpass"
+      && error.status === 503,
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, "POST");
 });
 
 test("HTTP and unavailable sources never become successful empty imports", async () => {
