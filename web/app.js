@@ -14,10 +14,15 @@ import { createLinesBoundary } from "./features/lines.mjs";
 import { createNotificationsBoundary } from "./features/notifications.mjs";
 import { createProviderCaseBoundary } from "./features/provider-case.mjs";
 import { createReportsBoundary } from "./features/reports.mjs";
+import { filterIncidents, incidentSeverityValues, incidentStatusValues, presentIncident, presentRecovery, presentSituation, presentTimeline, relatedSituations } from "./features/incidents-presentation.mjs";
 import { activeIncident, availableMetrics, createSelectedSchool, mergeLineDetail, selectedLine, selectSchoolLine } from "./features/school-detail.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
-const state = { capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, selectedSchool: null, mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null };
+const state = {
+  capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, selectedSchool: null,
+  mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null,
+  incidents: { state: "idle", items: [], filters: { status: "", severity: "" }, selectedId: null, detail: null, detailState: "idle", situations: [], situationsState: "idle", selectedSituationId: null, situation: null, situationState: "idle" },
+};
 
 let session;
 const i18n = createI18n();
@@ -111,8 +116,11 @@ function renderRoute(snapshot = router.getState()) {
   });
   const liveStatus = $("#mapLiveStatus");
   if (liveStatus) liveStatus.textContent = i18n.t("map.openSection", { section: i18n.t("nav." + snapshot.view) });
+  const refresh = $("#refreshButton");
+  if (refresh) refresh.hidden = snapshot.view !== "map";
   const hash = snapshot.view === "map" ? "" : "#" + snapshot.view;
   if (globalThis.location && globalThis.location.hash !== hash) globalThis.history?.replaceState?.({}, "", globalThis.location.pathname + hash);
+  if (snapshot.view === "incidents") loadIncidents();
 }
 
 function renderPrimaryNav() {
@@ -142,7 +150,12 @@ function renderSession(snapshot = session.getState()) {
 function handleSessionChange(snapshot) {
   state.capabilities = createCapabilityState(snapshot.user);
   document.documentElement.dataset.capabilities = state.capabilities.capabilities.join(" ");
-  if (!snapshot.authenticated) { state.mapLoaded = false; state.mapLoadPromise = null; state.selectedSchool = null; }
+  if (!snapshot.authenticated) {
+    state.mapLoaded = false;
+    state.mapLoadPromise = null;
+    state.selectedSchool = null;
+    state.incidents = { state: "idle", items: [], filters: { status: "", severity: "" }, selectedId: null, detail: null, detailState: "idle", situations: [], situationsState: "idle", selectedSituationId: null, situation: null, situationState: "idle" };
+  }
   renderSession(snapshot);
   renderPrimaryNav();
   if (snapshot.authenticated) initializeAuthenticatedWorkspace();
@@ -430,7 +443,7 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
       ? mapFields(metrics.map(([metric, value]) => [i18n.t(metricLabels[metric][0]), presentation.formatNumber(value, i18n.t(metricLabels[metric][1]))]))
       : mapFields([[i18n.t("field.metrics"), i18n.t("school.metricsUnavailable")]]);
     const incident = activeIncident(line);
-    $("#drawerIncident").innerHTML = incident ? mapFields([[i18n.t("field.activeIncident"), incident.incident_no || incident.number || incident.id], [i18n.t("field.incidentStatus"), presentation.incidentStatus(incident.status)]]) : "";
+    $("#drawerIncident").innerHTML = incident ? mapFields([[i18n.t("field.activeIncident"), incident.incident_no || incident.number || incident.id], [i18n.t("field.incidentStatus"), presentation.incidentStatus(incident.status)]]) + '<button class="link-action" type="button" data-open-incident-id="' + escapeHtml(incident.id) + '">' + escapeHtml(i18n.t("nav.incidents")) + "</button>" : "";
   }
   $("#drawerBackdrop").hidden = false;
   $("#detailDrawer").hidden = false;
@@ -442,6 +455,7 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
     if (state.mapPopupContext) renderPopup(state.mapPopupContext);
     await openSelectedSchoolDetail();
   }));
+  $("#detailDrawer").querySelector("[data-open-incident-id]")?.addEventListener("click", () => openIncident($("#detailDrawer").querySelector("[data-open-incident-id]").dataset.openIncidentId));
 }
 
 async function openSelectedSchoolDetail() {
@@ -468,6 +482,215 @@ async function openLine(id) {
   } else state.selectedSchool = selectSchoolLine(state.selectedSchool, id);
   await openSelectedSchoolDetail();
 }
+
+function objectPayload(payload) {
+  return payload?.data && typeof payload.data === "object" ? payload.data : payload;
+}
+
+function incidentSurfaceState() { return state.incidents; }
+
+function renderIncidentsSurface() {
+  const root = $("#incidentsSurface");
+  if (!root) return;
+  const view = incidentSurfaceState();
+  const active = router.getState().view === "incidents";
+  root.hidden = !active;
+  if (!active) return;
+  if (view.state === "loading" || view.state === "idle") {
+    root.innerHTML = '<div class="incidents-shell"><p class="surface-state" role="status">' + escapeHtml(i18n.t("incidents.loading")) + "</p></div>";
+    return;
+  }
+  if (view.state === "error") {
+    root.innerHTML = '<div class="incidents-shell"><h1>' + escapeHtml(i18n.t("incidents.title")) + '</h1><p class="surface-state error" role="alert">' + escapeHtml(i18n.t("incidents.unavailable")) + '</p><button class="secondary-action" type="button" data-incidents-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + "</button></div>";
+    bindIncidentSurfaceEvents(root);
+    return;
+  }
+
+  const statuses = incidentStatusValues(view.items);
+  const severities = incidentSeverityValues(view.items);
+  if (!statuses.includes(view.filters.status)) view.filters.status = "";
+  if (!severities.includes(view.filters.severity)) view.filters.severity = "";
+  const items = filterIncidents(view.items, view.filters);
+  const filters = '<label>' + escapeHtml(i18n.t("incidents.filterStatus")) + '<select data-incident-filter="status"><option value="">' + escapeHtml(i18n.t("incidents.anyStatus")) + "</option>" + statuses.map((status) => '<option value="' + escapeHtml(status) + '"' + (view.filters.status === status ? " selected" : "") + ">" + escapeHtml(presentation.incidentStatus(status)) + "</option>").join("") + '</select></label>'
+    + '<label>' + escapeHtml(i18n.t("incidents.filterSeverity")) + '<select data-incident-filter="severity"><option value="">' + escapeHtml(i18n.t("incidents.anySeverity")) + "</option>" + severities.map((severity) => '<option value="' + escapeHtml(severity) + '"' + (view.filters.severity === severity ? " selected" : "") + ">" + escapeHtml(i18n.has("severity." + severity) ? i18n.t("severity." + severity) : i18n.t("severity.UNKNOWN")) + "</option>").join("") + "</select></label>";
+  const list = items.length ? items.map((item) => {
+    const incident = presentIncident(item, { i18n, presentation });
+    return '<button class="incident-row' + (String(view.selectedId) === String(incident.id) ? " selected" : "") + '" type="button" data-incident-id="' + escapeHtml(incident.id) + '"><span class="incident-row-status severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.statusLabel) + "</span><span><strong>" + escapeHtml(incident.school) + "</strong><small>" + escapeHtml(incident.typeLabel) + "</small></span><span>" + escapeHtml(incident.line) + "</span><span>" + escapeHtml(incident.startedLabel) + "</span><span>" + escapeHtml(incident.durationLabel) + "</span><span>" + escapeHtml(incident.lastUpdateLabel) + "</span></button>";
+  }).join("") : '<p class="surface-state">' + escapeHtml(i18n.t("incidents.empty")) + "</p>";
+
+  root.innerHTML = '<div class="incidents-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("incidents.title")) + "</h1><p>" + escapeHtml(i18n.t("incidents.subtitle")) + '</p></div><button class="secondary-action" type="button" data-incidents-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + "</button></header><div class="incident-filters">" + filters + '<span class="incident-count">' + escapeHtml(i18n.t("incidents.count", { count: items.length })) + '</span></div><div class="incidents-layout"><section class="incidents-list" aria-label="' + escapeHtml(i18n.t("incidents.title")) + '"><div class="incident-row incident-row-head" aria-hidden="true"><span>' + escapeHtml(i18n.t("field.status")) + "</span><span>" + escapeHtml(i18n.t("field.school")) + "</span><span>" + escapeHtml(i18n.t("field.line")) + "</span><span>" + escapeHtml(i18n.t("incidents.started")) + "</span><span>" + escapeHtml(i18n.t("incidents.duration")) + "</span><span>" + escapeHtml(i18n.t("incidents.lastUpdate")) + "</span></div>" + list + '</section><aside class="incident-detail" aria-live="polite">' + renderIncidentDetail() + "</aside></div></div>";
+  bindIncidentSurfaceEvents(root);
+}
+
+function renderIncidentDetail() {
+  const view = incidentSurfaceState();
+  if (!view.selectedId) return '<p class="surface-state">' + escapeHtml(i18n.t("incidents.select")) + "</p>";
+  if (view.detailState === "loading") return '<p class="surface-state">' + escapeHtml(i18n.t("incidents.detailLoading")) + "</p>";
+  if (view.detailState === "error" || !view.detail) return '<p class="surface-state error">' + escapeHtml(i18n.t("incidents.detailUnavailable")) + "</p>";
+  if (view.selectedSituationId) return renderSituationDetail();
+
+  const detail = view.detail;
+  const incident = presentIncident(detail, { i18n, presentation });
+  const recovery = presentRecovery(detail, { i18n });
+  const confirmation = detail?.evidence_chain?.confirmation;
+  const evidenceCount = Number(confirmation?.count);
+  const confirmed = Number.isFinite(evidenceCount) && evidenceCount > 0
+    ? i18n.t("incidents.evidenceCount", { count: evidenceCount })
+    : i18n.t("incidents.evidenceUnavailable");
+  const events = presentTimeline(detail.events, { i18n, presentation });
+  const timeline = events.length ? events.map((event) => '<li><time>' + escapeHtml(event.atLabel) + '</time><div><strong>' + escapeHtml(event.label) + "</strong>" + (event.note ? '<p>' + escapeHtml(event.note) + "</p>" : "") + (event.status ? '<small>' + escapeHtml(event.status) + "</small>" : "") + (event.actor ? '<small class="timeline-actor">' + escapeHtml(event.actor) + "</small>" : "") + "</div></li>").join("") : '<p class="surface-state">' + escapeHtml(i18n.t("incidents.timelineEmpty")) + "</p>";
+  const lineAvailable = Boolean(map.getLine(detail.line_id));
+  const providerCases = Array.isArray(detail.provider_cases) ? detail.provider_cases : [];
+  const cases = providerCases.length ? '<ul class="case-summary">' + providerCases.map((item) => '<li>' + escapeHtml(i18n.t("field.providerCase")) + " #" + escapeHtml(item.ticket_no || item.id) + ' <span>' + escapeHtml(presentation.deliveryStatus(item.delivery_status)) + "</span></li>").join("") + "</ul>" : '<p class="detail-muted">' + escapeHtml(i18n.t("incidents.noRelatedCases")) + "</p>";
+  const canComment = state.capabilities.has("incident.update");
+  const commentForm = canComment ? '<form class="incident-comment-form" data-incident-comment><label for="incidentComment">' + escapeHtml(i18n.t("incidents.comment")) + '</label><textarea id="incidentComment" required maxlength="4000" placeholder="' + escapeHtml(i18n.t("incidents.commentPlaceholder")) + '"></textarea><button class="secondary-action" type="submit">' + escapeHtml(i18n.t("incidents.sendComment")) + "</button></form>" : "";
+  return '<header class="incident-detail-head"><span class="severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.severityLabel) + "</span><h2>" + escapeHtml(incident.number) + "</h2><p>" + escapeHtml(incident.statusLabel) + "</p></header><section><h3>" + escapeHtml(i18n.t("incidents.what")) + "</h3><p>" + escapeHtml(incident.typeLabel) + "</p></section><dl class="detail-grid"><div><dt>" + escapeHtml(i18n.t("incidents.where")) + "</dt><dd>" + escapeHtml(incident.school) + " · " + escapeHtml(incident.line) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.when")) + "</dt><dd>" + escapeHtml(incident.startedLabel) + " · " + escapeHtml(incident.durationLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.confirmed")) + "</dt><dd>" + escapeHtml(confirmed) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.recovery")) + "</dt><dd>" + escapeHtml(recovery.label) + "</dd></div>" + (detail.assignee ? "<div><dt>" + escapeHtml(i18n.t("field.assignee")) + "</dt><dd>" + escapeHtml(detail.assignee) + "</dd></div>" : "") + "</dl>" + (lineAvailable ? '<button class="secondary-action" type="button" data-incident-open-line="' + escapeHtml(detail.line_id) + '">' + escapeHtml(i18n.t("incidents.openLine")) + "</button>" : "") + '<section><h3>' + escapeHtml(i18n.t("incidents.workflow")) + "</h3><ol class=\"incident-timeline\">" + timeline + "</ol>" + commentForm + "</section><section><h3>" + escapeHtml(i18n.t("incidents.relatedCases")) + "</h3>" + cases + "</section>" + renderSituationContext(detail.id);
+}
+
+function renderSituationContext(incidentId) {
+  const view = incidentSurfaceState();
+  if (view.situationsState === "loading" || view.situationsState === "idle") return '<section><h3>' + escapeHtml(i18n.t("situation.contextTitle")) + "</h3><p class=\"detail-muted\">" + escapeHtml(i18n.t("situation.loading")) + "</p></section>";
+  if (view.situationsState === "error") return '<section><h3>' + escapeHtml(i18n.t("situation.contextTitle")) + "</h3><p class=\"detail-muted\">" + escapeHtml(i18n.t("situation.unavailable")) + "</p></section>";
+  const situations = relatedSituations(view.situations, incidentId);
+  const rows = situations.length ? situations.map((item) => {
+    const situation = presentSituation(item, { i18n, presentation });
+    return '<li><button class="link-action" type="button" data-situation-id="' + escapeHtml(situation.id) + '"><strong>' + escapeHtml(situation.title) + "</strong><span>" + escapeHtml(i18n.t("situation.members", { count: situation.affectedCount })) + " · " + escapeHtml(situation.typeLabel) + "</span></button></li>";
+  }).join("") : '<p class="detail-muted">' + escapeHtml(i18n.t("situation.empty")) + "</p>";
+  return '<section class="situation-context"><h3>' + escapeHtml(i18n.t("situation.contextTitle")) + "</h3><p class=\"detail-muted\">" + escapeHtml(i18n.t("situation.contextHint")) + "</p><ul>" + rows + "</ul></section>";
+}
+
+function renderSituationDetail() {
+  const view = incidentSurfaceState();
+  if (view.situationState === "loading") return '<p class="surface-state">' + escapeHtml(i18n.t("situation.loading")) + "</p>";
+  if (view.situationState === "error" || !view.situation) return '<p class="surface-state error">' + escapeHtml(i18n.t("situation.unavailable")) + "</p>";
+  const situation = view.situation;
+  const factors = situation.factors || {};
+  const members = Array.isArray(situation.incidents) ? situation.incidents : [];
+  const evidence = situation.evidence?.state || "UNKNOWN";
+  return '<button class="link-action back-action" type="button" data-situation-back>' + escapeHtml(i18n.t("situation.backToIncident")) + '</button><header class="incident-detail-head"><h2>' + escapeHtml(i18n.t("situation.detailTitle")) + " #" + escapeHtml(situation.id) + "</h2><p>" + escapeHtml(i18n.t("situation.readOnly")) + '</p></header><section><h3>' + escapeHtml(i18n.t("situation.factors")) + "</h3><dl class=\"detail-grid\"><div><dt>" + escapeHtml(i18n.t("field.district")) + "</dt><dd>" + escapeHtml(factors.district || i18n.t("empty.noData")) + "</dd></div><div><dt>" + escapeHtml(i18n.t("field.type")) + "</dt><dd>" + escapeHtml(i18n.has("incidentType." + String(factors.violation_type || "").toUpperCase()) ? i18n.t("incidentType." + String(factors.violation_type).toUpperCase()) : i18n.t("incidentType.UNKNOWN")) + "</dd></div></dl></section><section><h3>" + escapeHtml(i18n.t("situation.evidence")) + "</h3><p>" + escapeHtml(i18n.has("situation.evidence." + evidence) ? i18n.t("situation.evidence." + evidence) : i18n.t("situation.evidence.UNKNOWN")) + "</p></section><section><h3>" + escapeHtml(i18n.t("situation.memberIncidents")) + "</h3><ul class=\"situation-members\">" + members.map((item) => '<li><button class="link-action" type="button" data-incident-id="' + escapeHtml(item.id) + '">' + escapeHtml(item.incident_no || item.number || item.id) + " · " + escapeHtml(item.school_name || item.organization_name || i18n.t("school.noOfficialName")) + "</button></li>").join("") + "</ul></section>";
+}
+
+function bindIncidentSurfaceEvents(root) {
+  root.querySelector("[data-incidents-refresh]")?.addEventListener("click", () => loadIncidents({ force: true }));
+  root.querySelectorAll("[data-incident-filter]").forEach((control) => control.addEventListener("change", () => {
+    incidentSurfaceState().filters[control.dataset.incidentFilter] = control.value;
+    renderIncidentsSurface();
+  }));
+  root.querySelectorAll("[data-incident-id]").forEach((control) => control.addEventListener("click", () => selectIncident(control.dataset.incidentId)));
+  root.querySelectorAll("[data-situation-id]").forEach((control) => control.addEventListener("click", () => selectSituation(control.dataset.situationId)));
+  root.querySelector("[data-situation-back]")?.addEventListener("click", () => { incidentSurfaceState().selectedSituationId = null; incidentSurfaceState().situation = null; incidentSurfaceState().situationState = "idle"; renderIncidentsSurface(); });
+  root.querySelector("[data-incident-open-line]")?.addEventListener("click", () => openIncidentLine(root.querySelector("[data-incident-open-line]").dataset.incidentOpenLine));
+  root.querySelector("[data-incident-comment]")?.addEventListener("submit", submitIncidentComment);
+}
+
+async function loadIncidents({ force = false } = {}) {
+  const view = incidentSurfaceState();
+  if (!session.authenticated) return;
+  if (view.state === "loading") return view.loadPromise;
+  if (view.state === "ready" && !force) { renderIncidentsSurface(); return; }
+  view.state = "loading";
+  renderIncidentsSurface();
+  view.loadPromise = Promise.allSettled([boundaries.incidents.list(), boundaries.incidents.situations()]).then(async ([incidentsResult, situationsResult]) => {
+    if (incidentsResult.status !== "fulfilled") {
+      view.state = "error";
+      renderIncidentsSurface();
+      return;
+    }
+    view.items = incidentsResult.value;
+    view.state = "ready";
+    view.situations = situationsResult.status === "fulfilled" ? situationsResult.value : [];
+    view.situationsState = situationsResult.status === "fulfilled" ? "ready" : "error";
+    if (view.selectedId && !view.items.some((item) => String(item.id) === String(view.selectedId))) {
+      view.selectedId = null;
+      view.detail = null;
+      view.detailState = "idle";
+      view.selectedSituationId = null;
+    }
+    renderIncidentsSurface();
+    if (view.selectedId) await loadIncidentDetail(view.selectedId);
+  }).finally(() => { view.loadPromise = null; });
+  return view.loadPromise;
+}
+
+async function selectIncident(id) {
+  const view = incidentSurfaceState();
+  view.selectedId = id;
+  view.detail = null;
+  view.detailState = "loading";
+  view.selectedSituationId = null;
+  view.situation = null;
+  view.situationState = "idle";
+  renderIncidentsSurface();
+  await loadIncidentDetail(id);
+}
+
+async function loadIncidentDetail(id) {
+  const view = incidentSurfaceState();
+  try {
+    const response = await boundaries.incidents.get(id);
+    if (String(view.selectedId) !== String(id)) return;
+    view.detail = objectPayload(response);
+    view.detailState = "ready";
+  } catch (error) {
+    if (String(view.selectedId) !== String(id)) return;
+    view.detail = null;
+    view.detailState = "error";
+  }
+  renderIncidentsSurface();
+}
+
+async function selectSituation(id) {
+  const view = incidentSurfaceState();
+  view.selectedSituationId = id;
+  view.situation = null;
+  view.situationState = "loading";
+  renderIncidentsSurface();
+  try {
+    const response = objectPayload(await boundaries.incidents.situation(id));
+    if (String(view.selectedSituationId) !== String(id)) return;
+    view.situation = response;
+    view.situationState = "ready";
+  } catch (error) {
+    if (String(view.selectedSituationId) !== String(id)) return;
+    view.situationState = "error";
+  }
+  renderIncidentsSurface();
+}
+
+async function openIncidentLine(lineID) {
+  if (!map.getLine(lineID)) return;
+  router.navigate("map");
+  await openLine(lineID);
+}
+
+async function submitIncidentComment(event) {
+  event.preventDefault();
+  const view = incidentSurfaceState();
+  const note = event.currentTarget.querySelector("textarea")?.value.trim();
+  if (!note || !view.selectedId || !view.detail || !state.capabilities.has("incident.update")) return;
+  if (!globalThis.confirm?.(i18n.t("incidents.confirmComment"))) return;
+  const submit = event.currentTarget.querySelector("button[type=submit]");
+  if (submit) submit.disabled = true;
+  try {
+    const response = objectPayload(await boundaries.incidents.addEvent(view.selectedId, { event_type: "comment", note }));
+    view.detail = response;
+    const index = view.items.findIndex((item) => String(item.id) === String(view.selectedId));
+    if (index >= 0) view.items[index] = response;
+    view.detailState = "ready";
+    renderIncidentsSurface();
+  } catch (error) {
+    showToast("incidents.commentFailed", "warn");
+    if (submit) submit.disabled = false;
+  }
+}
+
+async function openIncident(id) {
+  if (!state.capabilities.canRead("incident")) return;
+  router.navigate("incidents");
+  await loadIncidents();
+  await selectIncident(id);
+}
+
 function closeDrawer() {
   $("#detailDrawer")?.classList.remove("open");
   if ($("#detailDrawer")) $("#detailDrawer").hidden = true;
@@ -536,6 +759,7 @@ function refreshLocale() {
   renderMapStatus();
   if (state.mapPopupContext) renderPopup(state.mapPopupContext);
   if (state.selectedSchool && !$("#detailDrawer")?.hidden) renderSchoolDrawer(state.selectedSchool);
+  renderIncidentsSurface();
 }
 
 async function boot() {
@@ -554,5 +778,5 @@ async function boot() {
   }
 }
 
-globalThis.LinkwatchApp = { i18n, presentation, theme, router, state, boundaries, refreshMap, openLine, openMapPopup };
+globalThis.LinkwatchApp = { i18n, presentation, theme, router, state, boundaries, refreshMap, openLine, openIncident, openMapPopup };
 document.addEventListener("DOMContentLoaded", boot);
