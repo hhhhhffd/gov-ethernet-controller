@@ -114,6 +114,7 @@ assert.equal(historicalContext.evidence[0].status, "UNKNOWN", "historical marker
 const appSource = fs.readFileSync("web/app.js", "utf8");
 const indexSource = fs.readFileSync("web/index.html", "utf8");
 const mapSource = fs.readFileSync("web/map.js", "utf8");
+const browserHarnessSource = fs.readFileSync("scripts/browser-e2e.mjs", "utf8");
 assert.doesNotMatch(appSource, /map_x|map_y|index \* 59|index \* 37/, "production app must not synthesize map coordinates");
 assert.doesNotMatch(indexSource, /<svg[^>]*class=\"vko-map\"|class=\"map-gridlines\"|id=\"mapMarkers\"/, "Leaflet must be the only production map");
 assert.doesNotMatch(mapSource, /fetch\s*\(/, "markers must not issue per-school API calls");
@@ -121,7 +122,14 @@ assert.doesNotMatch(mapSource, /permanent\s*:\s*true/, "schools must not receive
 assert.doesNotMatch(mapSource, /clusterCellDegrees/, "registry clustering must not use a fixed degree grid");
 assert.match(appSource, /registryCluster/, "cluster popup must have a dedicated neutral path");
 assert.match(appSource, /data-popup-registry-id/, "cluster popup must expose selectable registry members");
-assert.match(appSource, /demoMode.*URLSearchParams\(window\.location\.search\)\.get\("demo"\) === "1"/, "demo mode must be explicit");
-assert.match(appSource, /state\.lines = state\.demoMode \? sampleLines\.map\(normalizeLine\) : \[\]/, "API failure must not silently use demo lines");
+assert.doesNotMatch(appSource, /sampleLines|sampleIncidents|sampleSituations|demoMode|demoCapabilities|createReplay/, "production app must not contain synthetic/demo operational paths");
+assert.doesNotMatch(appSource, /URLSearchParams\(window\.location\.search\)/, "normal navigation must not activate a demo query path");
+assert.doesNotMatch(indexSource, /demoButton|Запустить replay|Айдана К\.|Областной уровень|Policy v14/, "production shell must not contain demo identity/replay placeholders");
+assert.match(appSource, /state\.operationalError/, "API failure must be represented explicitly");
+assert.match(appSource, /state\.lines = \[\]/, "API failure must clear operational rows");
+assert.doesNotMatch(appSource, /L-00[1-8]|INC-18[1-4]|SIT-02[6-7]/, "known synthetic operational IDs must not be in production app");
+assert.doesNotMatch(indexSource, /fixture|synthetic|demo/i, "production shell must not contain acceptance fixture data");
+assert.match(browserHarnessSource, /BROWSER_MAP_FIXTURE/, "explicit browser fixture must remain in acceptance harness");
+assert.match(browserHarnessSource, /browser-e2e-test-fixture/, "browser fixture provenance must be explicit");
 
 console.log("web map marker checks: PASS");

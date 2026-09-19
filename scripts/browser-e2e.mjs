@@ -374,8 +374,10 @@ async function runAuthoritativeMapAcceptance() {
         const notice = await failurePage.locator("#noticeText").textContent();
         check(!notice.includes("Демо-срез"), "API/registry failure silently enabled demo data");
         check((await failurePage.locator("#lineCount").textContent()).trim() === "0", "API failure rendered sample operational lines");
+        check((await failurePage.locator("#linesTableBody").textContent()).includes("Операционные данные недоступны"), "API failure did not render an explicit operational error state");
+        check((await failurePage.locator("#kpiSchools").textContent()).trim() === "Нет данных", "API failure rendered a synthetic KPI value");
         check((await failurePage.locator("#registryDataStatus").textContent()).includes("недоступен"), "registry failure was not visible");
-        return "API/registry failures render explicit unavailable states with zero sample lines and no demo mode";
+        return "API/registry failures render explicit error states with zero live lines and no demo mode";
       } finally {
         await failureContext.close();
       }
@@ -474,7 +476,8 @@ async function runBackendUnavailableCheck() {
     const notice = await page.locator("#noticeText").textContent();
     check(!notice.includes("Демо-срез"), "backend-unavailable state silently entered demo mode");
     check(await page.locator("#linesTableBody [data-line-id]").count() === 0, "backend-unavailable state showed operational sample lines");
-    return "aborted API requests produced explicit unavailable state with zero live lines and no sample rows";
+    check((await page.locator("#linesTableBody").textContent()).includes("Операционные данные недоступны"), "aborted API requests did not render an explicit operational error state");
+    return "aborted API requests produced explicit error state with zero live lines and no sample rows";
   } finally {
     await page.close();
   }
