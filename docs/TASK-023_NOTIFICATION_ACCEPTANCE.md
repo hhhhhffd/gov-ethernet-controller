@@ -46,10 +46,8 @@ configured in the current environment:
 - the host environment has no notification transport, webhook URL, webhook
   token, SMTP destination, or Telegram destination variables;
 - the running development server has no notification transport configuration;
-- the running production-shaped `linkwatch-task020` server has
-  `LINKWATCH_NOTIFICATION_TRANSPORT=webhook`, but its
-  `LINKWATCH_NOTIFICATION_WEBHOOK_URL` and
-  `LINKWATCH_NOTIFICATION_WEBHOOK_TOKEN` are empty.
+- no production-shaped `linkwatch-task020` server is currently present or
+  running to provide an authorized endpoint configuration.
 
 Without an agreed endpoint and credentials, a live request would require
 guessing an external target and would violate the acceptance gate. Therefore
