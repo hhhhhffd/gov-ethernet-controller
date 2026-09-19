@@ -26,7 +26,13 @@
     auditHasMore: false,
     auditFilters: { action: "", object_type: "", object_id: "" },
     agentVersions: [],
-    filters: { search: "", district: "", provider: "", technology: "", status: "", period: "week", from: "", to: "", view: "lines" },
+    historicalByLine: {},
+    historicalLoading: false,
+    historicalError: null,
+    historicalRequest: 0,
+    mapPopupLineID: null,
+    mapPopupTrigger: null,
+    filters: { search: "", district: "", provider: "", technology: "", status: "", period: "week", from: "", to: "", view: "lines", mapMode: "current" },
     currentLine: null,
     currentIncident: null,
     currentCaseId: null,
@@ -38,6 +44,7 @@
     adminResource: "organizations",
     adminItems: [],
     adminEditing: null,
+    adminContractLineID: "",
     export: { kind: "raw", format: "csv", columns: [], schools: [], devices: [] },
   };
 
@@ -65,6 +72,8 @@
     return String(value == null ? "" : value).replace(/[&<>'"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" }[char]));
   }
   function number(value, suffix = "") { return value == null || Number.isNaN(Number(value)) ? "—" : `${Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}${suffix}`; }
+  function overviewMetric(value, suffix = "") { return value == null || Number.isNaN(Number(value)) ? "Нет данных" : number(value, suffix); }
+  function popupMetric(value, suffix = "") { return value == null || Number.isNaN(Number(value)) ? "Нет данных" : number(value, suffix); }
   function time(value, withDate = false) { if (!value) return "—"; const date = new Date(value); if (Number.isNaN(date.getTime())) return escapeHtml(value); return date.toLocaleString("ru-RU", { day: withDate ? "2-digit" : undefined, month: withDate ? "short" : undefined, hour: "2-digit", minute: "2-digit", timeZone: "Asia/Almaty" }); }
   function relative(value) { if (!value) return "нет данных"; const diff = Math.max(0, Date.now() - new Date(value).getTime()); const mins = Math.round(diff / 60000); if (mins < 2) return "только что"; if (mins < 60) return `${mins} мин назад`; const hours = Math.round(mins / 60); return `${hours} ч назад`; }
   function statusClass(status) { const s = String(status || "").toUpperCase(); if (["NO_INTERNET", "CRITICAL", "DOWN", "OUTAGE"].includes(s)) return "critical"; if (["DEGRADED", "UNSTABLE", "ATTENTION", "DEVIATES"].includes(s)) return "unstable"; if (["NO_DATA", "UNKNOWN", "STALE"].includes(s)) return "no-data"; return "healthy"; }
@@ -228,10 +237,14 @@
     const devices = data.active_devices ?? data.active_points ?? data.devices ?? data.counts?.active_devices ?? state.lines.length;
     const problems = data.problem_lines ?? data.problems ?? data.counts?.problem_lines ?? state.lines.filter((line) => ["critical", "unstable"].includes(statusClass(line.status))).length;
     const completeness = data.completeness ?? data.data_completeness ?? data.data_completeness_pct ?? 94;
+    const averages = data.averages || {};
     $("#kpiSchools").textContent = number(schools);
     $("#kpiDevices").textContent = number(devices);
     $("#kpiProblems").textContent = number(problems);
     $("#kpiCompleteness").innerHTML = `${number(completeness)}<em>%</em>`;
+    $("#kpiAverageDownload").textContent = overviewMetric(averages.download, " Мбит/с");
+    $("#kpiAverageUpload").textContent = overviewMetric(averages.upload, " Мбит/с");
+    $("#kpiAveragePing").textContent = overviewMetric(averages.ping, " мс");
     if (data.completeness != null || data.data_completeness != null) $("#qualityScore").textContent = number(completeness);
     $("#lineNavCount").textContent = number(state.lines.length || data.lines || data.counts?.lines || "—");
     $("#incidentNavCount").textContent = number((data.active_incidents ?? data.counts?.active_incidents ?? state.incidents.filter((item) => item.status !== "CLOSED").length) || "—");
@@ -244,12 +257,20 @@
     districtSelect.innerHTML = `<option value="">Все районы</option>${districts.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}`;
     providerSelect.innerHTML = `<option value="">Все провайдеры</option>${providers.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}`;
     technologySelect.innerHTML = `<option value="">Все типы</option>${technologies.map((item) => `<option value="${escapeHtml(item)}">${escapeHtml(item)}</option>`).join("")}`;
-    districtSelect.value = state.filters.district; providerSelect.value = state.filters.provider; technologySelect.value = state.filters.technology; $("#statusFilter").value = state.filters.status; $("#fromDateFilter").value = state.filters.from; $("#toDateFilter").value = state.filters.to; toggleCustomPeriod();
+    districtSelect.value = state.filters.district; providerSelect.value = state.filters.provider; technologySelect.value = state.filters.technology; $("#statusFilter").value = state.filters.status; $("#periodFilter").value = state.filters.period; $("#fromDateFilter").value = state.filters.from; $("#toDateFilter").value = state.filters.to; $("#mapListMode").value = state.filters.mapMode; toggleCustomPeriod(); syncModeControls();
   }
   function dateValue(date) { return new Date(date).toISOString().slice(0, 10); }
   function toggleCustomPeriod() { const controls = $("#customPeriodControls"); if (controls) controls.hidden = state.filters.period !== "custom"; }
   function ensureCustomDates() { if (!state.filters.from || !state.filters.to) { const end = new Date(); state.filters.to = dateValue(end); state.filters.from = dateValue(new Date(end.getTime() - 6 * 86400000)); } const from = $("#fromDateFilter"); const to = $("#toDateFilter"); if (from) from.value = state.filters.from; if (to) to.value = state.filters.to; }
   function validCustomPeriod() { if (state.filters.period !== "custom" || !state.filters.from || !state.filters.to || state.filters.from <= state.filters.to) return true; toast("Дата начала должна быть не позже даты окончания", "warn"); return false; }
+  function isHistoricalMode() { return state.filters.mapMode === "historical"; }
+  function periodLabel() { return state.filters.period === "custom" ? `${state.filters.from || "?"} — ${state.filters.to || "?"}` : ({ day: "сегодня", week: "7 дней", month: "месяц" }[state.filters.period] || state.filters.period); }
+  function syncModeControls() {
+    const historical = isHistoricalMode();
+    const status = $("#statusFilter");
+    if (status) { status.disabled = historical; status.title = historical ? "Фильтр current state доступен только в текущем режиме" : ""; }
+    $$('[data-table-view]').forEach((button) => { button.disabled = historical; button.title = historical ? "Представление historical evidence использует строки линий" : ""; });
+  }
   function filteredLines() {
     const query = state.filters.search.trim().toLowerCase();
     return state.lines.filter((line) => {
@@ -258,27 +279,94 @@
       const matchesProvider = !state.filters.provider || line.provider === state.filters.provider;
       const matchesTechnology = !state.filters.technology || line.technology === state.filters.technology;
       const normalizedStatus = String(line.status || "").toUpperCase() === "UNSTABLE" ? "DEGRADED" : String(line.status || "").toUpperCase();
-      const matchesStatus = !state.filters.status || normalizedStatus === state.filters.status;
-      const matchesView = state.filters.view === "attention" ? ["critical", "unstable"].includes(statusClass(line.status)) : state.filters.view === "stale" ? statusClass(line.data_state) === "no-data" : true;
+      const matchesStatus = isHistoricalMode() || !state.filters.status || normalizedStatus === state.filters.status;
+      const matchesView = isHistoricalMode() || (state.filters.view === "attention" ? ["critical", "unstable"].includes(statusClass(line.status)) : state.filters.view === "stale" ? statusClass(line.data_state) === "no-data" : true);
       return matchesQuery && matchesDistrict && matchesProvider && matchesTechnology && matchesStatus && matchesView;
     });
   }
-  function renderAll() { renderMap(); renderSituations(); renderLines(); renderActivity(); renderIncidents(); renderNotifications(); renderPassport(); $("#situationCount").textContent = state.situations.length; $("#mapVisibleCount").textContent = filteredLines().length; $("#lineCount").textContent = state.lines.length; }
+  function historicalSummary(line) { return state.historicalByLine[line.id] || null; }
+  function historicalBadge(summary) {
+    if (!summary || !Number(summary.measurement_count)) return { className: "no-data", label: "Нет данных" };
+    if (summary.analytics_state === "UNKNOWN") return { className: "no-data", label: "Недостаточно данных" };
+    return { className: "historical", label: "История доступна" };
+  }
+  function historicalRate(value) { return value == null ? "Нет данных" : `${number(value)}%`; }
+  function historicalReportPayload(payload) { return payload?.data || payload || {}; }
+  async function loadHistoricalPeriod() {
+    if (!isHistoricalMode() || !validCustomPeriod()) return;
+    const request = ++state.historicalRequest;
+    state.historicalLoading = true;
+    state.historicalError = null;
+    state.historicalByLine = {};
+    renderMap(); renderLines();
+    try {
+      const query = currentReportParams();
+      const aggregateResponse = await apiTry([`/api/reports/aggregate?${query}`, `/api/v1/reports/aggregate?${query}`]);
+      const aggregate = historicalReportPayload(aggregateResponse);
+      let analytics = {};
+      try {
+        const analyticsResponse = await apiTry([`/api/reports/analytics?${query}&limit=500`, `/api/v1/reports/analytics?${query}&limit=500`]);
+        analytics = historicalReportPayload(analyticsResponse);
+      } catch (_) {
+        // Aggregate data is still canonical historical evidence; missing analytics
+        // must remain visible as unknown instead of becoming a client verdict.
+      }
+      if (request !== state.historicalRequest || !isHistoricalMode()) return;
+      const summaries = {};
+      Object.entries(aggregate.by_line || {}).forEach(([lineID, value]) => { summaries[lineID] = { ...value }; });
+      (analytics.ranking || []).forEach((value) => {
+        if (!value.line_id) return;
+        summaries[value.line_id] = { ...(summaries[value.line_id] || {}), baseline_compliance: value.baseline_compliance, contract_compliance: value.contract_compliance, analytics_state: value.state };
+      });
+      state.historicalByLine = summaries;
+    } catch (error) {
+      if (request === state.historicalRequest && isHistoricalMode()) state.historicalError = error;
+    } finally {
+      if (request === state.historicalRequest) {
+        state.historicalLoading = false;
+        renderMap(); renderLines();
+      }
+    }
+  }
+  function renderAll() { renderMap(); renderSituations(); renderLines(); renderActivity(); renderIncidents(); renderNotifications(); renderPassport(); $("#situationCount").textContent = state.situations.length; $("#lineCount").textContent = state.lines.length; }
   function renderMap() {
     const root = $("#mapMarkers"); if (!root) return;
+    const historical = isHistoricalMode();
+    syncModeControls();
+    const modeLabel = $("#mapModeLabel");
+    if (modeLabel) modeLabel.innerHTML = historical ? "ГЕОГРАФИЯ · ИСТОРИЧЕСКИЙ ПЕРИОД" : "ГЕОГРАФИЯ · ТЕКУЩЕЕ СОСТОЯНИЕ <span class=\"panel-live\"><i></i> живые данные</span>";
+    if (state.mapPopupLineID) closeMapPopup(false);
+    if (historical && state.historicalLoading) { root.innerHTML = ""; $("#mapVisibleCount").textContent = "—"; $("#mapFooterNote").textContent = `Загрузка historical evidence за период: ${periodLabel()}`; return; }
+    if (historical && state.historicalError) { root.innerHTML = ""; $("#mapVisibleCount").textContent = "—"; $("#mapFooterNote").textContent = "Историческое представление недоступно"; return; }
     const rows = filteredLines();
     $("#mapVisibleCount").textContent = rows.length;
-    root.innerHTML = rows.map((line, index) => { const coords = Array.isArray(line.coordinates) ? line.coordinates : [190 + (index * 59) % 320, 110 + (index * 37) % 170]; const cls = statusClass(line.status); return `<g class="map-marker ${cls}" data-line-id="${escapeHtml(line.id)}" tabindex="0" role="button" aria-label="${escapeHtml(line.school_name)} — ${escapeHtml(statusLabel(line.status))}" transform="translate(${Number(coords[0]) || 0} ${Number(coords[1]) || 0})"><circle class="halo" r="13"></circle><circle class="core" r="5"></circle><text x="9" y="3">${escapeHtml(line.school_name.replace(/^(Средняя |Городская )?школа(а)?\s*/i, "").slice(0, 14))}</text></g>`; }).join("");
-    $$(".map-marker", root).forEach((marker) => { marker.addEventListener("click", () => openLine(marker.dataset.lineId)); marker.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openLine(marker.dataset.lineId); } }); });
+    $("#mapFooterNote").textContent = historical ? `Historical evidence · ${periodLabel()} · current LineState не используется` : "Текущее состояние из latest LineState";
+    root.innerHTML = rows.map((line, index) => { const coords = Array.isArray(line.coordinates) ? line.coordinates : [190 + (index * 59) % 320, 110 + (index * 37) % 170]; const summary = historicalSummary(line); const badge = historical ? historicalBadge(summary) : { className: statusClass(line.status), label: statusLabel(line.status) }; return `<g class="map-marker ${badge.className}" data-line-id="${escapeHtml(line.id)}" tabindex="0" role="button" aria-controls="mapPopup" aria-expanded="false" aria-label="${escapeHtml(line.school_name)} — ${escapeHtml(historical ? `историческое представление: ${badge.label}` : badge.label)}" transform="translate(${Number(coords[0]) || 0} ${Number(coords[1]) || 0})"><circle class="halo" r="13"></circle><circle class="core" r="5"></circle><text x="9" y="3">${escapeHtml(line.school_name.replace(/^(Средняя |Городская )?школа(а)?\s*/i, "").slice(0, 14))}</text></g>`; }).join("");
+    $$(".map-marker", root).forEach((marker) => { marker.addEventListener("click", () => openMapPopup(marker.dataset.lineId, marker)); marker.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openMapPopup(marker.dataset.lineId, marker); } }); });
   }
   function renderSituations() {
     const root = $("#situationsList"); if (!state.situations.length) { root.innerHTML = `<div class="table-empty">Нет текущих связанных ситуаций</div>`; return; }
     root.innerHTML = state.situations.slice(0, 4).map((situation) => `<article class="situation-card" data-situation-id="${escapeHtml(situation.id)}" tabindex="0"><i class="severity-mark ${statusClass(situation.severity || situation.status)}"></i><div><span class="situation-title">${escapeHtml(situation.title || situation.name || "Связанные нарушения")}</span><span class="situation-meta">${escapeHtml(situation.meta || `${situation.provider || "—"} · ${situation.affected_count || 0} линий`)} · <b>${escapeHtml(situation.reason || "Возможная связь")}</b></span></div><time class="situation-time">${time(situation.started_at || situation.start_at)}</time></article>`).join("");
     $$(".situation-card", root).forEach((card) => { const open = () => openSituation(card.dataset.situationId); card.addEventListener("click", open); card.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } }); });
   }
+  function renderHistoricalLines(rows, root) {
+    if (state.historicalLoading) { root.innerHTML = `<tr><td colspan="6" class="table-empty">Загрузка historical evidence…</td></tr>`; $("#loadMore").hidden = true; $("#tableSummary").textContent = "Загрузка периода"; return; }
+    if (state.historicalError) { root.innerHTML = `<tr><td colspan="6" class="table-empty">Историческое представление недоступно. Повторите попытку.</td></tr>`; $("#loadMore").hidden = true; $("#tableSummary").textContent = "Ошибка исторического отчёта"; return; }
+    if (!rows.length) { root.innerHTML = `<tr><td colspan="6" class="table-empty">По выбранным фильтрам линий нет.</td></tr>`; $("#loadMore").hidden = true; $("#tableSummary").textContent = "Нет строк"; return; }
+    const visibleRows = rows.slice(0, state.lineLimit);
+    root.innerHTML = visibleRows.map((line) => {
+      const summary = historicalSummary(line); const badge = historicalBadge(summary); const measurements = summary?.measurement_count == null ? "Нет данных" : number(summary.measurement_count); const problems = summary?.problem_measurement_count == null ? "Нет данных" : number(summary.problem_measurement_count);
+      return `<tr><td><div class="line-cell"><span class="line-avatar">${escapeHtml((line.school_name || "Ш").replace(/[^А-ЯA-Z]/gi, "").slice(0, 1) || "Ш")}</span><div><span class="line-name">${escapeHtml(line.school_name)}</span><span class="line-sub">${escapeHtml(line.id)} · ${escapeHtml(line.role)} · ${escapeHtml(line.technology)}</span></div></div></td><td><span class="status-badge ${badge.className}"><i></i>${escapeHtml(badge.label)}</span></td><td><div class="axis-pair"><span class="axis-chip ${summary?.baseline_compliance == null ? "unknown" : "good"}"><strong>Базовый норматив</strong> ${escapeHtml(historicalRate(summary?.baseline_compliance))}</span><span class="axis-chip ${summary?.contract_compliance == null ? "unknown" : "good"}"><strong>Договор</strong> ${escapeHtml(historicalRate(summary?.contract_compliance))}</span></div></td><td><div class="metric-line"><strong>${escapeHtml(measurements)} наблюдений</strong><span>Проблемные: ${escapeHtml(problems)}</span></div></td><td><div class="time-line"><span class="freshness">${escapeHtml(periodLabel())}</span><span>Historical evidence · current state не используется</span></div></td><td><button class="row-action" data-line-id="${escapeHtml(line.id)}">Открыть →</button></td></tr>`;
+    }).join("");
+    $$(".row-action", root).forEach((button) => button.addEventListener("click", () => openLine(button.dataset.lineId)));
+    $("#loadMore").hidden = rows.length <= state.lineLimit;
+    $("#tableSummary").textContent = `Historical: показано ${Math.min(rows.length, state.lineLimit)} из ${rows.length} линий`;
+  }
   function renderLines() {
     const rows = filteredLines(); const root = $("#linesTableBody");
-    const modeNote = $("#lineModeNote"); if (modeNote) modeNote.textContent = `Карта и список показывают current latest state; выбранный период (${state.filters.period === "custom" ? "custom" : state.filters.period}) применяется только к canonical паспорту качества.`;
+    syncModeControls();
+    const modeNote = $("#lineModeNote"); if (modeNote) modeNote.textContent = isHistoricalMode() ? `Исторический режим: ${periodLabel()}. Представление построено backend report dataset; current LineState не используется.` : "Текущее состояние берётся из latest LineState. Период не меняет current truth и используется только для исторического отчёта.";
+    if (isHistoricalMode()) { renderHistoricalLines(rows, root); return; }
     if (state.filters.view === "schools") {
       const groups = new Map();
       rows.forEach((line) => { const key = line.organization_id || line.school_id || line.school_name; const group = groups.get(key) || { ...line, lines: [], providers: new Set(), incidents: 0 }; group.lines.push(line); if (line.provider && line.provider !== "—") group.providers.add(line.provider); group.incidents += state.incidents.filter((item) => item.line_id === line.id && String(item.status).toUpperCase() !== "CLOSED").length; groups.set(key, group); });
@@ -406,6 +494,34 @@
   }
   function loadPassportWithAnalytics() { const current = state.lastPassport || {}; renderPassport({ ...current, analytics: state.analytics }); const button = $("[data-analytics-download]"); if (button) button.addEventListener("click", downloadAnalytics); }
   async function downloadAnalytics() { try { const response = await fetch(`/api/reports/analytics?${currentReportParams()}&limit=100&format=csv`, { headers: state.token ? { Authorization: `Bearer ${state.token}` } : {} }); if (!response.ok) throw new Error("analytics"); return consumeDownload(response, "analytics", "csv"); } catch (_) { toast("Историческая аналитика недоступна — файл не создан", "warn"); } }
+
+  function popupText(value) { return value == null || value === "" || value === "—" ? "Нет данных" : String(value); }
+  function closeMapPopup(restoreFocus = true) {
+    const trigger = state.mapPopupTrigger;
+    state.mapPopupLineID = null;
+    state.mapPopupTrigger = null;
+    const popup = $("#mapPopup");
+    if (popup) popup.classList.add("hidden");
+    if (trigger) trigger.setAttribute("aria-expanded", "false");
+    if (restoreFocus && trigger?.isConnected) trigger.focus();
+  }
+  function openMapPopup(id, trigger) {
+    const line = state.lines.find((item) => item.id === id); if (!line) return;
+    closeMapPopup(false);
+    state.mapPopupLineID = id;
+    state.mapPopupTrigger = trigger || null;
+    if (trigger) trigger.setAttribute("aria-expanded", "true");
+    const latest = line.latest || {};
+    const summary = historicalSummary(line);
+    const currentStatus = line.status ? statusLabel(line.status) : "Нет данных";
+    const contractStatus = line.contract_state && line.contract_state !== "UNKNOWN" ? axisLabel(line.contract_state) : "Нет данных";
+    const historySummary = !summary || !Number(summary.measurement_count) ? "Нет наблюдений за выбранный период" : `${number(summary.measurement_count)} наблюдений · проблемные: ${summary.problem_measurement_count == null ? "Нет данных" : number(summary.problem_measurement_count)}`;
+    $("#mapPopupTitle").textContent = line.school_name;
+    $("#mapPopupSummary").textContent = isHistoricalMode() ? `Historical evidence · ${periodLabel()} · ${historySummary}` : "Current operational data · latest LineState";
+    const fields = [["School ID", popupText(line.school_id)], ["Название", popupText(line.school_name)], ["Район", popupText(line.district)], ["Провайдер", popupText(line.provider)], ["Технология", popupText(line.technology)], ["Договорный ориентир", contractStatus], ["Текущее состояние", currentStatus], ["Download · latest", popupMetric(latest.download, " Мбит/с")], ["Upload · latest", popupMetric(latest.upload, " Мбит/с")], ["Ping · latest", popupMetric(latest.ping, " мс")], ["Последнее наблюдение", latest.at ? time(latest.at, true) : "Нет данных"]];
+    $("#mapPopupFields").innerHTML = fields.map(([label, value]) => `<div class="map-popup-field"><span>${escapeHtml(label)}</span><b>${escapeHtml(value)}</b></div>`).join("");
+    const popup = $("#mapPopup"); popup.classList.remove("hidden"); $("#mapPopupOpenLine").onclick = () => { closeMapPopup(false); openLine(id); }; $("#mapPopupClose").focus();
+  }
 
   async function openLine(id) {
     const line = state.lines.find((item) => item.id === id); if (!line) return;
@@ -543,7 +659,7 @@
   }
   function closeCaseModal() { $("#caseModalBackdrop").classList.add("hidden"); state.currentIncident = null; }
   async function createReplay() { try { await apiTry(["/api/demo/replay", "/api/v1/demo/replay"], { method: "POST", body: JSON.stringify({ scenario: "school-42" }) }); await loadData(); toast("Replay запущен: новые observations проходят тот же state engine"); } catch (_) { if (!state.usingDemoData) { toast("Сервер replay недоступен — новые данные не добавлены", "warn"); return; } const line = state.lines.find((item) => item.id === "L-001"); if (line) { line.status = "UNSTABLE"; line.contract_state = "DEVIATES"; line.latest.download = 41; line.latest.at = new Date().toISOString(); } renderAll(); toast("Replay запущен в демонстрационном режиме", "warn"); } }
-  function currentReportParams() { const params = new URLSearchParams({ period: state.filters.period }); ["district", "provider", "technology", "status"].forEach((key) => { if (state.filters[key]) params.set(key, state.filters[key]); }); if (state.filters.period === "custom") { ensureCustomDates(); if (state.filters.from) params.set("from", `${state.filters.from}T00:00:00Z`); if (state.filters.to) { const end = new Date(`${state.filters.to}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 1); params.set("to", end.toISOString()); } } return params.toString(); }
+  function currentReportParams() { const params = new URLSearchParams({ period: state.filters.period }); ["district", "provider", "technology", "status"].forEach((key) => { if (key !== "status" || !isHistoricalMode()) if (state.filters[key]) params.set(key, state.filters[key]); }); if (state.filters.period === "custom") { ensureCustomDates(); if (state.filters.from) params.set("from", `${state.filters.from}T00:00:00Z`); if (state.filters.to) { const end = new Date(`${state.filters.to}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 1); params.set("to", end.toISOString()); } } return params.toString(); }
   function exportColumns(kind = state.export.kind) { return kind === "aggregate" ? [["line_id", "Line ID"], ["measurement_count", "Measurements"], ["average_download", "Avg Download"], ["min_download", "Min Download"], ["max_download", "Max Download"], ["average_upload", "Avg Upload"], ["min_upload", "Min Upload"], ["average_ping", "Avg Ping"], ["min_ping", "Min Ping"], ["problem_measurement_count", "Problems"], ["problem_measurement_percent", "Problem share"], ["availability_percent", "Availability %"]] : [["observed_at", "Observed at"], ["school_id", "School ID"], ["organization_name", "School"], ["device_id", "Device ID"], ["device_display_name", "Device"], ["monitoring_point_id", "Monitoring point"], ["monitoring_point_location", "Location"], ["download", "Download"], ["upload", "Upload"], ["ping", "Ping"], ["jitter", "Jitter"], ["packet_loss", "Packet loss"], ["connection_status", "Connection status"], ["availability_status", "Availability status"]]; }
   function renderExportColumns() { const root = $("#exportColumns"); if (!root) return; const options = exportColumns(); if (!state.export.columns.length) state.export.columns = options.map(([key]) => key); root.innerHTML = options.map(([key, label]) => `<label><input type="checkbox" data-export-column="${escapeHtml(key)}" ${state.export.columns.includes(key) ? "checked" : ""}> ${escapeHtml(label)}</label>`).join(""); $$('[data-export-column]', root).forEach((input) => input.addEventListener("change", () => { state.export.columns = $$('[data-export-column]:checked', root).map((item) => item.dataset.exportColumn); loadExportPreview(); })); }
   function exportParams(preview = false) { const type = state.export.kind; const params = new URLSearchParams({ type, kind: type, format: state.export.format, period: state.filters.period }); ["district", "provider", "technology", "status"].forEach((key) => { if (state.filters[key]) params.set(key, state.filters[key]); }); const school = $("#exportSchool")?.value; if (school) params.set("school_id", school); const devices = $$("#exportDevices option:checked").map((item) => item.value).filter(Boolean); devices.forEach((id) => params.append("device_ids[]", id)); if (state.filters.period === "custom") { const report = new URLSearchParams(currentReportParams()); ["from", "to"].forEach((key) => { if (report.get(key)) params.set(key, report.get(key)); }); } state.export.columns.forEach((column) => params.append("columns[]", column)); if (preview) params.set("preview", "1"); return params; }
@@ -563,23 +679,44 @@
     users: { label: "пользователя", fields: [["id", "ID", "text", true], ["username", "Логин", "text"], ["role", "Роль", "text"], ["password", "Новый пароль", "password"], ["disabled", "Отключён", "checkbox"], ["scopes_json", "Scopes JSON", "textarea"]], columns: ["username", "role", "disabled", "scopes"] },
     schedule: { label: "расписание", fields: [["tests_per_day", "Performance tests/day (3–5)", "number"], ["jitter_minutes", "Jitter window (minutes)", "number"], ["light_checks_between", "Light checks between", "checkbox"]], columns: ["tests_per_day", "jitter_minutes", "light_checks_between", "updated_at"] },
     policies: { label: "версию порогов", fields: [["scope_type", "Scope type (GLOBAL/LINE)", "text"], ["scope_id", "Scope ID", "text"], ["valid_from", "Valid from (RFC3339)", "text"], ["download_min", "Download min", "number"], ["upload_min", "Upload min", "number"], ["ping_max", "Ping max", "number"], ["jitter_max", "Jitter max", "number"], ["packet_loss_max", "Packet loss max", "number"], ["availability_min", "Availability min", "number"], ["confirm_count", "Confirm count", "number"], ["confirm_duration_minutes", "Confirm duration minutes (optional)", "number"], ["recovery_count", "Recovery count", "number"], ["recovery_minutes", "Recovery minutes", "number"], ["freshness_seconds", "Freshness seconds", "number"]], columns: ["scope_type", "scope_id", "version", "confirm_count", "confirm_duration_minutes", "recovery_count", "created_at"] },
+    contracts: { label: "версию договора", fields: [["line_id", "Line ID", "text"], ["contract_no", "Номер договора", "text"], ["contract_date", "Дата договора", "datetime-local"], ["valid_from", "Effective from", "datetime-local"], ["download_min", "Download min", "number"], ["upload_min", "Upload min", "number"], ["ping_max", "Ping max", "number"], ["jitter_max", "Jitter max", "number"], ["packet_loss_max", "Packet loss max", "number"], ["availability_min", "Availability min", "number"], ["reason", "Причина изменения", "text"]], columns: ["line_id", "contract_no", "contract_date", "valid_from", "valid_to", "download_min", "upload_min", "ping_max", "jitter_max", "packet_loss_max", "availability_min", "created_by"] },
     districts: { label: "район", fields: [["id", "ID", "text", true], ["name", "Название", "text"], ["active", "Активен", "checkbox"]], columns: ["id", "name", "active"] },
     technologies: { label: "технологию", fields: [["id", "ID", "text", true], ["name", "Название", "text"], ["active", "Активна", "checkbox"]], columns: ["id", "name", "active"] },
   };
-  function adminValue(item, key) { let value = item[key]; if (key === "display_name" && (value == null || value === "")) value = item.hostname || item.id; if (value == null || value === "") return "—"; if (typeof value === "boolean") return value ? "Да" : "Нет"; if (typeof value === "object") return JSON.stringify(value); return String(value); }
+  function adminValue(item, key) { let value = item[key]; if (key === "display_name" && (value == null || value === "")) value = item.hostname || item.id; if (value == null || value === "") return "—"; if (["contract_date", "valid_from", "valid_to", "created_at"].includes(key)) return time(value, true); if (typeof value === "boolean") return value ? "Да" : "Нет"; if (typeof value === "object") return JSON.stringify(value); return String(value); }
+  function adminErrorMessage(error, fallback) {
+    if (!error) return fallback;
+    try { const parsed = JSON.parse(error.message); return parsed.error || parsed.message || fallback; } catch (_) { return error.message || fallback; }
+  }
+  function renderAdminResourceToolbar() {
+    const root = $("#adminResourceToolbar"); if (!root) return;
+    if (state.adminResource !== "contracts") { root.hidden = true; root.innerHTML = ""; return; }
+    const options = state.lines.slice().sort((left, right) => String(left.id).localeCompare(String(right.id))).map((line) => `<option value="${escapeHtml(line.id)}">${escapeHtml(line.id)} · ${escapeHtml(line.school_name)}</option>`).join("");
+    root.hidden = false;
+    root.innerHTML = `<label><span class="filter-label">Линия для истории договоров</span><select id="adminContractLineFilter"><option value="">Все линии</option>${options}</select></label><small>История immutable; новая effective version создаётся отдельной записью.</small>`;
+    const select = $("#adminContractLineFilter"); select.value = state.adminContractLineID; select.addEventListener("change", () => { state.adminContractLineID = select.value; loadAdminResource("contracts"); });
+  }
+  function renderContractAdminTable(root, config) {
+    if (!state.adminItems.length) { root.innerHTML = `<div class="table-empty">Истории договоров нет.</div>`; return; }
+    const labels = { line_id: "Line ID", contract_no: "Номер", contract_date: "Дата договора", valid_from: "Effective from", valid_to: "Effective to", download_min: "Download min", upload_min: "Upload min", ping_max: "Ping max", jitter_max: "Jitter max", packet_loss_max: "Packet loss max", availability_min: "Availability min", created_by: "Создал" };
+    root.innerHTML = `<table class="admin-table contract-table"><thead><tr>${config.columns.map((key) => `<th>${escapeHtml(labels[key] || key)}</th>`).join("")}<th>Статус</th></tr></thead><tbody>${state.adminItems.map((item) => { const current = item.valid_to == null; return `<tr class="${current ? "contract-current" : "contract-history"}">${config.columns.map((key) => `<td>${escapeHtml(adminValue(item, key))}</td>`).join("")}<td><span class="status-badge ${current ? "healthy" : "no-data"}"><i></i>${current ? "Текущая" : "Историческая"}</span></td></tr>`; }).join("")}</tbody></table>`;
+  }
   async function loadAdminResource(resource = state.adminResource) {
     if (!canAdmin()) return;
     state.adminResource = resource; state.adminEditing = null; state.adminItems = []; renderAdmin();
     const resourcePath = resource === "schedule" ? "schedules" : resource === "districts" || resource === "technologies" ? `catalogs/${resource}` : resource;
-    try { const payload = await apiTry([`/api/admin/${resourcePath}`, `/api/v1/admin/${resourcePath}`]); state.adminItems = resource === "schedule" ? [payload] : unwrap(payload); renderAdmin(); } catch (error) { $("#adminResourceTable").innerHTML = `<div class="table-empty">Не удалось загрузить реестр. Проверьте права и повторите попытку.</div>`; $("#adminFormError").textContent = error.status === 403 ? "Доступ к реестру запрещён текущей ролью." : "Серверный реестр недоступен."; }
+    const query = resource === "contracts" && state.adminContractLineID ? `?line_id=${encodeURIComponent(state.adminContractLineID)}` : "";
+    try { const payload = await apiTry([`/api/admin/${resourcePath}${query}`, `/api/v1/admin/${resourcePath}${query}`]); state.adminItems = resource === "schedule" ? [payload] : unwrap(payload); renderAdmin(); } catch (error) { $("#adminResourceTable").innerHTML = `<div class="table-empty">Не удалось загрузить реестр. Проверьте права и повторите попытку.</div>`; $("#adminFormError").textContent = error.status === 403 ? "Доступ к реестру запрещён текущей ролью." : adminErrorMessage(error, "Серверный реестр недоступен."); }
   }
   function renderAdmin() {
     const config = adminResourceConfig[state.adminResource]; if (!config) return;
     ensureImpactPreviewUI();
+    renderAdminResourceToolbar();
     $$("[data-admin-resource]").forEach((tab) => tab.classList.toggle("active", tab.dataset.adminResource === state.adminResource));
-    $("#adminFormTitle").textContent = state.adminEditing ? `Изменить ${config.label}` : `Новая ${config.label}`;
-    $("#adminFormFields").innerHTML = config.fields.map(([key, label, type, immutable]) => { const value = state.adminEditing ? (state.adminEditing[key] ?? (key === "device_id" ? state.adminEditing.id : key === "scopes_json" ? JSON.stringify(state.adminEditing.scopes || []) : undefined)) : (type === "checkbox" ? true : ""); const disabled = state.adminEditing && immutable ? "disabled" : ""; if (type === "checkbox") return `<label class="admin-check"><input name="${key}" type="checkbox" ${value ? "checked" : ""} ${disabled}/> ${escapeHtml(label)}</label>`; if (type === "textarea") return `<label>${escapeHtml(label)}<textarea name="${key}" rows="3">${escapeHtml(value == null ? "" : value)}</textarea></label>`; return `<label>${escapeHtml(label)}<input name="${key}" type="${type}" value="${escapeHtml(value == null ? "" : value)}" ${disabled}/></label>`; }).join("");
-    const root = $("#adminResourceTable"); if (!state.adminItems.length) { root.innerHTML = `<div class="table-empty">Записей нет</div>`; return; }
+    $("#adminFormTitle").textContent = state.adminResource === "contracts" ? "Новая effective версия договора" : state.adminEditing ? `Изменить ${config.label}` : `Новая ${config.label}`;
+    $("#adminFormFields").innerHTML = config.fields.map(([key, label, type, immutable]) => { const value = state.adminEditing ? (state.adminEditing[key] ?? (key === "device_id" ? state.adminEditing.id : key === "scopes_json" ? JSON.stringify(state.adminEditing.scopes || []) : undefined)) : (state.adminResource === "contracts" && key === "line_id" ? state.adminContractLineID : type === "checkbox" ? true : ""); const disabled = state.adminEditing && immutable ? "disabled" : ""; const required = state.adminResource === "contracts" && ["line_id", "valid_from"].includes(key) ? "required" : ""; if (type === "checkbox") return `<label class="admin-check"><input name="${key}" type="checkbox" ${value ? "checked" : ""} ${disabled}/> ${escapeHtml(label)}</label>`; if (type === "textarea") return `<label>${escapeHtml(label)}<textarea name="${key}" rows="3">${escapeHtml(value == null ? "" : value)}</textarea></label>`; return `<label>${escapeHtml(label)}<input name="${key}" type="${type}" value="${escapeHtml(value == null ? "" : value)}" ${disabled} ${required}/></label>`; }).join("");
+    const root = $("#adminResourceTable"); if (!state.adminItems.length) { root.innerHTML = `<div class="table-empty">${state.adminResource === "contracts" ? "Истории договоров нет." : "Записей нет"}</div>`; return; }
+    if (state.adminResource === "contracts") { renderContractAdminTable(root, config); return; }
     root.innerHTML = `<table class="admin-table"><thead><tr>${config.columns.map((key) => `<th>${escapeHtml(key)}</th>`).join("")}<th></th></tr></thead><tbody>${state.adminItems.map((item, index) => { const deviceActions = state.adminResource === "devices" ? `<button type="button" class="row-action" data-admin-action="${item.blocked ? "unblock" : "block"}" data-admin-id="${escapeHtml(item.id)}">${item.blocked ? "Разблокировать" : "Заблокировать"}</button><button type="button" class="row-action" data-admin-action="rotate-token" data-admin-id="${escapeHtml(item.id)}">Новый токен</button>` : ""; return `<tr>${config.columns.map((key) => `<td>${escapeHtml(adminValue(item, key))}</td>`).join("")}<td><button type="button" class="row-action" data-admin-edit="${index}">Изменить</button>${deviceActions}</td></tr>`; }).join("")}</tbody></table>`;
     $$("[data-admin-edit]", root).forEach((button) => button.addEventListener("click", () => { state.adminEditing = state.adminItems[Number(button.dataset.adminEdit)]; renderAdmin(); $("#adminResourceForm").scrollIntoView({ behavior: "smooth", block: "nearest" }); }));
     $$("[data-admin-action]", root).forEach((button) => button.addEventListener("click", () => adminDeviceAction(button.dataset.adminId, button.dataset.adminAction)));
@@ -606,15 +743,15 @@
   }
   async function saveAdminResource(event) {
     event.preventDefault(); const config = adminResourceConfig[state.adminResource]; const form = event.currentTarget; const payload = {};
-    config.fields.forEach(([key, , type]) => { const input = form.elements[key]; if (!input || (state.adminEditing && key === "id")) return; payload[key] = type === "checkbox" ? input.checked : type === "number" ? (input.value.trim() === "" ? null : Number(input.value)) : input.value.trim(); });
+    config.fields.forEach(([key, , type]) => { const input = form.elements[key]; if (!input || (state.adminEditing && key === "id")) return; payload[key] = type === "checkbox" ? input.checked : type === "number" ? (input.value.trim() === "" ? null : Number(input.value)) : type === "datetime-local" ? (input.value.trim() === "" ? null : new Date(input.value).toISOString()) : input.value.trim(); });
     if (state.adminResource === "lines" && !payload.provider_id) payload.provider_id = null;
     if (state.adminResource === "users") { try { payload.scopes = payload.scopes_json ? JSON.parse(payload.scopes_json) : []; } catch (_) { $("#adminFormError").textContent = "Scopes JSON имеет неверный формат."; return; } delete payload.scopes_json; }
     if (state.adminResource === "policies" && payload.confirm_duration_minutes === "") payload.confirm_duration_minutes = null;
     const resourceID = state.adminEditing?.id || state.adminEditing?.device_id;
     const resourcePath = state.adminResource === "schedule" ? "schedules" : state.adminResource === "districts" || state.adminResource === "technologies" ? `catalogs/${state.adminResource}` : state.adminResource;
-    const versionedPolicy = state.adminResource === "policies";
-    const path = state.adminResource === "devices" && !state.adminEditing ? "/api/admin/devices/register" : `/api/admin/${resourcePath}${resourceID && !versionedPolicy ? `/${encodeURIComponent(resourceID)}` : ""}`;
-    try { const response = await apiTry([path, path.replace("/api/", "/api/v1/")], { method: versionedPolicy ? "POST" : resourceID ? "PUT" : "POST", body: JSON.stringify(payload) }); state.adminEditing = null; $("#adminFormError").textContent = response?.device_token ? "Устройство зарегистрировано; токен показан только сейчас." : ""; await loadAdminResource(state.adminResource); } catch (error) { $("#adminFormError").textContent = error.status === 409 ? "Конфликт или занятая версия. Реестр обновлён; повторите по актуальным данным." : error.status === 403 ? "Действие запрещено текущей ролью или scope." : "Не удалось сохранить изменения."; await loadAdminResource(state.adminResource); }
+    const versionedResource = state.adminResource === "policies" || state.adminResource === "contracts";
+    const path = state.adminResource === "devices" && !state.adminEditing ? "/api/admin/devices/register" : `/api/admin/${resourcePath}${resourceID && !versionedResource ? `/${encodeURIComponent(resourceID)}` : ""}`;
+    try { const response = await apiTry([path, path.replace("/api/", "/api/v1/")], { method: versionedResource ? "POST" : resourceID ? "PUT" : "POST", body: JSON.stringify(payload) }); state.adminEditing = null; $("#adminFormError").textContent = response?.device_token ? "Устройство зарегистрировано; токен показан только сейчас." : ""; await loadAdminResource(state.adminResource); } catch (error) { $("#adminFormError").textContent = error.status === 409 ? adminErrorMessage(error, "Effective interval пересекается с существующей версией; история сохранена, новая версия не создана.") : error.status === 403 ? "Действие запрещено текущей ролью или scope." : adminErrorMessage(error, "Не удалось сохранить изменения."); await loadAdminResource(state.adminResource); }
   }
 
   function showView(view) {
@@ -641,10 +778,10 @@
     $("#adminRefresh").addEventListener("click", () => loadAdminResource(state.adminResource)); $("#adminFormReset").addEventListener("click", () => { state.adminEditing = null; $("#adminFormError").textContent = ""; renderAdmin(); }); $("#adminResourceForm").addEventListener("submit", saveAdminResource); $$("[data-admin-resource]").forEach((tab) => tab.addEventListener("click", () => loadAdminResource(tab.dataset.adminResource)));
     $("#passportButton").addEventListener("click", () => showView("reports"));
     $("#exportKind").addEventListener("change", (event) => { state.export.kind = event.target.value; state.export.columns = []; renderExportColumns(); loadExportPreview(); }); $("#exportFormat").addEventListener("change", (event) => { state.export.format = event.target.value; loadExportPreview(); }); $("#exportSchool").addEventListener("change", loadExportPreview); $("#exportDevices").addEventListener("change", loadExportPreview); $("#exportPreview").addEventListener("click", loadExportPreview); $("#exportDownload").addEventListener("click", () => downloadExport()); $("#evidenceReportDownload").addEventListener("click", downloadEvidenceReport);
-    $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer); $("#caseModalClose").addEventListener("click", closeCaseModal); $("#caseCancel").addEventListener("click", closeCaseModal); $("#caseSend").addEventListener("click", sendCase);
+    $("#drawerClose").addEventListener("click", closeDrawer); $("#drawerBackdrop").addEventListener("click", closeDrawer); $("#mapPopupClose").addEventListener("click", () => closeMapPopup()); document.addEventListener("keydown", (event) => { if (event.key === "Escape" && !$("#mapPopup").classList.contains("hidden")) closeMapPopup(); }); $("#caseModalClose").addEventListener("click", closeCaseModal); $("#caseCancel").addEventListener("click", closeCaseModal); $("#caseSend").addEventListener("click", sendCase);
     $("#reviewConfirm").addEventListener("change", (event) => { $("#caseSend").disabled = !event.target.checked; }); $("#draftText").addEventListener("input", () => { $("#reviewConfirm").checked = false; $("#caseSend").disabled = true; });
     $("#manualIncidentButton").addEventListener("click", () => { const line = state.lines[0]; if (line) createManualIncident(line); });
-    $("#searchInput").addEventListener("input", (event) => { state.filters.search = event.target.value; renderMap(); renderLines(); }); $("#districtFilter").addEventListener("change", (event) => { state.filters.district = event.target.value; renderMap(); renderLines(); loadPassport(); }); $("#providerFilter").addEventListener("change", (event) => { state.filters.provider = event.target.value; renderMap(); renderLines(); loadPassport(); }); $("#technologyFilter").addEventListener("change", (event) => { state.filters.technology = event.target.value; renderMap(); renderLines(); loadPassport(); }); $("#statusFilter").addEventListener("change", (event) => { state.filters.status = event.target.value; renderMap(); renderLines(); loadPassport(); }); $("#periodFilter").addEventListener("change", (event) => { state.filters.period = event.target.value; if (state.filters.period === "custom") ensureCustomDates(); toggleCustomPeriod(); renderLines(); loadPassport(); showView("reports"); }); ["fromDateFilter", "toDateFilter"].forEach((id) => $("#" + id).addEventListener("change", (event) => { state.filters[id === "fromDateFilter" ? "from" : "to"] = event.target.value; loadPassport(); if (validCustomPeriod()) showView("reports"); })); $("#resetFilters").addEventListener("click", () => { state.filters = { ...state.filters, search: "", district: "", provider: "", technology: "", status: "", period: "week", from: "", to: "", view: "lines" }; $("#searchInput").value = ""; populateFilters(); renderMap(); renderLines(); loadPassport(); });
+    $("#searchInput").addEventListener("input", (event) => { state.filters.search = event.target.value; renderMap(); renderLines(); }); $("#mapListMode").addEventListener("change", (event) => { state.filters.mapMode = event.target.value; state.historicalByLine = {}; state.historicalError = null; renderMap(); renderLines(); if (isHistoricalMode()) loadHistoricalPeriod(); }); $("#districtFilter").addEventListener("change", (event) => { state.filters.district = event.target.value; renderMap(); renderLines(); loadPassport(); if (isHistoricalMode()) loadHistoricalPeriod(); }); $("#providerFilter").addEventListener("change", (event) => { state.filters.provider = event.target.value; renderMap(); renderLines(); loadPassport(); if (isHistoricalMode()) loadHistoricalPeriod(); }); $("#technologyFilter").addEventListener("change", (event) => { state.filters.technology = event.target.value; renderMap(); renderLines(); loadPassport(); if (isHistoricalMode()) loadHistoricalPeriod(); }); $("#statusFilter").addEventListener("change", (event) => { state.filters.status = event.target.value; renderMap(); renderLines(); loadPassport(); if (isHistoricalMode()) loadHistoricalPeriod(); }); $("#periodFilter").addEventListener("change", (event) => { state.filters.period = event.target.value; if (state.filters.period === "custom") ensureCustomDates(); toggleCustomPeriod(); renderLines(); loadPassport(); if (isHistoricalMode()) loadHistoricalPeriod(); else showView("reports"); }); ["fromDateFilter", "toDateFilter"].forEach((id) => $("#" + id).addEventListener("change", (event) => { state.filters[id === "fromDateFilter" ? "from" : "to"] = event.target.value; loadPassport(); if (validCustomPeriod()) { if (isHistoricalMode()) loadHistoricalPeriod(); else showView("reports"); } })); $("#resetFilters").addEventListener("click", () => { state.filters = { ...state.filters, search: "", district: "", provider: "", technology: "", status: "", period: "week", from: "", to: "", view: "lines", mapMode: "current" }; state.historicalByLine = {}; state.historicalError = null; $("#searchInput").value = ""; populateFilters(); renderMap(); renderLines(); loadPassport(); });
     const viewToggle = $(".view-toggle"); if (viewToggle && !viewToggle.querySelector('[data-table-view="schools"]')) { const schoolsButton = document.createElement("button"); schoolsButton.className = "toggle"; schoolsButton.dataset.tableView = "schools"; schoolsButton.textContent = "Школы"; viewToggle.insertBefore(schoolsButton, viewToggle.children[1] || null); }
     $$("[data-table-view]").forEach((button) => button.addEventListener("click", () => { state.filters.view = button.dataset.tableView; $$("[data-table-view]").forEach((item) => item.classList.toggle("active", item === button)); renderLines(); }));
     $$("[data-export]").forEach((button) => button.addEventListener("click", () => downloadExport(button.dataset.export)));

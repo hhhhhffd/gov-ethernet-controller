@@ -66,3 +66,29 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .school-card-main h3 { margin: 0 0 4px; color: var(--text); font-size: 15px; }.school-card-main p, .school-card-main small { display: block; margin: 0 0 5px; color: var(--muted); }.school-line-links { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }.device-card-list { margin-top: 14px; }.device-card-link { display: flex; flex-direction: column; width: 100%; gap: 3px; margin-top: 7px; padding: 9px; text-align: left; color: var(--text); border: 1px solid rgba(106,157,173,.18); border-radius: 7px; background: #0c2030; cursor: pointer; }.device-card-link span { color: var(--muted); font-size: 11px; }
 .incident-evidence, .incident-repeatability, .incident-timeline { display: grid; gap: 4px; margin-top: 9px; padding: 8px 10px; border-left: 2px solid rgba(76,196,211,.38); background: rgba(8,24,38,.5); }.incident-evidence small, .incident-repeatability small { color: var(--muted); }.incident-timeline > div { display: flex; gap: 9px; color: var(--muted); font-size: 11px; }.incident-timeline time { min-width: 112px; }.incident-status-select { min-height: 30px; padding: 0 8px; color: var(--text); border: 1px solid rgba(106,157,173,.24); border-radius: 6px; background: #0c2030; }
 .audit-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(280px,.85fr);gap:1.25rem}.audit-filters{margin-bottom:1rem}.audit-filters input{min-width:150px}.audit-grid pre{max-width:360px;max-height:180px;overflow:auto;white-space:pre-wrap;font-size:.72rem;color:var(--muted)}.panel-header.compact{padding:0 0 .75rem;border:0}.panel-header.compact h3{margin:0;font-size:1rem}@media(max-width:960px){.audit-grid{grid-template-columns:1fr}.audit-grid pre{max-width:calc(100vw - 4rem)}}
+.lines-header-controls { display: flex; align-items: flex-end; gap: 10px; }
+.mode-control { display: grid; gap: 4px; min-width: 165px; }
+.mode-control select { height: 33px; padding: 0 25px 0 9px; border: 1px solid rgba(106,157,173,.24); border-radius: 7px; color: var(--text); background: #0c2030; font-size: 10px; }
+.map-marker.historical { color: var(--blue); }
+.status-badge.historical { color: var(--blue); background: rgba(123,183,255,.1); }
+.map-footer { gap: 12px; flex-wrap: wrap; }
+.map-popup { position: absolute; top: 13px; right: 13px; z-index: 5; width: min(345px, calc(100% - 26px)); border: 1px solid rgba(121,228,208,.3); border-radius: 10px; background: rgba(9,28,43,.98); box-shadow: 0 18px 42px rgba(0,0,0,.38); }
+.map-popup-head { display: flex; justify-content: space-between; gap: 10px; padding: 13px 13px 10px; border-bottom: 1px solid rgba(106,157,173,.15); }
+.map-popup-head h3 { margin: 3px 0 0; font-size: 14px; }
+.map-popup-summary { margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.35; }
+.map-popup-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 11px 13px; }
+.map-popup-field { min-width: 0; padding: 6px 7px; border-radius: 6px; background: rgba(7,22,34,.58); }
+.map-popup-field span, .map-popup-field b { display: block; overflow: hidden; text-overflow: ellipsis; }
+.map-popup-field span { color: var(--muted-2); font-size: 8px; }
+.map-popup-field b { margin-top: 2px; color: var(--text); font-size: 10px; white-space: nowrap; }
+.map-popup-actions { display: flex; padding: 0 13px 13px; }
+.map-popup-actions .button { width: 100%; min-height: 32px; font-size: 10px; }
+.admin-resource-toolbar { display: flex; align-items: flex-end; gap: 10px; padding: 0 0 12px; color: var(--muted); font-size: 10px; }
+.admin-resource-toolbar label { display: grid; gap: 4px; min-width: 230px; }
+.admin-resource-toolbar select { height: 31px; padding: 0 24px 0 8px; border: 1px solid rgba(106,157,173,.24); border-radius: 6px; color: var(--text); background: #0c2030; font-size: 10px; }
+.admin-resource-toolbar small { max-width: 300px; color: var(--muted-2); }
+.contract-table { min-width: 1100px; }
+.contract-table .contract-current { background: rgba(121,228,208,.035); }
+.contract-table .contract-history { background: rgba(145,170,178,.025); }
+@media (max-width: 960px) { .lines-header-controls { align-items: stretch; flex-direction: column; }.mode-control { width: 100%; }.admin-resource-toolbar { align-items: stretch; flex-direction: column; }.admin-resource-toolbar label { min-width: 0; }.map-footer { align-items: flex-start; flex-direction: column; gap: 5px; } }
+@media (max-width: 640px) { .map-popup { top: 8px; right: 8px; width: calc(100% - 16px); }.map-popup-fields { gap: 5px; padding: 9px; }.map-popup-actions { padding: 0 9px 9px; } }
