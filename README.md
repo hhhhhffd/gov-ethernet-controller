@@ -99,6 +99,11 @@ origins и webhook transport.
 `deployment/Caddyfile`: внешний клиент → `80/443` → Caddy → внутренняя
 Compose-сеть → `linkwatch-server:8080`. Go listener не публикуется на host;
 Caddy сам выполняет HTTP→HTTPS redirect и хранит ACME-состояние в named volume.
+Для login rate limiting production Compose закрепляет Caddy на
+`172.30.0.10`, разрешает server доверять forwarding только этому `/32` через
+`LINKWATCH_TRUSTED_PROXY_CIDRS` и заставляет Caddy перезаписывать
+`X-Forwarded-For`. Пустая или некорректная trust-конфигурация не позволяет
+production server запуститься; прямой запрос всегда ключуется по immediate peer.
 После DNS/ACME настройки выполните `LINKWATCH_PUBLIC_URL=https://...`
 `./scripts/production-tls-smoke.sh`: он проверяет redirect, certificate
 validation, readiness и отказ unauthenticated protected endpoint.
@@ -136,7 +141,23 @@ make smoke
 
 Для PowerShell используйте `scripts/windows/start-vko-prod.ps1` и
 `scripts/windows/stop-vko-prod.ps1`; они запускают Go image из
-`docker-compose.prod.yml`. Windows binary агента собирается
+`docker-compose.prod.yml`. Перед запуском задайте production credentials,
+`LINKWATCH_PUBLIC_HOST`/`LINKWATCH_TLS_EMAIL` и, при необходимости, точный
+`LINKWATCH_PUBLIC_URL=https://...` для readiness probe. Скрипт проверяет
+опубликованную Caddy surface `HTTPS /health/ready`, ждёт готовности PostgreSQL и
+Go backend через Compose health/dependency conditions и при timeout печатает
+`docker compose ps` и логи Caddy/server/PostgreSQL. Он не проверяет и не
+публикует backend `:8000`; `linkwatch-server:8080` остаётся только во внутренней
+Compose-сети. Перед стартом topology check можно выполнить отдельно:
+
+```powershell
+.\scripts\windows\test-vko-prod.ps1
+.\scripts\windows\start-vko-prod.ps1 -ReadinessTimeoutSec 180
+```
+
+Фактический native Windows PASS для этого шага фиксируется только в
+`docs/TASK-022_WINDOWS_ACCEPTANCE.md` после запуска на Windows с доступным DNS/TLS;
+Linux/WSL и Docker config validation такой PASS не заменяют. Windows binary агента собирается
 `scripts/build-agent.ps1` в `dist/linkwatch-agent-windows-amd64.exe`.
 На Windows запуск этого единственного бинаря без аргументов выполняет
 первоначальную регистрацию service/tray и переносит runtime data в
