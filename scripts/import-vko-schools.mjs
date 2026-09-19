@@ -14,6 +14,34 @@ const CURRENT_REGISTRY_SOURCE = "egov-current-registry";
 const STATE_SCHOOLS_SOURCE = "egov-state-schools";
 const OVERPASS_SOURCE = "overpass";
 const SOURCE_TIMEOUT_MS = 30_000;
+export const MATCH_AUTO_THRESHOLD = 0.9;
+export const MATCH_REVIEW_THRESHOLD = 0.75;
+export const OSM_DUPLICATE_DISTANCE_METERS = 50;
+export const OSM_EXACT_GEOMETRY_DISTANCE_METERS = 8;
+
+const SCHOOL_GENERIC_TOKENS = new Set([
+  "school",
+  "shkola",
+  "школа",
+  "mektep",
+  "mektebi",
+  "мектеп",
+  "орта",
+  "orta",
+  "средняя",
+  "общеобразовательная",
+  "лицей",
+  "гимназия",
+  "secondary",
+]);
+
+const CYRILLIC_TRANSLITERATION = new Map(Object.entries({
+  а: "a", б: "b", в: "v", г: "g", д: "d", е: "e", ё: "e", ж: "zh", з: "z",
+  и: "i", й: "i", к: "k", л: "l", м: "m", н: "n", о: "o", п: "p", р: "r",
+  с: "s", т: "t", у: "u", ф: "f", х: "kh", ц: "ts", ч: "ch", ш: "sh", щ: "shch",
+  ъ: "", ы: "y", ь: "", э: "e", ю: "yu", я: "ya",
+  ә: "a", ғ: "g", қ: "q", ң: "n", ө: "o", ұ: "u", ү: "u", һ: "h", і: "i",
+}));
 
 const VKO_REGION_ALIASES = new Set([
   "восточно казахстанская",
@@ -255,6 +283,547 @@ function normalizeSchoolRow(row, source) {
   };
 }
 
+function transliterate(value) {
+  return [...String(value ?? "")]
+    .map((character) => CYRILLIC_TRANSLITERATION.get(character) ?? character)
+    .join("");
+}
+
+function normalizeNumberToken(value) {
+  return value
+    .replace(/№/g, " number ")
+    .replace(/\b(?:n|no|num|номер)\b/g, " number ");
+}
+
+/**
+ * Produces comparison keys only. The official display value is never replaced by this key.
+ */
+export function normalizeMatchText(value) {
+  return normalizeNumberToken(String(value ?? "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .replaceAll("ё", "е"))
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function normalizeName(value) {
+  return normalizeMatchText(value);
+}
+
+export function normalizeAddress(value) {
+  return normalizeMatchText(value)
+    .replace(/(?<!\p{L})(?:ул|улица)(?!\p{L})/gu, "улица")
+    .replace(/(?<!\p{L})(?:пр|просп|проспект)(?!\p{L})/gu, "проспект")
+    .replace(/(?<!\p{L})(?:пер|переулок)(?!\p{L})/gu, "переулок")
+    .replace(/(?<!\p{L})(?:д|дом)(?!\p{L})/gu, "дом")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function normalizeLocality(value) {
+  return normalizeMatchText(value)
+    .replace(/(?<!\p{L})(?:с|село|г|город|ауыл)(?!\p{L})/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function normalizeDistrict(value) {
+  return normalizeMatchText(value)
+    .replace(/(?<!\p{L})(?:район|аудан)(?!\p{L})/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function normalizeIdentifier(value) {
+  return normalizeMatchText(value).replace(/\s+/g, "");
+}
+
+function transliterationKey(value) {
+  return normalizeMatchText(transliterate(normalizeMatchText(value)));
+}
+
+function nameKeys(value) {
+  const normalized = normalizeName(value);
+  return new Set([normalized, transliterationKey(value)].filter(Boolean));
+}
+
+function coreNameKey(value) {
+  return normalizeName(value)
+    .split(" ")
+    .filter((token) => !SCHOOL_GENERIC_TOKENS.has(token))
+    .join(" ");
+}
+
+function coordinateFromValue(value) {
+  if (!value || typeof value !== "object") return null;
+  const latitude = Number(value.latitude ?? value.lat);
+  const longitude = Number(value.longitude ?? value.lon ?? value.lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
+function stableRecordKey(record, index = 0) {
+  const identifiers = [record.school_id, record.bin, record.osm_id, record.osm_element_id]
+    .map(normalizeIdentifier)
+    .filter(Boolean);
+  if (identifiers.length > 0) return identifiers.join("|");
+  return [normalizeName(record.name), normalizeAddress(record.address), normalizeName(record.locality), String(index)]
+    .join("|");
+}
+
+export function normalizeMatchRecord(record, source = record?.source ?? "unknown") {
+  const names = [record?.name, record?.name_ru, record?.name_kk, record?.official_name]
+    .filter(nonEmpty)
+    .map(String);
+  const name = names[0] ?? null;
+  const allNameKeys = new Set(names.flatMap((value) => [...nameKeys(value)]));
+  const address = stringValue(record?.address ?? record?.addr_street);
+  const locality = stringValue(record?.locality ?? record?.city ?? record?.settlement ?? record?.addr_city);
+  const district = stringValue(record?.district ?? record?.addr_district);
+  const coordinate = coordinateFromValue(record);
+  const ids = [record?.school_id, record?.bin, record?.schoolId, record?.ref]
+    .filter(nonEmpty)
+    .map(normalizeIdentifier)
+    .filter(Boolean);
+  return {
+    ...record,
+    source,
+    display_name: name,
+    name_key: normalizeName(name),
+    name_keys: [...allNameKeys].sort(),
+    core_name_key: coreNameKey(name),
+    address_key: normalizeAddress(address),
+    locality_key: normalizeLocality(locality),
+    district_key: normalizeDistrict(district),
+    identifiers: [...new Set(ids)].sort(),
+    coordinate,
+    stable_key: stableRecordKey(record),
+  };
+}
+
+export function isValidCoordinate(value) {
+  const coordinate = coordinateFromValue(value);
+  return Boolean(coordinate
+    && coordinate.latitude >= -90
+    && coordinate.latitude <= 90
+    && coordinate.longitude >= -180
+    && coordinate.longitude <= 180);
+}
+
+function coordinateDistanceMeters(left, right) {
+  if (!isValidCoordinate(left) || !isValidCoordinate(right)) return Number.POSITIVE_INFINITY;
+  const first = coordinateFromValue(left);
+  const second = coordinateFromValue(right);
+  if (!first || !second) return Number.POSITIVE_INFINITY;
+  const radians = Math.PI / 180;
+  const latitudeDelta = (second.latitude - first.latitude) * radians;
+  const longitudeDelta = (second.longitude - first.longitude) * radians;
+  const meanLatitude = ((first.latitude + second.latitude) / 2) * radians;
+  const x = longitudeDelta * Math.cos(meanLatitude);
+  const y = latitudeDelta;
+  return Math.sqrt(x * x + y * y) * 6_371_000;
+}
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1; index < polygon.length; previous = index++) {
+    const currentPoint = polygon[index];
+    const previousPoint = polygon[previous];
+    const intersects = ((currentPoint[1] > point.latitude) !== (previousPoint[1] > point.latitude))
+      && (point.longitude < ((previousPoint[0] - currentPoint[0])
+        * (point.latitude - currentPoint[1]) / (previousPoint[1] - currentPoint[1])) + currentPoint[0]);
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Accepts an explicit bbox or GeoJSON-like polygon. Without a boundary, only the
+ * source's already-verified current-VKO scope can be trusted; no geography is invented.
+ */
+export function isCoordinateInCurrentVko(value, boundary) {
+  if (!isValidCoordinate(value)) return false;
+  if (!boundary) return true;
+  const coordinate = coordinateFromValue(value);
+  const minLatitude = Number(boundary.minLatitude ?? boundary.minLat);
+  const maxLatitude = Number(boundary.maxLatitude ?? boundary.maxLat);
+  const minLongitude = Number(boundary.minLongitude ?? boundary.minLon);
+  const maxLongitude = Number(boundary.maxLongitude ?? boundary.maxLon);
+  if ([minLatitude, maxLatitude, minLongitude, maxLongitude].every(Number.isFinite)) {
+    return coordinate.latitude >= minLatitude
+      && coordinate.latitude <= maxLatitude
+      && coordinate.longitude >= minLongitude
+      && coordinate.longitude <= maxLongitude;
+  }
+  const polygon = boundary.type === "Polygon"
+    ? boundary.coordinates?.[0]
+    : boundary.polygon;
+  if (!Array.isArray(polygon) || polygon.length < 3) return false;
+  return pointInPolygon(coordinate, polygon);
+}
+
+export function validateCoordinate(value, { boundary, sourceVerified = true } = {}) {
+  if (!isValidCoordinate(value)) return { valid: false, reason: "invalid" };
+  if (!sourceVerified) return { valid: false, reason: "outside_current_vko" };
+  if (!isCoordinateInCurrentVko(value, boundary)) return { valid: false, reason: "outside_current_vko" };
+  return { valid: true, reason: null, coordinate: coordinateFromValue(value) };
+}
+
+function hasExplicitRegion(record) {
+  return [record?.region, record?.region_name, record?.oblast, record?.addr_state, record?.addr_province]
+    .some(nonEmpty);
+}
+
+function isCurrentVkoMatchRecord(record) {
+  if (!record || isAbaiRegion(record)) return false;
+  if (record.region === "current-vko") return true;
+  return !hasExplicitRegion(record) || isCurrentVkoRegion(record);
+}
+
+function sameNonEmpty(left, right) {
+  return Boolean(left && right && left === right);
+}
+
+function sameComparableArea(left, right) {
+  return sameNonEmpty(left, right) || (left && right && transliterationKey(left) === transliterationKey(right));
+}
+
+function compatibleIdentifier(left, right) {
+  return left.identifiers.some((identifier) => right.identifiers.includes(identifier));
+}
+
+function compatibleName(left, right) {
+  return Boolean(left.name_key && right.name_key && left.name_key === right.name_key);
+}
+
+function sameArea(left, right) {
+  return sameComparableArea(left.locality_key, right.locality_key)
+    && sameComparableArea(left.district_key, right.district_key);
+}
+
+function tokenSimilarity(left, right) {
+  if (!left || !right) return 0;
+  if (left === right) return 1;
+  const leftTokens = new Set(left.split(" "));
+  const rightTokens = new Set(right.split(" "));
+  const intersection = [...leftTokens].filter((token) => rightTokens.has(token)).length;
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function editSimilarity(left, right) {
+  if (!left || !right) return 0;
+  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= left.length; row += 1) {
+    let diagonal = previous[0];
+    previous[0] = row;
+    for (let column = 1; column <= right.length; column += 1) {
+      const saved = previous[column];
+      previous[column] = left[row - 1] === right[column - 1]
+        ? diagonal
+        : Math.min(previous[column] + 1, previous[column - 1] + 1, diagonal + 1);
+      diagonal = saved;
+    }
+  }
+  return 1 - previous[right.length] / Math.max(left.length, right.length);
+}
+
+function nameSimilarity(left, right) {
+  const exact = compatibleName(left, right);
+  if (exact) return { score: 1, method: "exact_name" };
+  const transliterated = Boolean(left.display_name
+    && right.display_name
+    && transliterationKey(left.display_name) === transliterationKey(right.display_name));
+  const leftKey = left.name_key;
+  const rightKey = right.name_key;
+  const similarity = Math.max(editSimilarity(leftKey, rightKey), tokenSimilarity(leftKey, rightKey));
+  return {
+    score: similarity,
+    method: transliterated ? "transliterated_name" : "fuzzy_name",
+  };
+}
+
+function scoreCandidate(registry, candidate) {
+  if (!isCurrentVkoMatchRecord(candidate)) return null;
+  if (compatibleIdentifier(registry, candidate)) {
+    return { score: 1, match_method: "official_id", evidence: ["compatible_id"] };
+  }
+  const areaMatch = sameArea(registry, candidate);
+  const addressMatch = sameNonEmpty(registry.address_key, candidate.address_key);
+  const name = nameSimilarity(registry, candidate);
+  const coreNameMatch = Boolean(registry.core_name_key
+    && candidate.core_name_key
+    && registry.core_name_key === candidate.core_name_key);
+  const nameMatch = name.score === 1 || coreNameMatch;
+  const transliterationOnly = name.method === "transliterated_name" && !nameMatch;
+  const coordinateClose = coordinateDistanceMeters(registry.coordinate, candidate.coordinate) <= OSM_DUPLICATE_DISTANCE_METERS;
+
+  if (areaMatch && addressMatch && (nameMatch || transliterationOnly)) {
+    return { score: 0.98, match_method: "address_and_name", evidence: ["same_area", "same_address", name.method] };
+  }
+  if (areaMatch && nameMatch) {
+    return {
+      score: 0.95,
+      match_method: "name_locality_district",
+      evidence: ["same_area", coreNameMatch && name.score !== 1 ? "same_name_core" : "exact_name"],
+    };
+  }
+  if (areaMatch && transliterationOnly && (addressMatch || coordinateClose)) {
+    return { score: 0.9, match_method: "transliterated_name_area", evidence: ["same_area", "transliterated_name"] };
+  }
+  if (areaMatch && name.score >= 0.75) {
+    return {
+      score: Math.min(0.89, Math.max(0.75, 0.75 + (name.score - 0.75) * 0.56)),
+      match_method: "fuzzy_name_area",
+      evidence: ["same_area", name.method],
+    };
+  }
+  if (addressMatch && (nameMatch || transliterationOnly)) {
+    return { score: 0.86, match_method: "address_and_name", evidence: ["same_address", name.method] };
+  }
+  if (nameMatch && (sameNonEmpty(registry.locality_key, candidate.locality_key)
+    || sameNonEmpty(registry.district_key, candidate.district_key))) {
+    return { score: 0.86, match_method: "name_partial_area", evidence: [name.method] };
+  }
+  if (nameMatch && coordinateClose) {
+    return { score: 0.82, match_method: "name_and_coordinates", evidence: [name.method, "nearby_coordinates"] };
+  }
+  if (areaMatch && name.score >= 0.5) {
+    return { score: 0.7, match_method: "weak_fuzzy_name", evidence: ["same_area", name.method] };
+  }
+  return null;
+}
+
+function classifyMatch(score, ambiguous = false) {
+  if (ambiguous) return "REVIEW_REQUIRED";
+  if (score >= MATCH_AUTO_THRESHOLD) return "AUTO_MATCH";
+  if (score >= MATCH_REVIEW_THRESHOLD) return "REVIEW_REQUIRED";
+  return "UNMATCHED";
+}
+
+function compareRecords(left, right) {
+  return left.stable_key.localeCompare(right.stable_key, "en");
+}
+
+function dedupeGroupKey(record) {
+  const identity = osmIdentity(record);
+  if (identity) return `id:${identity}`;
+  const name = record.name_key;
+  const address = record.address_key;
+  if (!name || !record.coordinate) return null;
+  return `geo:${name}|${address}|${record.coordinate.latitude.toFixed(5)}|${record.coordinate.longitude.toFixed(5)}`;
+}
+
+function osmIdentity(record) {
+  if (nonEmpty(record.osm_type) && nonEmpty(record.osm_element_id)) {
+    return `${normalizeMatchText(record.osm_type)}/${normalizeIdentifier(record.osm_element_id)}`.replace(/[\/\s]/g, "");
+  }
+  if (nonEmpty(record.osm_id)) return normalizeMatchText(record.osm_id).replace(/\s+/g, "");
+  return null;
+}
+
+function chooseOsmRecord(records) {
+  return [...records].sort((left, right) => {
+    const leftHasAddress = Number(Boolean(left.address_key));
+    const rightHasAddress = Number(Boolean(right.address_key));
+    return rightHasAddress - leftHasAddress || compareRecords(left, right);
+  })[0];
+}
+
+export function dedupeOsmSchools(osmSchools = []) {
+  const normalized = osmSchools
+    .filter((record) => isCurrentVkoMatchRecord(record))
+    .map((record) => normalizeMatchRecord(record, record.source ?? OVERPASS_SOURCE))
+    .sort(compareRecords);
+  const kept = [];
+  const removed = [];
+  for (const record of normalized) {
+    const identityKey = dedupeGroupKey(record);
+    const existingByIdentity = identityKey && kept.find((candidate) => dedupeGroupKey(candidate) === identityKey);
+    const existingByGeometry = kept.find((candidate) => {
+      if (!record.name_key || record.name_key !== candidate.name_key) return false;
+      const sameAddress = record.address_key && candidate.address_key && record.address_key === candidate.address_key;
+      const distance = coordinateDistanceMeters(record.coordinate, candidate.coordinate);
+      return distance <= (sameAddress ? OSM_DUPLICATE_DISTANCE_METERS : OSM_EXACT_GEOMETRY_DISTANCE_METERS);
+    });
+    const existing = existingByIdentity ?? existingByGeometry;
+    if (!existing) {
+      kept.push(record);
+      continue;
+    }
+    const preferred = chooseOsmRecord([existing, record]);
+    const discarded = preferred === existing ? record : existing;
+    if (preferred !== existing) {
+      const index = kept.indexOf(existing);
+      kept[index] = preferred;
+    }
+    removed.push({
+      duplicate: discarded,
+      kept: preferred,
+      reason: existingByIdentity ? "same_osm_identity" : "same_name_geometry",
+    });
+  }
+  kept.sort(compareRecords);
+  removed.sort((left, right) => compareRecords(left.duplicate, right.duplicate));
+  return { schools: kept, duplicates: removed };
+}
+
+function matchCandidates(registryRecord, candidateRecords) {
+  const scored = candidateRecords
+    .map((candidate) => {
+      const score = scoreCandidate(registryRecord, candidate);
+      return score ? { candidate, ...score } : null;
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.score - left.score || compareRecords(left.candidate, right.candidate));
+  if (scored.length === 0) {
+    return { candidate: null, candidates: [], confidence: 0, match_status: "UNMATCHED", ambiguous: false, match_method: "none" };
+  }
+  const top = scored[0];
+  const tied = scored.filter((item) => Math.abs(item.score - top.score) < Number.EPSILON);
+  const ambiguous = tied.length > 1;
+  const matchStatus = classifyMatch(top.score, ambiguous);
+  return {
+    candidate: ambiguous || matchStatus === "UNMATCHED" ? null : top.candidate,
+    candidates: scored,
+    confidence: top.score,
+    match_status: matchStatus,
+    ambiguous,
+    match_method: ambiguous ? "ambiguous_tie" : top.match_method,
+    evidence: ambiguous ? ["equal_top_candidates"] : top.evidence,
+  };
+}
+
+export function matchRegistryToOsm(registrySchools = [], osmSchools = []) {
+  const registry = registrySchools
+    .filter(isCurrentVkoMatchRecord)
+    .map((record) => normalizeMatchRecord(record, record.source ?? CURRENT_REGISTRY_SOURCE))
+    .sort(compareRecords);
+  const osm = dedupeOsmSchools(osmSchools);
+  const initialMatches = registry.map((registryRecord) => ({
+    registry: registryRecord,
+    ...matchCandidates(registryRecord, osm.schools),
+  }));
+  const candidateUse = new Map();
+  for (const match of initialMatches) {
+    if (match.candidate) {
+      candidateUse.set(match.candidate.stable_key, (candidateUse.get(match.candidate.stable_key) ?? 0) + 1);
+    }
+  }
+  const matches = initialMatches.map((match) => {
+    if (!match.candidate || candidateUse.get(match.candidate.stable_key) === 1) return match;
+    return {
+      ...match,
+      candidate: null,
+      match_status: "REVIEW_REQUIRED",
+      ambiguous: true,
+      match_method: "ambiguous_registry_collision",
+      evidence: ["one_osm_candidate_for_multiple_registry_rows"],
+    };
+  });
+  const matchedKeys = new Set(matches.map((match) => match.candidate?.stable_key).filter(Boolean));
+  return {
+    matches,
+    osm_only: osm.schools.filter((school) => !matchedKeys.has(school.stable_key)),
+    duplicates: osm.duplicates,
+  };
+}
+
+function reviewedOverrideFor(registryRecord, reviewedOverrides) {
+  if (!reviewedOverrides) return null;
+  if (Array.isArray(reviewedOverrides)) {
+    return reviewedOverrides.find((override) => normalizeIdentifier(override.registry_id) === normalizeIdentifier(registryRecord.school_id));
+  }
+  return reviewedOverrides[registryRecord.school_id] ?? reviewedOverrides[registryRecord.bin] ?? null;
+}
+
+function coordinateCandidate(record, source, options) {
+  const validation = validateCoordinate(record, options);
+  return validation.valid ? { ...validation.coordinate, source } : { source, invalid_reason: validation.reason };
+}
+
+export function resolveSchoolCoordinate({
+  official,
+  osm,
+  osmMatchStatus,
+  reviewedOverride,
+  boundary,
+  officialSourceVerified = true,
+} = {}) {
+  const officialCoordinate = official && coordinateCandidate(official, "official", { boundary, sourceVerified: officialSourceVerified });
+  if (officialCoordinate?.latitude !== undefined) return officialCoordinate;
+  const osmCoordinate = osm && osmMatchStatus === "AUTO_MATCH"
+    ? coordinateCandidate(osm, "osm", { boundary, sourceVerified: true })
+    : null;
+  if (osmCoordinate?.latitude !== undefined) return osmCoordinate;
+  const overrideCoordinate = reviewedOverride && coordinateCandidate(
+    reviewedOverride,
+    "reviewed_override",
+    { boundary, sourceVerified: true },
+  );
+  if (overrideCoordinate?.latitude !== undefined) return overrideCoordinate;
+  return {
+    latitude: null,
+    longitude: null,
+    source: null,
+    invalid_sources: [officialCoordinate, osmCoordinate, overrideCoordinate]
+      .filter(Boolean)
+      .map((item) => item.invalid_reason)
+      .filter(Boolean),
+  };
+}
+
+export function buildDeterministicMatches({
+  registrySchools = [],
+  stateSchools = [],
+  osmSchools = [],
+  reviewedOverrides,
+  boundary,
+} = {}) {
+  const registry = registrySchools
+    .filter(isCurrentVkoMatchRecord)
+    .map((record) => normalizeMatchRecord(record, record.source ?? CURRENT_REGISTRY_SOURCE));
+  const state = stateSchools
+    .filter(isCurrentVkoMatchRecord)
+    .map((record) => normalizeMatchRecord(record, record.source ?? STATE_SCHOOLS_SOURCE));
+  const osmMatches = matchRegistryToOsm(registry, osmSchools);
+  const matches = osmMatches.matches.map((match) => {
+    const stateMatch = matchCandidates(match.registry, state);
+    const reviewedOverride = reviewedOverrideFor(match.registry, reviewedOverrides);
+    const official = stateMatch.match_status === "AUTO_MATCH"
+      ? stateMatch.candidate?.coordinate
+      : match.registry.coordinate;
+    const officialValidation = validateCoordinate(official, { boundary, sourceVerified: true });
+    const coordinate = resolveSchoolCoordinate({
+      official,
+      osm: match.candidate,
+      osmMatchStatus: match.match_status,
+      reviewedOverride,
+      boundary,
+      officialSourceVerified: true,
+    });
+    const officialOutside = Boolean(official && !officialValidation.valid && officialValidation.reason === "outside_current_vko");
+    return {
+      ...match,
+      official_match: stateMatch,
+      coordinate,
+      match_status: officialOutside && match.match_status === "AUTO_MATCH" ? "REVIEW_REQUIRED" : match.match_status,
+      review_reasons: [
+        ...(match.ambiguous ? ["ambiguous_match"] : []),
+        ...(officialOutside ? ["official_coordinate_outside_vko"] : []),
+        ...(coordinate.source === null ? ["missing_valid_coordinate"] : []),
+      ],
+    };
+  });
+  return {
+    matches,
+    osm_only: osmMatches.osm_only,
+    duplicates: osmMatches.duplicates,
+  };
+}
+
 export function normalizeCurrentRegistryRows(rows) {
   return filterCurrentVkoRows(rows).map((row) => normalizeSchoolRow(row, CURRENT_REGISTRY_SOURCE));
 }
@@ -444,10 +1013,21 @@ export function normalizeOverpassSchools(payload) {
       const latitude = Number(element.lat ?? element.center?.lat);
       const longitude = Number(element.lon ?? element.center?.lon);
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+      const tags = element.tags ?? {};
       return {
         osm_id: `${element.type}/${element.id}`,
-        name: stringValue(element.tags?.name ?? element.tags?.name_ru ?? element.tags?.name_kk),
-        school_id: stringValue(element.tags?.ref ?? element.tags?.["operator:type"]),
+        osm_type: element.type,
+        osm_element_id: String(element.id),
+        name: stringValue(tags.name ?? tags.name_ru ?? tags.name_kk),
+        name_ru: stringValue(tags["name:ru"] ?? tags.name_ru),
+        name_kk: stringValue(tags["name:kk"] ?? tags.name_kk),
+        school_id: stringValue(tags.ref ?? tags["operator:type"]),
+        address: stringValue(tags["addr:street"]
+          ? `${tags["addr:street"]} ${tags["addr:housenumber"] ?? ""}`
+          : null),
+        district: stringValue(tags["addr:district"] ?? tags.district),
+        locality: stringValue(tags["addr:city"] ?? tags.city ?? tags.place),
+        region: stringValue(tags["addr:state"] ?? tags["addr:province"] ?? "current-vko"),
         latitude,
         longitude,
         source: OVERPASS_SOURCE,
