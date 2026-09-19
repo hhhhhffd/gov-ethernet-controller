@@ -1,0 +1,32 @@
+{
+  "state_schools": [
+    {
+      "id": "vko-001",
+      "bin": "010101010101",
+      "name": "Средняя школа № 1",
+      "address": "ул. Абая, 1",
+      "region": "63",
+      "latitude": "50.123456",
+      "longitude": "82.654321",
+      "status": "active"
+    },
+    {
+      "id": "vko-002",
+      "bin": "040404040404",
+      "name": "Школа-лицей № 2",
+      "address": "ул. Независимости, 4",
+      "region": "East Kazakhstan Region",
+      "coordinates": "50.223456, 82.754321",
+      "status": "active"
+    },
+    {
+      "id": "abai-001",
+      "bin": "020202020202",
+      "name": "Средняя школа Абай",
+      "address": "ул. Абая, 2",
+      "region": "KZ-10",
+      "latitude": 49.9,
+      "longitude": 79.0
+    }
+  ]
+}

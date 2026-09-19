@@ -1,0 +1,33 @@
+{
+  "elements": [
+    {
+      "type": "relation",
+      "id": 999999,
+      "tags": {
+        "boundary": "administrative",
+        "admin_level": "4",
+        "name": "Абайская область",
+        "ISO3166-2": "KZ-10"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 888888,
+      "tags": {
+        "boundary": "administrative",
+        "admin_level": "5",
+        "name": "Восточно-Казахстанская область"
+      }
+    },
+    {
+      "type": "relation",
+      "id": 123456,
+      "tags": {
+        "boundary": "administrative",
+        "admin_level": "4",
+        "name": "East Kazakhstan Region",
+        "ISO3166-2": "KZ-EK"
+      }
+    }
+  ]
+}

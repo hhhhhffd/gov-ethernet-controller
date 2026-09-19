@@ -1,0 +1,25 @@
+{
+  "elements": [
+    {
+      "type": "node",
+      "id": 700001,
+      "lat": 50.123456,
+      "lon": 82.654321,
+      "tags": {
+        "amenity": "school",
+        "name": "Средняя школа № 1",
+        "ref": "vko-001"
+      }
+    },
+    {
+      "type": "way",
+      "id": 700002,
+      "center": { "lat": 50.223456, "lon": 82.754321 },
+      "tags": {
+        "amenity": "school",
+        "name": "Школа-лицей № 2",
+        "ref": "vko-002"
+      }
+    }
+  ]
+}

@@ -1,0 +1,39 @@
+{
+  "data": [
+    {
+      "school_id": "vko-001",
+      "bin": "010101010101",
+      "name_full_ru": "Средняя школа № 1",
+      "name_full_kk": "№ 1 орта мектебі",
+      "legal_address_ru": "ул. Абая, 1",
+      "region_name": "Восточно-Казахстанская область",
+      "district_name": "Уланский район",
+      "city_name": "с. Таврическое",
+      "status": "Действует"
+    },
+    {
+      "school_id": "abai-001",
+      "bin": "020202020202",
+      "name_full_ru": "Средняя школа Абай",
+      "legal_address_ru": "ул. Абая, 2",
+      "region_name": "Абайская область",
+      "status": "Действует"
+    },
+    {
+      "school_id": "vko-closed",
+      "bin": "030303030303",
+      "name_full_ru": "Закрытая школа",
+      "legal_address_ru": "ул. Центральная, 3",
+      "region_name": "East Kazakhstan Region",
+      "status": "Закрыта"
+    },
+    {
+      "school_id": "vko-002",
+      "bin": "040404040404",
+      "name_full_ru": "Школа-лицей № 2",
+      "legal_address_ru": "ул. Независимости, 4",
+      "region_name": "Шығыс Қазақстан облысы",
+      "status": "active"
+    }
+  ]
+}
