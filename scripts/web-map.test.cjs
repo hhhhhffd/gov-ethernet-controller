@@ -130,6 +130,13 @@ assert.match(indexSource, /id="authenticatedWorkspace"/, "authenticated scaffold
 assert.match(indexSource, /id="authBackdrop"/, "login seam is required");
 assert.match(indexSource, /id="leafletMap"/, "real Leaflet map container is required");
 assert.doesNotMatch(indexSource, /class="(rail|topbar|kpi-grid|notice-bar|activity-panel|situations-panel)/, "deleted legacy composition must not return");
+assert.match(indexSource, /class="map-workspace"/, "full-screen map workspace is required");
+assert.match(indexSource, /class="primary-nav"/, "primary navigation island is required");
+assert.match(indexSource, /id="mapFilter"/, "compact map filter hook is required");
+assert.match(indexSource, /id="mapZoomIn"[\s\S]*id="mapZoomOut"[\s\S]*id="mapReset"/, "single custom map tool stack is required");
+assert.doesNotMatch(indexSource, /class="(session-bar|map-controls|sidebar|dashboard-grid|kpi-grid|activity-panel|rail)"/, "legacy full-width shell surfaces must stay deleted");
+assert.match(fs.readFileSync("web/styles.css", "utf8"), /--ref-canvas-0:\s*#111111/, "Appendix A canvas palette must be applied");
+assert.match(browserHarnessSource, /task006-shell-1355x880\.png/, "canonical TASK-006 shell screenshot must be captured");
 for (const boundary of ["core/api.mjs", "core/session.mjs", "core/capabilities.mjs", "core/i18n.mjs", "core/theme.mjs", "core/router.mjs", "core/presentation.mjs", "integration/map-integration.mjs", "features/lines.mjs", "features/incidents.mjs", "features/reports.mjs", "features/notifications.mjs", "features/admin.mjs", "features/audit.mjs", "features/provider-case.mjs"]) {
   assert.match(appSource + fs.readFileSync(`web/${boundary}`, "utf8"), new RegExp(boundary.replace(".", "\\.")), `${boundary} must remain part of the frontend boundary`);
 }

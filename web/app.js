@@ -31,11 +31,14 @@ const map = createMapIntegration({ api, reports });
 const lines = createLinesBoundary(api);
 const router = createShellRouter({
   canAccess(view) {
+    if (view === "incidents") return state.capabilities.canRead("incident");
+    if (view === "reports") return state.capabilities.canRead("report");
     if (view === "admin") return state.capabilities.has("admin.manage");
     if (view === "audit") return state.capabilities.has("audit.read");
     if (view === "notifications") return state.capabilities.has("notification.read");
     return true;
   },
+  onChange: renderRoute,
 });
 const boundaries = {
   api, session, capabilities: () => state.capabilities, map,
@@ -56,6 +59,35 @@ function showLogin(message = "Введите рабочие учётные да�
 
 function hideLogin() { if ($("#authBackdrop")) $("#authBackdrop").hidden = true; }
 
+function renderRoute(snapshot = router.getState()) {
+  const workspace = $("#authenticatedWorkspace");
+  if (workspace) workspace.dataset.route = snapshot.view;
+  document.documentElement.dataset.route = snapshot.view;
+  document.querySelectorAll("[data-route]").forEach((button) => {
+    const active = button.dataset.route === snapshot.view;
+    button.toggleAttribute("aria-current", active);
+    if (!active) button.removeAttribute("aria-current");
+  });
+  const liveStatus = $("#mapLiveStatus");
+  if (liveStatus) liveStatus.textContent = `Открыт раздел: ${snapshot.view}`;
+  const hash = snapshot.view === "map" ? "" : `#${snapshot.view}`;
+  if (globalThis.location && globalThis.location.hash !== hash) globalThis.history?.replaceState?.({}, "", `${globalThis.location.pathname}${hash}`);
+}
+
+function renderPrimaryNav() {
+  const destinations = {
+    map: true,
+    incidents: state.capabilities.canRead("incident"),
+    reports: state.capabilities.canRead("report"),
+  };
+  document.querySelectorAll("[data-route]").forEach((button) => {
+    button.hidden = !destinations[button.dataset.route];
+  });
+  const current = router.getState().view;
+  if (!destinations[current]) router.navigate("map");
+  else renderRoute();
+}
+
 function renderSession() {
   const authenticated = session.authenticated;
   const workspace = $("#authenticatedWorkspace");
@@ -75,6 +107,7 @@ function handleSessionChange(snapshot) {
   state.capabilities = createCapabilityState(snapshot.user);
   document.documentElement.dataset.capabilities = state.capabilities.capabilities.join(" ");
   renderSession();
+  renderPrimaryNav();
   if (snapshot.authenticated && !state.mapLoaded) loadAuthenticatedMap();
 }
 
@@ -235,6 +268,8 @@ function bindEvents() {
   });
   $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (_) { showToast("Сеанс не удалось завершить на сервере", "warn"); session.clear(); } });
   $("#refreshButton")?.addEventListener("click", refreshMap);
+  $("#mapFilter")?.addEventListener("submit", (event) => event.preventDefault());
+  document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => router.navigate(button.dataset.route)));
   $("#mapListMode")?.addEventListener("change", async (event) => {
     const mode = event.target.value === "historical" ? "historical" : "current";
     if (mode === "current") map.setMode(mode);
@@ -263,7 +298,11 @@ async function boot() {
   bindEvents();
   renderSession();
   if (!session.hasToken()) return;
-  try { await session.bootstrap(); } catch (_) { showLogin("Сессия недействительна. Войдите снова."); }
+  try {
+    await session.bootstrap();
+    const requestedRoute = globalThis.location?.hash?.slice(1);
+    if (requestedRoute) router.navigate(requestedRoute);
+  } catch (_) { showLogin("Сессия недействительна. Войдите снова."); }
 }
 
 globalThis.LinkwatchApp = { i18n, theme, router, state, boundaries, refreshMap, openLine, openMapPopup };

@@ -21,8 +21,8 @@ const BROWSER_MAP_FIXTURE = Object.freeze({
 const FIXTURE_TILE_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 
 function fixturePayload(pathname, method, backendAvailable) {
-  if (pathname.endsWith("/login") && method === "POST") return { token: "browser-e2e-fixture-token", user: { name: "Browser Fixture", role: "ADMIN", capabilities: ["line.read", "report.read", "report.export", "notification.read"] } };
-  if (pathname.endsWith("/auth/me")) return { user: { name: "Browser Fixture", role: "ADMIN", capabilities: ["line.read", "report.read", "report.export", "notification.read"] } };
+  if (pathname.endsWith("/login") && method === "POST") return { token: "browser-e2e-fixture-token", user: { name: "Browser Fixture", role: "ADMIN", capabilities: ["line.read", "incident.read", "report.read", "report.export", "notification.read"] } };
+  if (pathname.endsWith("/auth/me")) return { user: { name: "Browser Fixture", role: "ADMIN", capabilities: ["line.read", "incident.read", "report.read", "report.export", "notification.read"] } };
   if (!backendAvailable && (pathname.endsWith("/lines") || pathname.endsWith("/overview"))) return null;
   if (pathname.endsWith("/lines")) return [BROWSER_MAP_FIXTURE.line];
   if (pathname.includes("/reports/aggregate")) return { by_line: { "fixture-line-001": { measurement_count: 4, analytics_state: "OK" } } };
@@ -63,10 +63,24 @@ async function openFixturePage(context, options = {}) {
 async function runMapAcceptance() {
   if (!chromium) { record("map scaffold", "BLOCKED_EXTERNAL", `Playwright unavailable: ${playwrightLoadError || "browser launch failed"}`); return; }
   const browser = await chromium.launch({ headless: true, executablePath: process.env.BROWSER_E2E_CHROMIUM || "/usr/sbin/chromium", args: ["--no-sandbox", "--disable-crash-reporter"] });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1355, height: 880 } });
   const { page, counters } = await openFixturePage(context);
   try {
     await surface("authenticated scaffold", async () => { check(await page.locator("#authenticatedWorkspace").isVisible(), "authenticated workspace is hidden"); check(await page.locator("#leafletMap.leaflet-container").count() === 1, "Leaflet map container is missing"); check(counters.registry === 1 && counters.mapping === 1, "map assets were loaded more than once"); return "login, bootstrap, Leaflet container and cached registry assets are present"; });
+    await surface("full-screen map shell", async () => {
+      const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }));
+      const mapBox = await page.locator("#mapWrap").boundingBox();
+      check(mapBox && Math.abs(mapBox.x) < 1 && Math.abs(mapBox.y) < 1 && Math.abs(mapBox.width - viewport.width) < 1 && Math.abs(mapBox.height - viewport.height) < 1, "map workspace does not fill the viewport");
+      check(await page.locator(".map-workspace").count() === 1 && await page.locator(".map-card, .map-controls, .session-bar, .dashboard-grid, .kpi-grid, .activity-panel, .sidebar, .rail").count() === 0, "legacy shell surface is still present");
+      check(await page.locator(".primary-nav [data-route]:visible").count() === 3, "capability-aware primary nav does not expose exactly Map, Incidents and Reports");
+      check(await page.locator(".leaflet-control-zoom").count() === 0 && await page.locator(".map-tools").count() === 1 && await page.locator(".map-tools button").count() === 3, "map has duplicate or missing zoom/fit controls");
+      await page.locator('[data-route="reports"]').click();
+      await page.waitForFunction(() => document.querySelector("#authenticatedWorkspace")?.dataset.route === "reports");
+      check(await page.locator('[data-route="reports"]').getAttribute("aria-current") === "page" && new URL(page.url()).hash === "#reports", "primary navigation has no route effect");
+      await page.locator('[data-route="map"]').click();
+      await page.screenshot({ path: "artifacts/task006-shell-1355x880.png", scale: "css" });
+      return "map fills 1355×880, shell is isolated, nav is capability-aware, and exactly one map tool stack is visible";
+    });
     await surface("registry-only marker", async () => { const marker = page.locator('.leaflet-marker-icon.linkwatch-registry-marker[title*="только реестр"]').first(); check(await marker.count() === 1, "registry-only marker is missing"); await marker.click(); const text = await page.locator("#mapPopup").textContent(); check(text.includes("Не подключена к мониторингу"), "registry-only state is not explicit"); check(!text.includes("Текущее состояние"), "registry-only popup exposed operational state"); return "registry-only popup stays neutral"; });
     await surface("current monitoring marker", async () => { await page.locator("#mapPopupClose").click(); await page.locator(".leaflet-marker-icon.linkwatch-monitoring-marker").first().click(); const contextData = await page.evaluate(() => window.LinkwatchMap.getLayers().monitoringMarkers[0].__linkwatchContext); const text = await page.locator("#mapPopup").textContent(); check(contextData.status === "NO_INTERNET", `marker status was ${contextData.status}`); check(text.includes("Текущее состояние"), "monitoring popup did not disclose current state"); return "monitoring marker preserves backend LineState identity"; });
     await surface("contextual line boundary", async () => { await page.locator("#mapPopupOpenLine").click(); await page.locator("#detailDrawer").waitFor({ state: "visible" }); check((await page.locator("#drawerContext").textContent()).includes("fixture-line-001"), "line context lost line identity"); await page.locator("#drawerClose").click(); return "map popup opens the contextual line surface"; });

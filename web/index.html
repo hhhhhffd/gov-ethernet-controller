@@ -11,33 +11,46 @@
   <body>
     <main id="app">
       <section id="authenticatedWorkspace" class="workspace" hidden aria-label="Рабочая область LINKWATCH">
-        <div class="session-bar" aria-label="Состояние сессии">
-          <span id="sessionStatus">Требуется вход</span>
-          <span class="session-identity"><strong id="sessionUser">—</strong><span id="sessionRole">—</span></span>
-          <button id="refreshButton" type="button">Обновить</button>
-          <button id="logoutButton" type="button">Выйти</button>
-        </div>
-        <div class="map-controls" aria-label="Состояние карты">
-          <label>Представление
-            <select id="mapListMode"><option value="current">Текущее состояние</option><option value="historical">Историческое evidence</option></select>
-          </label>
-          <label>Охват
-            <select id="coverageFilter"><option value="all">Все школы реестра</option><option value="monitored">Только мониторинг</option></select>
-          </label>
-          <span id="operationalStatus" role="status">Загрузка операционных данных…</span>
-          <span id="registryDataStatus" role="status">Реестр загружается…</span>
-        </div>
         <section id="mapWrap" class="map-workspace" aria-label="Карта школ и линий">
           <div id="leafletMap" class="leaflet-map" role="application" aria-label="Карта Восточно-Казахстанской области"></div>
+          <div class="shell-top-left" aria-label="Основные разделы">
+            <div class="shell-logo" aria-label="LINKWATCH"><span class="shell-logo-mark" aria-hidden="true"></span><span class="visually-hidden">LINKWATCH</span></div>
+            <nav id="primaryNav" class="primary-nav" aria-label="Основные разделы">
+              <button class="reference-nav-item" data-route="map" type="button" aria-current="page">Карта</button>
+              <button class="reference-nav-item" data-route="incidents" type="button" hidden>Инциденты</button>
+              <button class="reference-nav-item" data-route="reports" type="button" hidden>Отчёты</button>
+            </nav>
+          </div>
+          <div class="shell-top-right" aria-label="Утилиты рабочего пространства">
+            <button id="refreshButton" class="reference-icon-button" type="button" aria-label="Обновить карту" title="Обновить карту">↻</button>
+            <details id="accountControl" class="account-control">
+              <summary id="accountButton" class="account-button" aria-label="Учётная запись"><span id="sessionUser">—</span></summary>
+              <div class="account-menu">
+                <span id="sessionRole" class="account-role">—</span>
+                <span id="sessionStatus" class="account-status">Требуется вход</span>
+                <button id="logoutButton" type="button">Выйти</button>
+              </div>
+            </details>
+          </div>
+          <form id="mapFilter" class="map-filter-island" aria-label="Фильтр карты">
+            <span class="map-filter-title">Фильтр карты</span>
+            <label for="mapListMode">Состояние</label>
+            <select id="mapListMode"><option value="current">Текущее</option><option value="historical">Историческое</option></select>
+            <label for="coverageFilter">Охват</label>
+            <select id="coverageFilter"><option value="all">Все школы</option><option value="monitored">Мониторинг</option></select>
+          </form>
           <div id="mapTileStatus" class="map-tile-status" role="status" hidden></div>
-          <div class="map-tools" aria-label="Управление картой"><button id="mapZoomIn" type="button" aria-label="Увеличить карту">+</button><button id="mapZoomOut" type="button" aria-label="Уменьшить карту">−</button><button id="mapReset" type="button" aria-label="Сбросить карту">⌖</button></div>
+          <div class="map-tools" aria-label="Управление картой"><button id="mapZoomIn" type="button" aria-label="Увеличить карту">+</button><button id="mapZoomOut" type="button" aria-label="Уменьшить карту">−</button><button id="mapReset" type="button" aria-label="Вернуть исходный охват карты">⌖</button></div>
           <section id="mapPopup" class="map-popup hidden" role="dialog" aria-modal="false" aria-labelledby="mapPopupTitle" aria-describedby="mapPopupSummary" tabindex="-1" hidden>
             <div class="map-popup-head"><div><h2 id="mapPopupTitle">—</h2><p id="mapPopupSummary">—</p></div><button id="mapPopupClose" type="button" aria-label="Закрыть карточку на карте">×</button></div>
             <div id="mapPopupFields" class="map-popup-fields"></div><button id="mapPopupOpenLine" class="primary-action" type="button" hidden>Открыть линию</button>
           </section>
           <div class="map-meta"><span><b id="lineCount">0</b> линий</span><span class="visually-hidden" id="mapVisibleCount">0</span><span id="mapModeLabel">Текущее состояние</span><span id="mapFooterNote">Текущее состояние из latest LineState</span></div>
+          <p id="mapError" class="state-message error" role="alert" hidden></p>
         </section>
-        <p id="mapError" class="state-message error" role="alert" hidden></p>
+        <div id="mapLiveStatus" class="visually-hidden" aria-live="polite"></div>
+        <span id="operationalStatus" class="visually-hidden" role="status">Загрузка операционных данных…</span>
+        <span id="registryDataStatus" class="visually-hidden" role="status">Реестр загружается…</span>
       </section>
 
       <div id="authBackdrop" class="auth-backdrop" role="dialog" aria-modal="true" aria-labelledby="authTitle">
