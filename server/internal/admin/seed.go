@@ -23,6 +23,7 @@ var DemoDeviceTokens = map[string]string{
 // called automatically in production unless LINKWATCH_ALLOW_DEMO_SEED=1.
 func SeedDemo(ctx context.Context, db *database.DB) error {
 	now := time.Now().UTC().Truncate(time.Second)
+	demoContextStart := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	organizations := []struct {
 		id, schoolID, name, district, address string
 		lat, lon                              float64
@@ -50,6 +51,15 @@ func SeedDemo(ctx context.Context, db *database.DB) error {
 		// PRIMARY lines are activated only after their monitoring point exists;
 		// this keeps every committed seed step within the line invariant.
 		if _, err := db.Pool.Exec(ctx, `INSERT INTO lines(id,organization_id,provider_id,role,technology,status,created_at) VALUES ($1,$2,$3,$4,$5,'INACTIVE',$6) ON CONFLICT DO NOTHING`, item.id, item.org, item.provider, item.role, item.technology, now); err != nil {
+			return err
+		}
+	}
+	for _, item := range lines {
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO line_context_versions(line_id,provider_id,technology,role,valid_from,version,reason,changed_by,created_at)
+            SELECT id,provider_id,technology,role,$2,1,'initial demo context','seed',$3
+            FROM lines
+            WHERE id=$1
+              AND NOT EXISTS (SELECT 1 FROM line_context_versions WHERE line_id=$1)`, item.id, demoContextStart, now); err != nil {
 			return err
 		}
 	}

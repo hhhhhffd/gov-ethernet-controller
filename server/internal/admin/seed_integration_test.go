@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"linkwatch/server/internal/database"
+	"linkwatch/server/internal/measurements"
 )
 
 func TestResetDemoClearsDraftGenerationsBeforeProviderCases(t *testing.T) {
@@ -34,6 +35,11 @@ func TestResetDemoClearsDraftGenerationsBeforeProviderCases(t *testing.T) {
 
 	if err := ResetDemo(ctx, db); err != nil {
 		t.Fatalf("prepare demo database: %v", err)
+	}
+	assertRowCount(t, ctx, db, "demo line context versions", `SELECT COUNT(*) FROM line_context_versions`, 4)
+	demoObservationAt := time.Date(2020, time.January, 2, 0, 0, 0, 0, time.UTC)
+	if _, err := measurements.ResolveContext(ctx, db.Pool, "line-42-primary", demoObservationAt); err != nil {
+		t.Fatalf("resolve seeded demo line context for historical observation: %v", err)
 	}
 
 	now := time.Now().UTC().Truncate(time.Second)
