@@ -40,12 +40,18 @@ development/staging, network probe не запускает shell.
 
 ## Production-профиль
 
-`docker-compose.prod.yml` требует `LINKWATCH_POSTGRES_PASSWORD`, отключает
-demo seed/auth bypass и использует HTTPS webhook transport по умолчанию.
+`docker-compose.prod.yml` требует `LINKWATCH_POSTGRES_PASSWORD`,
+`LINKWATCH_PUBLIC_HOST` и `LINKWATCH_TLS_EMAIL`, отключает demo seed/auth bypass
+и использует HTTPS webhook transport по умолчанию.
 Пустая БД требует `LINKWATCH_BOOTSTRAP_ADMIN_USERNAME` и пароль длиной не менее
 12 символов. Секреты передаются только через environment/secret store.
-TLS reverse proxy, firewall, rotation device tokens и нагрузочный прогон остаются
-обязанностями deployment-окружения.
+Production TLS boundary: Caddy в `docker-compose.prod.yml` — единственный
+внешний listener на `80/443`; Go `linkwatch-server:8080` доступен только во
+внутренней Compose-сети, а сертификаты сохраняются в named volumes Caddy.
+Для фактического deployment нужны DNS `LINKWATCH_PUBLIC_HOST`, email для ACME
+и разрешённые входящие TCP `80/443`; этот repository не содержит credentials.
+Firewall, rotation device tokens и нагрузочный прогон остаются обязанностями
+deployment-окружения.
 
 ## Ограничения проверки
 
