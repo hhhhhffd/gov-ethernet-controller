@@ -330,6 +330,20 @@
   }
   function renderAll() { renderMap(); renderSituations(); renderLines(); renderActivity(); renderIncidents(); renderNotifications(); renderPassport(); $("#situationCount").textContent = state.situations.length; $("#lineCount").textContent = state.lines.length; }
   function renderMap() {
+    if (window.LinkwatchMap) {
+      const historical = isHistoricalMode();
+      syncModeControls();
+      const modeLabel = $("#mapModeLabel");
+      if (modeLabel) modeLabel.innerHTML = historical ? "ГЕОГРАФИЯ · ИСТОРИЧЕСКИЙ ПЕРИОД" : "ГЕОГРАФИЯ · ТЕКУЩЕЕ СОСТОЯНИЕ <span class=\"panel-live\"><i></i> живые данные</span>";
+      if (state.mapPopupLineID) closeMapPopup(false);
+      if (historical && state.historicalLoading) { $("#mapVisibleCount").textContent = "—"; $("#mapFooterNote").textContent = `Загрузка historical evidence за период: ${periodLabel()}`; return; }
+      if (historical && state.historicalError) { $("#mapVisibleCount").textContent = "—"; $("#mapFooterNote").textContent = "Историческое представление недоступно"; return; }
+      const rows = filteredLines();
+      $("#mapVisibleCount").textContent = rows.length;
+      $("#mapFooterNote").textContent = historical ? `Historical evidence · ${periodLabel()} · current LineState не используется` : "Текущее состояние из latest LineState";
+      window.LinkwatchMap.render({ containerId: "leafletMap", mode: historical ? "historical" : "current", lineCount: rows.length });
+      return;
+    }
     const root = $("#mapMarkers"); if (!root) return;
     const historical = isHistoricalMode();
     syncModeControls();
@@ -787,8 +801,8 @@
     $$("[data-export]").forEach((button) => button.addEventListener("click", () => downloadExport(button.dataset.export)));
     $("#loadMore").addEventListener("click", () => { state.lineLimit += 30; renderLines(); });
     const loginForm = $("#loginForm"); if (loginForm) loginForm.addEventListener("submit", async (event) => { event.preventDefault(); const submit = $("#loginSubmit"); submit.disabled = true; try { await login(false, { username: $("#loginUsername").value.trim(), password: $("#loginPassword").value }); if (state.apiOnline) { await loadData(); await loadPassport(); } } finally { submit.disabled = false; } });
-    ["mapZoomIn", "mapZoomOut", "mapReset"].forEach((id) => { const button = $(`#${id}`); if (button) button.addEventListener("click", () => { const svg = $(".vko-map"); const current = Number(svg.dataset.zoom || 1); const next = id === "mapZoomIn" ? Math.min(1.45, current + .1) : id === "mapZoomOut" ? Math.max(.8, current - .1) : 1; svg.dataset.zoom = next; svg.style.transform = `scale(${next})`; }); });
+    [["mapZoomIn", "zoomIn"], ["mapZoomOut", "zoomOut"], ["mapReset", "resetView"]].forEach(([id, action]) => { const button = $(`#${id}`); if (button) button.addEventListener("click", () => { const map = window.LinkwatchMap?.getMap(); if (!map) return; if (action === "resetView") window.LinkwatchMap.resetView(); else map[action](); }); });
   }
-  async function boot() { bindEvents(); if (state.token) await loadUserProfile(); if (!state.token && !state.demoMode) showLogin(); applyCapabilities(); await loadData(); await loadPassport(); }
+  async function boot() { window.LinkwatchMap?.init({ containerId: "leafletMap" }); bindEvents(); if (state.token) await loadUserProfile(); if (!state.token && !state.demoMode) showLogin(); applyCapabilities(); await loadData(); await loadPassport(); }
   document.addEventListener("DOMContentLoaded", boot);
 })();

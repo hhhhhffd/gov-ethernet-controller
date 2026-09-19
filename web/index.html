@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#08131f" />
     <title>Контур качества ВКО</title>
+    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
@@ -82,6 +83,8 @@
     <div class="modal-backdrop hidden" id="authBackdrop"><section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="authTitle"><div class="modal-head"><div><div class="panel-kicker">ЗАЩИЩЁННЫЙ ДОСТУП</div><h2 id="authTitle">Войти в LINKWATCH</h2><span class="draft-badge">Сессия ограничена по времени</span></div></div><p class="auth-message" id="authMessage">Введите рабочие учётные данные.</p><form id="loginForm" class="auth-form"><label>Имя пользователя<input id="loginUsername" name="username" autocomplete="username" required /></label><label>Пароль<input id="loginPassword" name="password" type="password" autocomplete="current-password" required /></label><button class="button button-primary" id="loginSubmit" type="submit">Войти <span>→</span></button></form></section></div>
 
     <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+    <script src="/static/vendor/leaflet/leaflet.js" defer></script>
+    <script src="/static/map.js" defer></script>
     <script src="/static/app.js" defer></script>
   </body>
 </html>

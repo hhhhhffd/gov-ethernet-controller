@@ -92,3 +92,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .contract-table .contract-history { background: rgba(145,170,178,.025); }
 @media (max-width: 960px) { .lines-header-controls { align-items: stretch; flex-direction: column; }.mode-control { width: 100%; }.admin-resource-toolbar { align-items: stretch; flex-direction: column; }.admin-resource-toolbar label { min-width: 0; }.map-footer { align-items: flex-start; flex-direction: column; gap: 5px; } }
 @media (max-width: 640px) { .map-popup { top: 8px; right: 8px; width: calc(100% - 16px); }.map-popup-fields { gap: 5px; padding: 9px; }.map-popup-actions { padding: 0 9px 9px; } }
+
+/* Leaflet foundation: the dashboard owns layout and controls; Leaflet owns map viewport and attribution. */
+.leaflet-map { position: absolute; inset: 0; z-index: 1; min-height: 0; overflow: hidden; background: #0b1c2a; }
+.leaflet-map .leaflet-tile { filter: brightness(.62) saturate(.72) hue-rotate(158deg); }
+.leaflet-map .leaflet-control-attribution { margin: 0 4px 4px 0; padding: 2px 5px; border: 1px solid rgba(106,157,173,.16); border-radius: 4px; color: var(--muted); background: rgba(7,22,34,.82); font-size: 9px; }
+.leaflet-map .leaflet-control-attribution a { color: var(--cyan); }
+.leaflet-map .leaflet-control-attribution a:hover { color: var(--text); }
+.map-popup, .map-legend, .map-scale { z-index: 5; }

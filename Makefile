@@ -1,4 +1,4 @@
-.PHONY: server-test server-build agent-test agent-build agent-release compose-up compose-down smoke \
+.PHONY: server-test server-build agent-test agent-build agent-release web-test compose-up compose-down smoke \
 	build-server test-server build-agent test-agent up down
 
 server-test:
@@ -15,6 +15,9 @@ agent-build:
 
 agent-release:
 	cargo build --release --manifest-path agent/Cargo.toml
+
+web-test:
+	./scripts/web-foundation-check.sh
 
 compose-up:
 	docker compose up -d --build
