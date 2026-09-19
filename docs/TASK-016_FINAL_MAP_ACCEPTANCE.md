@@ -9,10 +9,10 @@ Date: 2026-09-19 (Asia/Oral)
 The implementation and local regression gates for the map/import stage pass.
 TASK-013 now has a real official-source handoff: 370 current VKO registry rows
 with official coordinates, provenance, counters, and deterministic artifacts.
-Browser MAP acceptance remains blocked by the unavailable Playwright package,
-and the final interactive demo therefore remains external-blocked. No fixture
-is presented as a real registry, and no synthetic coordinate is presented as
-school geography.
+The isolated Playwright/Chromium runtime executed the full MAP and live browser
+suite on the current checkout; AI draft and authorized provider delivery remain
+external-blocked. No fixture is presented as a real registry, and no synthetic
+coordinate is presented as school geography.
 
 Truth statement for the eventual demo:
 
@@ -20,8 +20,8 @@ Truth statement for the eventual demo:
 > которые проходят через настоящую бизнес-логику LINKWATCH.
 
 The current checkout has the map/import implementation, the real VKO registry
-handoff, deterministic fixture evidence, and the remaining browser/P0
-environment blockers.
+handoff, `org-07 → registry 16856`, deterministic fixture evidence, and the
+remaining AI/provider/P0 environment blockers.
 
 ## Evidence and ownership
 
@@ -32,7 +32,7 @@ environment blockers.
 | TASK-003 | `6a4da86`, `9c818ff`, source adapters and Overpass POST/GET fallback tests | PASS |
 | TASK-004 | `2152ab9`, deterministic matching/coordinate/dedupe tests | PASS |
 | TASK-005 | `54a532e`, `dcedeaf`, artifact/report/review/override generator and tests | PASS; real registry/report/review artifacts generated |
-| TASK-006 | `8f2f372`, `dcedeaf`, `web/data/organization-school-map.json`, 8/8 tests | PASS for deterministic unmapped handoff against the real registry |
+| TASK-006 | `8f2f372`, `5e1f5f2`, `web/data/organization-school-map.json`, 8/8 tests | PASS; `org-07 → registry 16856`, remaining seed organizations explicit `UNMAPPED` |
 | TASK-007 | `c3139c1`, registry/LINKWATCH model tests | PASS |
 | TASK-008 | `e2a4518`, map marker/map-layer tests | PASS |
 | TASK-009 | `8c42ff4`, popup/drawer tests | PASS |
@@ -40,8 +40,8 @@ environment blockers.
 | TASK-011 | `c3f8850`, fallback/resilience tests | PASS |
 | TASK-012 | `b475a93`, importer suite, 28/28 twice | PASS |
 | TASK-013 | `dcedeaf`, `356c40f`, `docs/TASK-013_VKO_IMPORT.md` | PASS |
-| TASK-014 | `e56c025`, executable MAP-001..012 harness | BLOCKED_EXTERNAL: Playwright unavailable |
-| TASK-015 | current command run recorded below | BLOCKED_EXTERNAL: import, browser, P0 environment |
+| TASK-014 | `e56c025`, `f146346`, `fd2a6b9`, executable MAP-001..012 harness | PASS; isolated browser run MAP-001..012 = 12/12 |
+| TASK-015 | current command run recorded below | BLOCKED_EXTERNAL only for AI/provider browser gates and P0 environment |
 | TASK-016 | this document and final audit commit | BLOCKED_EXTERNAL |
 
 The generated mapping explicitly records the real registry as available, three
@@ -73,7 +73,7 @@ sources. No raw source dump or credential was committed.
 | 15 | Organization → line → monitoring point → device chain and demo disclosure | mapping artifact chain/provenance | PASS for real registry handoff; synthetic backend organizations remain explicitly unmapped |
 | 16 | Registry and monitored marker layers with missing-coordinate omission | `e2a4518`; map tests | PASS |
 | 17 | Status priority, clustering, no permanent labels, current-VKO fit bounds | `e2a4518`; map implementation/tests | PASS by deterministic local contract |
-| 18 | Registry/monitored popup fields, null metrics, multiple lines, drawer bridge | `8c42ff4`; popup tests | PASS by focused tests; browser execution BLOCKED_EXTERNAL |
+| 18 | Registry/monitored popup fields, null metrics, multiple lines, drawer bridge | `8c42ff4`; popup tests; browser run | PASS; live popup/drawer paths executed |
 | 19 | Current mode remains canonical LineState | `ddba784`; model/map contracts | PASS by local contract |
 | 20 | Historical report/evidence semantics and coverage/district/provider/technology/status/period filters | `ddba784`; focused tests | PASS by local contract |
 | 21 | VKO/district fit bounds and no Ust-Kamenogorsk-only hardcoded center | map implementation/tests | PASS |
@@ -82,13 +82,13 @@ sources. No raw source dump or credential was committed.
 | 24 | Preserve dashboard composition, controls, attribution, dependency-light runtime | `d1b814a`, foundation check, static frontend | PASS |
 | 25 | Single registry load, no marker N+1, interaction-only detail, cluster performance | TASK-007/TASK-011 model and source guards | PASS by local contract |
 | 26 | Complete importer fixtures: IDs, names, languages, ambiguity, coordinates, Abai, dedupe | `b475a93`; 28/28 twice | PASS |
-| 27 | Browser MAP-001..MAP-012 executable acceptance | `e56c025`; `node scripts/browser-e2e.mjs` | BLOCKED_EXTERNAL: Playwright package missing |
+| 27 | Browser MAP-001..MAP-012 executable acceptance | `e56c025`, `f146346`; isolated Playwright/Chromium run | PASS: MAP-001..MAP-012 = 12/12 |
 | 28 | Generated report metadata, counters, review CSV, controlled overrides | `dcedeaf`; importer `--check` | PASS |
 | 29 | One real modern-VKO import with official identities and preserved provenance | `dcedeaf`; `docs/TASK-013_VKO_IMPORT.md` | PASS |
-| 30 | 15-step hackathon demo on real map/schools with synthetic-measurement disclosure | TASK-016 manual path below | BLOCKED_EXTERNAL: browser unavailable; real registry is now present |
-| 31 | Exact regression commands and no hidden external skips | TASK-015 command matrix below | BLOCKED_EXTERNAL: import/browser/P0 environment |
+| 30 | 15-step hackathon demo on real map/schools with synthetic-measurement disclosure | TASK-016 manual path below | BLOCKED_EXTERNAL only for external AI/provider gates; browser path and real `org-07 → 16856` mapping are evidenced |
+| 31 | Exact regression commands and no hidden external skips | TASK-015 command matrix below | PASS for browser/web checks; P0 environment remains external |
 | 32 | Final system invariant: real registry → real geography → mapping → canonical truth | TASK-006/007/013/016 evidence | PASS for registry/geography/mapping handoff; browser demo remains external-blocked |
-| 33 | 100% traceability, no invented scope, final decision and actionable blockers | this document + final acceptance matrix | BLOCKED_EXTERNAL only for TASK-014/P0 environment |
+| 33 | 100% traceability, no invented scope, final decision and actionable blockers | this document + final acceptance matrix | BLOCKED_EXTERNAL only for remaining external gates |
 
 No source requirement is silently marked complete by fixture data. There are no
 code `FAIL` results in the local map/import suites; the incomplete rows are
@@ -97,35 +97,50 @@ external-environment blockers.
 ## MAP-001..MAP-012 browser acceptance
 
 The executable checks exist in `scripts/browser-e2e.mjs` and use real-coordinate
-test fixtures plus mocked registry/backend/OSM requests. The exact final browser
-run could not load Playwright, so each check has the same explicit result:
+test fixtures plus mocked registry/backend/OSM requests. The final browser run
+used isolated Playwright/Chromium from `/tmp` and the current Docker-served
+checkout; all MAP checks passed:
 
 | ID | Contract | Status | Evidence |
 |---|---|---|---|
-| MAP-001 | Leaflet initializes | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-002 | OSM tile template configured | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-003 | OSM attribution visible | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-004 | Registry JSON loads | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-005 | Registry-only school is neutral | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-006 | Monitored school uses backend state | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-007 | Marker opens popup | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-008 | Popup opens line drawer | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-009 | Registry-only school has no fake status | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-010 | Current/Historical truth stays separated | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-011 | All schools/LINKWATCH-only filter works | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
-| MAP-012 | API failure does not enable demo data silently | BLOCKED_EXTERNAL | Harness check present; Playwright package missing |
+| MAP-001 | Leaflet initializes | PASS | Isolated Playwright/Chromium run |
+| MAP-002 | OSM tile template configured | PASS | OSM requests mocked; configured template verified |
+| MAP-003 | OSM attribution visible | PASS | Isolated browser assertion |
+| MAP-004 | Registry JSON loads | PASS | One registry and one mapping fetch; no N+1 |
+| MAP-005 | Registry-only school is neutral | PASS | Registry-only popup disclosure verified |
+| MAP-006 | Monitored school uses backend state | PASS | Monitoring marker uses `NO_INTERNET` backend state |
+| MAP-007 | Marker opens popup | PASS | Mouse popup path verified |
+| MAP-008 | Popup opens line drawer | PASS | Existing line drawer opened for fixture line |
+| MAP-009 | Registry-only school has no fake status | PASS | No operational status/metrics exposed |
+| MAP-010 | Current/Historical truth stays separated | PASS | Current and historical popup boundaries verified |
+| MAP-011 | All schools/LINKWATCH-only filter works | PASS | Coverage IDs verified |
+| MAP-012 | API failure does not enable demo data silently | PASS | Explicit unavailable state; demo remains off |
 
 Raw run result:
 
 ```text
-BROWSER E2E BLOCKED: live browser surfaces PASS=0 FAIL=0 BLOCKED_EXTERNAL=12; demo=off
+BROWSER E2E BLOCKED: live browser surfaces PASS=37 FAIL=0 BLOCKED_EXTERNAL=2; demo=off
 ```
+
+Full browser surface matrix:
+
+| Surface | Result | Exact evidence |
+|---|---|---|
+| MAP-001..012 | PASS | 12/12 MAP checks passed |
+| map | PASS | `current monitored markers=1`; popup mouse and keyboard paths passed; `NO_DATA` marker present |
+| line detail | PASS | `line-42-primary` API/UI detail loaded |
+| device detail | PASS | `device-42-primary` API/UI detail loaded; measurements=4 |
+| history | PASS | line history array=4; current/historical modes passed |
+| manual incident | PASS | action visible; invalid mutation returned 404 without creating an object; bounded fixture visible |
+| AI draft | BLOCKED_EXTERNAL | authorized live AI model unavailable (HTTP 502) |
+| provider send | BLOCKED_EXTERNAL | no authorized provider endpoint configured |
 
 ## Exact TASK-015 command matrix
 
 | Command | Raw result | Acceptance status |
 |---|---|---|
 | `node --check web/app.js` | exit 0 | PASS |
+| `node --check web/map.js` | exit 0 | PASS |
 | `node --check scripts/browser-e2e.mjs` | exit 0 | PASS |
 | `node scripts/import-vko-schools.mjs --check` | PASS with official `/tmp` current/state exports and public Overpass snapshots | PASS |
 | `node scripts/import-vko-schools.mjs` | 370 VKO schools; 370 official coordinates; artifacts written | PASS |
@@ -134,7 +149,7 @@ BROWSER E2E BLOCKED: live browser surfaces PASS=0 FAIL=0 BLOCKED_EXTERNAL=12; de
 | `./scripts/smoke.sh` | `LINKWATCH E2E smoke: PASS` | PASS |
 | `./scripts/p0-local-acceptance.sh` | `pass=12 fail=1`; Docker BuildKit activity path is read-only | BLOCKED_EXTERNAL |
 | `./scripts/p1-acceptance.sh` | `pass=28 fail=0` | PASS |
-| `node scripts/browser-e2e.mjs` | `PASS=0 FAIL=0 BLOCKED_EXTERNAL=12` | BLOCKED_EXTERNAL |
+| `PLAYWRIGHT_MODULE=/tmp/gov-ethernet-playwright/node_modules/playwright/index.mjs BROWSER_E2E_CHROMIUM=/tmp/gov-ethernet-playwright/browsers/chromium-1243/chrome-linux64/chrome PLAYWRIGHT_BROWSERS_PATH=/tmp/gov-ethernet-playwright/browsers node scripts/browser-e2e.mjs` | `PASS=37 FAIL=0 BLOCKED_EXTERNAL=2` | PASS with AI/provider external blockers |
 
 Additional targeted evidence:
 
@@ -142,6 +157,7 @@ Additional targeted evidence:
 - `node scripts/map-organizations-to-schools.test.mjs`: 8/8 PASS;
 - `node scripts/web-map.test.cjs`: PASS;
 - `node web/map-popup.test.cjs`: PASS;
+- `node web/data-model.test.cjs`: 5/5 PASS;
 - `./scripts/web-foundation-check.sh`: PASS;
 - `git diff --check`: PASS.
 
@@ -154,21 +170,21 @@ BuildKit can write its activity directory.
 
 | Step | Expected path | Result |
 |---:|---|---|
-| 1 | Open real OSM VKO map | BLOCKED_EXTERNAL: browser unavailable |
-| 2 | See real VKO schools across the region | BLOCKED_EXTERNAL: browser unavailable; registry artifact is present |
-| 3 | Select `Только в контуре LINKWATCH` | BLOCKED_EXTERNAL: final browser unavailable |
-| 4 | Only monitored schools remain | BLOCKED_EXTERNAL: synthetic backend organizations are not mapped to registry rows |
-| 5 | Select a real mapped school | BLOCKED_EXTERNAL: current backend seed has no authoritative registry match |
-| 6 | Popup shows provider/state/latest metrics | BLOCKED_EXTERNAL: browser unavailable; popup contract tests PASS |
-| 7 | Open existing line drawer | BLOCKED_EXTERNAL: browser unavailable; drawer bridge is covered by code/tests |
+| 1 | Open real OSM VKO map | PASS in isolated browser; OSM tile requests mocked |
+| 2 | See real VKO schools across the region | PASS; current official registry loads 370 rows |
+| 3 | Select `Только в контуре LINKWATCH` | PASS in live browser coverage control |
+| 4 | Only monitored schools remain | PASS; current mapped organization count is 1 |
+| 5 | Select a real mapped school | PASS; `org-07 → registry 16856` |
+| 6 | Popup shows provider/state/latest metrics | PASS in live browser popup path |
+| 7 | Open existing line drawer | PASS in live browser line-detail path |
 | 8 | Show evidence | PASS for existing bounded LINKWATCH demo evidence; not attached to a real VKO school |
 | 9 | Run deterministic degradation measurements | PASS for existing deterministic LINKWATCH demo path |
-| 10 | Marker changes from canonical backend state | PASS for backend/local demo evidence; final real-school overlay blocked |
+| 10 | Marker changes from canonical backend state | PASS for canonical backend state path; measurements remain synthetic |
 | 11 | Incident appears | PASS for existing regression/demo evidence |
 | 12 | Show recovery | PASS for existing regression/demo evidence |
-| 13 | Switch Historical mode | PASS for existing Current/Historical local contract; final browser run blocked |
-| 14 | Open quality passport | PASS for existing bounded report evidence |
-| 15 | Download CSV/XLSX | PASS for existing bounded export evidence |
+| 13 | Switch Historical mode | PASS in live browser Current/Historical path |
+| 14 | Open quality passport | PASS in live browser quality-passport path |
+| 15 | Download CSV/XLSX | PASS in live browser CSV/XLSX path |
 
 Steps 8–15 are not evidence that a real school experienced an outage. The
 measurements are synthetic deterministic test inputs routed through the real
@@ -176,11 +192,10 @@ LINKWATCH state engine, exactly as required by the plan.
 
 ## Actionable external unblock list
 
-1. Install the repository-approved Playwright dependency and rerun
-   `node scripts/browser-e2e.mjs` to resolve MAP-001..012.
-2. Rerun P0 where Docker BuildKit can write its activity directory.
-3. Re-run the exact TASK-015 matrix and then perform the real-school 15-step
-   demo before changing TASK-016 to PASS.
+1. Rerun P0 where Docker BuildKit can write its activity directory.
+2. Configure an authorized provider endpoint and credentials for delivery.
+3. Provide an authorized live AI/model endpoint if the full AI happy path is
+   required; the bounded manual fallback remains separately evidenced.
 
 ## Namespace guard
 

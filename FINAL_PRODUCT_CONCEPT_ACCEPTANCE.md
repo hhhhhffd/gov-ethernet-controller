@@ -36,7 +36,7 @@ without current executable evidence is not promoted to `PASS`.
 | Recorded server checks | `make server-test` PASS; all Go packages recorded as passing | Server/runtime regression |
 | Recorded agent checks | `make agent-test` PASS (39/39 tests); TASK-024 Rust command/config/update regression PASS (38 tests) | Agent/runtime regression |
 | Recorded E2E/build checks | `./scripts/smoke.sh` PASS; server build PASS; Windows artifact build is present; `node --check web/app.js` and `node --check scripts/browser-e2e.mjs` exit `0` | Runtime, build, and frontend syntax |
-| Browser verifier | `PASS=23`, `FAIL=0`, `BLOCKED_EXTERNAL=4`, demo off | Live local browser surfaces; provider rows remain external |
+| Browser verifier | `PASS=37`, `FAIL=0`, `BLOCKED_EXTERNAL=2`, demo off | Live local browser surfaces; AI draft and provider delivery remain external |
 
 The historical pre-fix text in `docs/TASK-018_DEMO_ACCEPTANCE.md` records the
 earlier reset failure (`0/3`). It is not used to override the later verifier
@@ -52,7 +52,7 @@ missing plan attachment is not treated as product evidence.
 
 | Requirement | Priority | Source | Implementation | Test/evidence | Status | Notes |
 |---|---|---|---|---|---|---|
-| agent→server→DB→state→web | P0 | Plan attachment unavailable; `docs/P0_ACCEPTANCE_RUNBOOK.md` | `agent/src/client.rs`; `server/internal/measurements`; `web/app.js` | Recorded `./scripts/smoke.sh` PASS; P0 `32/0/3`; browser `23/0/4` | PASS | Bounded local runtime path; deployment remains external. |
+| agent→server→DB→state→web | P0 | Plan attachment unavailable; `docs/P0_ACCEPTANCE_RUNBOOK.md` | `agent/src/client.rs`; `server/internal/measurements`; `web/app.js` | Recorded `./scripts/smoke.sh` PASS; P0 `32/0/3`; browser `37/0/2` | PASS | Bounded local runtime path; deployment remains external. |
 | offline resend | P0 | Plan attachment unavailable; `docs/P0_ACCEPTANCE_RUNBOOK.md` | `agent/src/queue.rs`; `agent/src/client.rs` | Recorded smoke PASS; P0 local fixture `13/13` | PASS | Queue retention, resend acknowledgement, and drain are locally evidenced. |
 | thresholds | P0 | Plan attachment unavailable; `docs/P0_ACCEPTANCE_RUNBOOK.md` | `server/internal/evaluation`; `server/internal/measurements` | P0 local fixture `13/13`; TASK-018 latest verifier `3/3`, `84/0/0` | PASS | Count/duration policy evidence is bounded to the recorded runtime. |
 | baseline+contract | P0 | Plan attachment unavailable; `docs/P1_ACCEPTANCE.md` | `server/internal/evaluation` | `TestEvaluateSeparatesBaselineAndContractAxes`; TASK-018 baseline `OK` / contract `DEVIATES` evidence | PASS | Separate axes are retained in the evaluation/evidence path. |
@@ -136,12 +136,12 @@ missing plan attachment is not treated as product evidence.
 | TASK-009 | Server-scoped notification center and durable WEB outbox workflow | PASS | P0/P2 local outbox evidence; notification acceptance tests record persistence, retry, permanent-failure and redaction paths | This PASS is for the bounded local/WEB workflow, not an external channel delivery. |
 | TASK-010 | ProviderCase transport state machine, human review gate and retry persistence | PASS | TASK-016/TASK-021 local `httptest` and PostgreSQL regression rows; P0 local human-send gate | Local transport evidence does not establish an authorized provider PASS; see TASK-019/021. |
 | TASK-011 | Reports, quality passport, CSV/XLSX and export consistency | PASS | TASK-018 `3/3` completed passport/CSV/XLSX checks; P0/P2/browser report evidence | Scripted report evidence is not interactive manual export acceptance. |
-| TASK-012 | Operational web dashboard, line/device/history/incident/report/admin surfaces | PASS | Browser verifier `23/0/4`; `node --check` checks; P0/P1 live surface evidence | Four provider workflow surfaces are intentionally not counted here as PASS. |
+| TASK-012 | Operational web dashboard, line/device/history/incident/report/admin surfaces | PASS | Browser verifier `37/0/2`; `node --check` checks; P0/P1 live surface evidence | AI draft and provider delivery remain external blockers. |
 | TASK-013 | Admin catalog, policy/contract governance and device administration | PASS | P0/P1 authorization and admin matrix evidence; recorded server tests | No unrecorded manual administration claim is made. |
 | TASK-014 | Role/scope administrative matrix and mutation conflict semantics | PASS | P0 role matrix, provider `403`, stale/concurrent `409` evidence; TASK-014 matrix test history | Bounded API evidence only. |
 | TASK-015 | Audit, evidence chain, immutable historical projection and report provenance | PASS | P1/P2 evidence tests; `4c4d971`; `7baa013`; recorded browser/audit evidence | No source-only PASS is used; rows refer to executed checks recorded in acceptance docs. |
 | TASK-016 | AI ProviderCase draft, redaction, failed generation persistence and reviewed send | BLOCKED_EXTERNAL | Local fail-safe/manual fallback, redaction, review gate and test transport PASS; live Ollama and authorized provider unavailable | No live model `SUCCEEDED` draft or authorized external delivery is claimed. |
-| TASK-017 | Authenticated browser acceptance against live backend | PASS | Browser verifier recorded `PASS=23`, `FAIL=0`, `BLOCKED_EXTERNAL=4`, demo off | ProviderCase, AI draft, human review and provider send remain `BLOCKED_EXTERNAL`, not hidden as PASS. |
+| TASK-017 | Authenticated browser acceptance against live backend | PASS | Browser verifier recorded `PASS=37`, `FAIL=0`, `BLOCKED_EXTERNAL=2`, demo off | AI draft and provider send remain `BLOCKED_EXTERNAL`, not hidden as PASS. |
 | TASK-018 | Deterministic three-run hackathon demo minimum | PASS | `3/3`, `84/0/0`, exit `0`; explicit `MANUAL_FALLBACK`; fixes in `d27eced`, `6ae95f4`, `acf9869`, `4c4d971`, `f4e85a2` | Bounded scripted completion only; no live AI, native Windows, or interactive manual PASS is inferred. |
 | TASK-019 | Authorized provider integration, external reference and provider-side retry/reconciliation | BLOCKED_EXTERNAL | Local provider transport tests PASS; no authorized endpoint or credentials configured | Real provider auth/signing, delivery, external reference, retry and audit confirmation remain unavailable. |
 | TASK-020 | Public DNS, ACME issuance, HTTPS redirect, protected endpoint and restart persistence | BLOCKED_EXTERNAL | Local Caddy/config/localhost checks PASS; public probe could not resolve the placeholder host | Public ACME certificate and public HTTPS evidence are absent. |
@@ -196,7 +196,7 @@ missing plan attachment is not treated as product evidence.
 | Agent regression | PASS | Recorded `make agent-test` PASS (39/39); TASK-024 Rust regression PASS (38) | Not rerun for this documentation-only closure. |
 | Smoke | PASS | Recorded `./scripts/smoke.sh` PASS | Not rerun; no long suite launched for TASK-027. |
 | Build | PASS | Recorded server build PASS and checked-in Windows artifact build evidence | Artifact execution on native Windows remains `BLOCKED_EXTERNAL`. |
-| Node checks | PASS | `node --check web/app.js` and `node --check scripts/browser-e2e.mjs` exit `0` | Syntax checks do not replace interactive browser or native acceptance. |
+| Node checks | PASS | `node --check web/app.js`, `node --check web/map.js`, and `node --check scripts/browser-e2e.mjs` exit `0`; data-model 5/5 | Syntax checks do not replace interactive browser or native acceptance. |
 
 ## Global invariants
 
@@ -227,8 +227,10 @@ The bounded decision does not close these external gates:
 4. Authorized non-WEB notification delivery.
 5. Live local Ollama/model `SUCCEEDED` draft evidence, if required by the full
    AI acceptance rather than the bounded fallback path.
-No long suite was run for this closure. The only worktree mutation is this
-matrix plus removal of the untracked generated `server/linkwatch-server`.
+The current browser/web follow-up was rerun against the rebuilt Docker-served
+checkout with isolated Playwright/Chromium; the remaining blockers are
+external AI/provider/P0 gates. The only repository mutations are the bounded
+acceptance-harness selector fix and factual evidence updates.
 
 ## Final map/import acceptance
 
@@ -236,8 +238,8 @@ The TASK-016 audit is maintained separately in
 [`docs/TASK-016_FINAL_MAP_ACCEPTANCE.md`](docs/TASK-016_FINAL_MAP_ACCEPTANCE.md).
 It is authoritative for the Leaflet/OpenStreetMap, current-VKO registry,
 importer, organization mapping, registry-vs-LINKWATCH truth, MAP-001..012,
-exact TASK-015 command results, and the 15-step demo. Its decision is
-`BLOCKED_EXTERNAL` until an official current VKO registry is imported and the
-browser acceptance environment is available. Fixtures and synthetic
-measurements are explicitly not accepted as real school geography or a real
-school outage.
+exact TASK-015 command results, and the 15-step demo. Its decision remains
+`BLOCKED_EXTERNAL` only for the recorded external AI/provider/P0 gates; the
+current official registry and `org-07 → registry 16856` browser path are
+evidenced. Fixtures and synthetic measurements are explicitly not accepted as
+real school geography or a real school outage.

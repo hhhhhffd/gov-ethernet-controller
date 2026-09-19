@@ -543,7 +543,12 @@ async function main() {
     });
 
     const liveLines = unwrap((await apiRequest(admin, "/api/v1/lines")).body);
-    const primaryLine = liveLines.find((line) => line.latest?.at) || liveLines[0];
+    const coverageFilter = admin.locator("#coverageFilter");
+    check(await coverageFilter.count() === 1, "coverage filter was not rendered for live line detail checks");
+    await coverageFilter.selectOption("monitored");
+    await admin.waitForFunction(() => document.querySelector("#linesTableBody [data-line-id]"), null, { timeout: 10000 });
+    const visibleLineID = await admin.locator("#linesTableBody [data-line-id]").first().getAttribute("data-line-id");
+    const primaryLine = liveLines.find((line) => line.id === visibleLineID);
     check(primaryLine?.id, "no live line is available for detail checks");
     const lineDetailResponse = await apiRequest(admin, `/api/v1/lines/${encodeURIComponent(primaryLine.id)}`);
     expectStatus(lineDetailResponse, 200, "line detail API");
