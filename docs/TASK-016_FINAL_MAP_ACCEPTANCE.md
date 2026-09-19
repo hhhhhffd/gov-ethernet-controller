@@ -7,8 +7,11 @@ Date: 2026-09-19 (Asia/Oral)
 `TASK-016`: **BLOCKED_EXTERNAL**.
 
 The implementation and local regression gates for the map/import stage pass.
-TASK-013 now has a real official-source handoff: 370 current VKO registry rows
-with official coordinates, provenance, counters, and deterministic artifacts.
+TASK-013 has a committed real official-source handoff: 370 current VKO registry
+rows with official coordinates, provenance, counters, and deterministic
+artifacts. The exact no-environment importer commands in the current checkout
+are blocked because no local eGov input files or `EGOV_API_KEY` are available;
+the committed handoff remains checkable and was produced from official inputs.
 The isolated Playwright/Chromium runtime executed the full MAP and live browser
 suite on the current checkout; AI draft and authorized provider delivery remain
 external-blocked. No fixture is presented as a real registry, and no synthetic
@@ -32,7 +35,7 @@ remaining AI/provider/P0 environment blockers.
 | TASK-003 | `6a4da86`, `9c818ff`, source adapters and Overpass POST/GET fallback tests | PASS |
 | TASK-004 | `2152ab9`, deterministic matching/coordinate/dedupe tests | PASS |
 | TASK-005 | `54a532e`, `dcedeaf`, artifact/report/review/override generator and tests | PASS; real registry/report/review artifacts generated |
-| TASK-006 | `8f2f372`, `5e1f5f2`, `web/data/organization-school-map.json`, 8/8 tests | PASS; `org-07 → registry 16856`, remaining seed organizations explicit `UNMAPPED` |
+| TASK-006 | `8f2f372`, `5e1f5f2`, `web/data/organization-school-map.json`, 9/9 tests | PASS; `org-07 → registry 16856`, remaining seed organizations explicit `UNMAPPED` |
 | TASK-007 | `c3139c1`, registry/LINKWATCH model tests | PASS |
 | TASK-008 | `e2a4518`, map marker/map-layer tests | PASS |
 | TASK-009 | `8c42ff4`, popup/drawer tests | PASS |
@@ -41,12 +44,13 @@ remaining AI/provider/P0 environment blockers.
 | TASK-012 | `b475a93`, importer suite, 28/28 twice | PASS |
 | TASK-013 | `dcedeaf`, `356c40f`, `docs/TASK-013_VKO_IMPORT.md` | PASS |
 | TASK-014 | `e56c025`, `f146346`, `fd2a6b9`, executable MAP-001..012 harness | PASS; isolated browser run MAP-001..012 = 12/12 |
-| TASK-015 | current command run recorded below | BLOCKED_EXTERNAL only for AI/provider browser gates and P0 environment |
+| TASK-015 | fresh exact-command run and isolated browser rerun recorded below | BLOCKED_EXTERNAL for importer inputs, repo-local Playwright, AI/provider browser gates, and P0 environment |
 | TASK-016 | this document and final audit commit | BLOCKED_EXTERNAL |
 
-The generated mapping explicitly records the real registry as available, three
-synthetic backend organizations as `UNMAPPED`, and synthetic seed coordinates
-as `synthetic-only`; registry coordinates are kept separate and authoritative.
+The generated mapping explicitly records the real registry as available, one
+mapped backend organization, two synthetic backend organizations as `UNMAPPED`,
+and synthetic seed coordinates as `synthetic-only`; registry coordinates are
+kept separate and authoritative.
 `web/data/vko-schools.json`, `artifacts/vko-schools-import-report.json`, and
 `artifacts/vko-schools-review.csv` were generated and checked from official
 sources. No raw source dump or credential was committed.
@@ -68,7 +72,7 @@ sources. No raw source dump or credential was committed.
 | 10 | Numeric/current-VKO boundary validation; no invalid marker coordinate | coordinate validation tests | PASS |
 | 11 | OSM node/way/relation dedupe and deterministic ordering | dedupe fixtures and deterministic rerun tests | PASS |
 | 12 | Registry/report/review artifacts, provenance, counters, no hardcoded total | `dcedeaf`; importer `--check`; report counters | PASS |
-| 13 | Deterministic organization ↔ registry mapping; no browser fuzzy matching | `8f2f372`; mapping 8/8 | PASS |
+| 13 | Deterministic organization ↔ registry mapping; no browser fuzzy matching | `8f2f372`, `5e1f5f2`; mapping 9/9 | PASS |
 | 14 | Registry-only neutral layer, canonical LINKWATCH layer, KPI separation | `c3139c1`; data-model tests | PASS |
 | 15 | Organization → line → monitoring point → device chain and demo disclosure | mapping artifact chain/provenance | PASS for real registry handoff; synthetic backend organizations remain explicitly unmapped |
 | 16 | Registry and monitored marker layers with missing-coordinate omission | `e2a4518`; map tests | PASS |
@@ -142,24 +146,33 @@ Full browser surface matrix:
 | `node --check web/app.js` | exit 0 | PASS |
 | `node --check web/map.js` | exit 0 | PASS |
 | `node --check scripts/browser-e2e.mjs` | exit 0 | PASS |
-| `node scripts/import-vko-schools.mjs --check` | PASS with official `/tmp` current/state exports and public Overpass snapshots | PASS |
-| `node scripts/import-vko-schools.mjs` | 370 VKO schools; 370 official coordinates; artifacts written | PASS |
+| `node scripts/import-vko-schools.mjs --check` | `eGov: EGOV_API_KEY is required when a local file is not configured` | BLOCKED_EXTERNAL; no local eGov input or key in this environment |
+| `node scripts/import-vko-schools.mjs` | same missing eGov input/key error; no artifact write | BLOCKED_EXTERNAL; no local eGov input or key in this environment |
 | `make server-test` | all Go packages PASS | PASS |
 | `make agent-test` | 39 passed, 0 failed | PASS |
 | `./scripts/smoke.sh` | `LINKWATCH E2E smoke: PASS` | PASS |
 | `./scripts/p0-local-acceptance.sh` | `pass=12 fail=1`; Docker BuildKit activity path is read-only | BLOCKED_EXTERNAL |
 | `./scripts/p1-acceptance.sh` | `pass=28 fail=0` | PASS |
+| `node scripts/browser-e2e.mjs` | `Playwright unavailable`; `PASS=0 FAIL=0 BLOCKED_EXTERNAL=12` | BLOCKED_EXTERNAL; repo has no browser dependency |
 | `PLAYWRIGHT_MODULE=/tmp/gov-ethernet-playwright/node_modules/playwright/index.mjs BROWSER_E2E_CHROMIUM=/tmp/gov-ethernet-playwright/browsers/chromium-1243/chrome-linux64/chrome PLAYWRIGHT_BROWSERS_PATH=/tmp/gov-ethernet-playwright/browsers node scripts/browser-e2e.mjs` | `PASS=37 FAIL=0 BLOCKED_EXTERNAL=2` | PASS with AI/provider external blockers |
 
-Additional targeted evidence:
+Additional targeted evidence from the fresh run:
 
 - `node scripts/import-vko-schools.test.mjs`: 28/28 PASS twice;
-- `node scripts/map-organizations-to-schools.test.mjs`: 8/8 PASS;
+- `node scripts/map-organizations-to-schools.test.mjs`: 9/9 PASS;
 - `node scripts/web-map.test.cjs`: PASS;
 - `node web/map-popup.test.cjs`: PASS;
 - `node web/data-model.test.cjs`: 5/5 PASS;
 - `./scripts/web-foundation-check.sh`: PASS;
-- `git diff --check`: PASS.
+- `git diff --check`: PASS before this documentation update.
+
+The fresh attempt to rerun the importer with the preserved official eGov files
+under `/tmp/vko-official-scNQ3W/` reached the public Overpass request but that
+endpoint was unavailable in the environment; `--check` therefore did not write
+or alter the committed artifacts. The artifact checks above still show the
+committed handoff contains 370 schools, 370 official coordinates, consistent
+counters, and `org-07 → registry 16856` with two explicit unmapped synthetic
+backend organizations.
 
 The P0 raw `fail=1` is an environment write-permission failure while Docker
 tries to update `/home/amblackrust/.docker/buildx/activity`; it is not promoted
