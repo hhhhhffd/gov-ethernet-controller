@@ -838,7 +838,7 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Tim
 		}
 		var incidentID int64
 		if active == nil {
-			id, err := createIncident(ctx, tx, lineID, at, confirmedRows, result, nil)
+			id, err := createIncident(ctx, tx, lineID, at, confirmedCode, confirmedRows, result, nil)
 			if err != nil {
 				return err
 			}
@@ -1095,16 +1095,15 @@ func activeIncident(ctx context.Context, q interface {
 	return item, nil
 }
 
-func createIncident(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, evidence []recentEvaluation, result evaluation.Result, previous *incident) (int64, error) {
-	violationType := "QUALITY_DEVIATION"
-	if len(result.Violations) > 0 {
-		violationType = result.Violations[0].Code
+func createIncident(ctx context.Context, tx pgx.Tx, lineID string, at time.Time, violationType string, evidence []recentEvaluation, result evaluation.Result, previous *incident) (int64, error) {
+	if strings.TrimSpace(violationType) == "" {
+		return 0, errors.New("confirmed violation type is required")
 	}
 	started := at
 	if len(evidence) > 0 {
 		started = evidence[len(evidence)-1].ObservedAt
 	}
-	snapshot, err := json.Marshal(map[string]interface{}{"line_id": lineID, "confirmed_at": at.UTC().Format(time.RFC3339), "evidence_measurement_ids": ids(evidence), "violations": result.Violations, "policy": result.PolicySnapshot, "contract": result.ContractSnapshot, "reason": result.Reason})
+	snapshot, err := json.Marshal(map[string]interface{}{"line_id": lineID, "confirmed_at": at.UTC().Format(time.RFC3339), "violation_type": violationType, "evidence_measurement_ids": ids(evidence), "violations": result.Violations, "policy": result.PolicySnapshot, "contract": result.ContractSnapshot, "reason": result.Reason})
 	if err != nil {
 		return 0, fmt.Errorf("marshal incident snapshot: %w", err)
 	}
