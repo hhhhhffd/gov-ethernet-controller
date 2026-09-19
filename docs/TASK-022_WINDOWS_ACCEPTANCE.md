@@ -1,11 +1,11 @@
-# TASK-022 Native Windows acceptance
+# TASK-022 Native Windows acceptance (`EXT-002`)
 
 Статус текущего checkout: **NOT RUN — native Windows environment unavailable**.
 Этот документ подготовлен как authoritative execution record для TASK-022.
 Ни один native Windows PASS здесь не заявляется по результатам Linux/WSL или
 Docker-only проверок.
 
-## TASK-007 production startup readiness
+## TASK-007 production startup readiness (`BUG-006`)
 
 ### Preconditions
 

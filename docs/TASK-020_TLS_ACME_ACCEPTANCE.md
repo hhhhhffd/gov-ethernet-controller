@@ -2,7 +2,7 @@
 
 Date: 2026-09-19
 
-Overall status: **BLOCKED_EXTERNAL**
+Overall status: **BLOCKED_EXTERNAL** (`EXT-001`)
 
 This record separates local production-topology evidence from the required
 public-DNS/ACME acceptance. No public PASS is claimed from configuration

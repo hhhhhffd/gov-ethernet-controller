@@ -2,7 +2,7 @@
 
 Run date: 2026-09-19 (Asia/Oral)
 
-Status: `BLOCKED_EXTERNAL`
+Status: `BLOCKED_EXTERNAL` (`EXT-003`)
 
 The authorized external provider portion is not available in this environment.
 No provider endpoint or credential was invented or probed.

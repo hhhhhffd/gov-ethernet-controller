@@ -2,7 +2,7 @@
 
 Run date: 2026-09-19 (Asia/Oral)
 
-Overall status: `BLOCKED_EXTERNAL`
+Overall status: `BLOCKED_EXTERNAL` (`EXT-004` for the Ollama/model gate; `EXT-003` for authorized provider delivery)
 
 The local Ollama/model happy path was not claimed. No Ollama binary or process
 was available, and both loopback probes failed:

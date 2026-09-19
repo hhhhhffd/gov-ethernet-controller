@@ -22,12 +22,12 @@ without current executable evidence is not promoted to `PASS`.
 
 | Evidence | Recorded result | Traceability use |
 |---|---|---|
-| `d27eced` | Persisted incident duration is positive and matches `started_at` → `closed_at` | BUG-001, incident lifecycle, hackathon minimum |
-| `6ae95f4` | Demo reset clears dependent draft-generation rows before provider cases | BUG-002, TASK-018 reset path |
-| `acf9869` | Demo seed creates effective line-context versions | BUG-003, TASK-018 historical context |
-| `4c4d971` | Incident evidence shape and observation IDs are validated | BUG-004, evidence chain |
-| `f4e85a2` | Recovery state survives contract lifecycle and provider-sent recovery can reopen | BUG-005, recovery invariant |
-| `7baa013` | Evidence reports declare historical-only output | BUG-006, P1/P2 reporting |
+| `d27eced` | Persisted incident duration is positive and matches `started_at` → `closed_at` | ACC-FIX-001, incident lifecycle, hackathon minimum |
+| `6ae95f4` | Demo reset clears dependent draft-generation rows before provider cases | ACC-FIX-002, TASK-018 reset path |
+| `acf9869` | Demo seed creates effective line-context versions | ACC-FIX-003, TASK-018 historical context |
+| `4c4d971` | Incident evidence shape and observation IDs are validated | ACC-FIX-004, evidence chain |
+| `f4e85a2` | Recovery state survives contract lifecycle and provider-sent recovery can reopen | ACC-FIX-005, recovery invariant |
+| `7baa013` | Evidence reports declare historical-only output | ACC-FIX-006, P1/P2 reporting |
 | `61adaac` | TASK-026 records bounded current evidence and external boundaries | TASK-026, TASK-027 decision |
 | TASK-018 verifier record | `runs_passed=3/3`, `pass=84`, `fail=0`, `blocked_external=0`, exit `0`; all runs used explicit `MANUAL_FALLBACK` | TASK-018 and hackathon minimum |
 | P0 workaround verifier | `32/0/3` = PASS/FAIL/BLOCKED_EXTERNAL; local fixture `13/13` | P0 release traceability |
@@ -60,14 +60,14 @@ missing plan attachment is not treated as product evidence.
 | notifications | P0 | Plan attachment unavailable; `docs/TASK-023_NOTIFICATION_ACCEPTANCE.md` | notification outbox and worker | Recorded local outbox evidence; `TestNotificationOutboxAcceptance` PASS | PASS | Durable local WEB/WEBHOOK workflow is covered; external channels are separate. |
 | manual/auto incident | P0 | Plan attachment unavailable; `docs/TASK-017_BROWSER_ACCEPTANCE.md` | incident API and measurement service | Browser manual-incident surface PASS; P0 local incident fixture PASS | PASS | Bounded API/browser evidence; no unrecorded interactive claim. |
 | ProviderCase | P0 | Plan attachment unavailable; `docs/TASK-016_AI_PROVIDER_ACCEPTANCE.md` | `server/internal/api/provider_case*`; provider workspace | TASK-016 local incident/evidence case; TASK-018 `3/3`; P2 workspace regression PASS | PASS | Case creation, evidence/timeline, and local state are evidenced; authorized delivery is separate. |
-| AI draft happy path | P0 | Plan attachment unavailable; `docs/TASK-016_AI_PROVIDER_ACCEPTANCE.md` | local Ollama adapter and draft generation | Ollama binary/process and `/api/tags` were unavailable; no `SUCCEEDED` draft was inferred | BLOCKED_EXTERNAL | Manual fallback and failure persistence do not satisfy the live-model happy path. |
+| AI draft happy path | P0 | Plan attachment unavailable; `docs/TASK-016_AI_PROVIDER_ACCEPTANCE.md` | local Ollama adapter and draft generation | Ollama binary/process and `/api/tags` were unavailable; no `SUCCEEDED` draft was inferred | BLOCKED_EXTERNAL | EXT-004: manual fallback and failure persistence do not satisfy the live-model happy path. |
 | human review/send | P0 | Plan attachment unavailable; `docs/TASK-016_AI_PROVIDER_ACCEPTANCE.md` | ProviderCase review/send handler | `reviewed=false` → `409`, zero calls; `reviewed=true` → `200`, one local test-transport call, `SENT/SENT` | PASS | Bounded local/test transport gate; not authorized provider acceptance. |
 | CSV/XLSX | P0 | Plan attachment unavailable; `docs/TASK-018_DEMO_ACCEPTANCE.md` | report/export handlers | TASK-018 latest verifier `3/3`; recorded CSV/XLSX checks; browser CSV/XLSX PASS | PASS | Scripted body/type checks are evidenced; not interactive manual export. |
 | Role×Scope | P0 | Plan attachment unavailable; `docs/P0_ACCEPTANCE_RUNBOOK.md` | auth predicates and scoped API handlers | Recorded role matrix for `admin`, `provider-a`, `district`, `school-42`; P1 `28/0`; provider `403` browser evidence | PASS | Bounded authorization and scope isolation evidence. |
 | admin | P0 | Plan attachment unavailable; `docs/TASK-017_BROWSER_ACCEPTANCE.md` | admin/catalog/configuration handlers | Browser admin and contract-admin surfaces PASS; P0/P1 authorization evidence | PASS | No source-only or unexecuted administration claim is used. |
-| TLS | P0 | Plan attachment unavailable; `docs/TASK-020_TLS_ACME_ACCEPTANCE.md` | Caddy production boundary and TLS smoke | Local Caddy/localhost checks PASS; `monitoring.example` DNS/ACME probe could not resolve | BLOCKED_EXTERNAL | Public DNS, ACME certificate, redirect, protected endpoint, and restart proof are unavailable. |
-| Windows | P0 | Plan attachment unavailable; `docs/TASK-022_WINDOWS_ACCEPTANCE.md` | Rust agent, Windows service/tray/update scripts | Linux/WSL/build and bounded documentation only; native gaps are recorded | BLOCKED_EXTERNAL | Reboot, clean install/uninstall/purge, tray diagnostics, fixed-artifact activation, and native topology remain unavailable. |
-| authorized provider | P0 | Plan attachment unavailable; `docs/TASK-021_PROVIDER_ACCEPTANCE.md` | ProviderCase webhook transport | Local `httptest` auth/idempotency/retry tests PASS; no authorized endpoint or credential configured | BLOCKED_EXTERNAL | No external delivery, reference, provider-side retry, or audit confirmation is claimed. |
+| TLS | P0 | Plan attachment unavailable; `docs/TASK-020_TLS_ACME_ACCEPTANCE.md` | Caddy production boundary and TLS smoke | Local Caddy/localhost checks PASS; `monitoring.example` DNS/ACME probe could not resolve | BLOCKED_EXTERNAL | EXT-001: public DNS, ACME certificate, redirect, protected endpoint, and restart proof are unavailable. |
+| Windows | P0 | Plan attachment unavailable; `docs/TASK-022_WINDOWS_ACCEPTANCE.md` | Rust agent, Windows service/tray/update scripts | Linux/WSL/build and bounded documentation only; native gaps are recorded | BLOCKED_EXTERNAL | EXT-002: reboot, clean install/uninstall/purge, tray diagnostics, fixed-artifact activation, and native topology remain unavailable. |
+| authorized provider | P0 | Plan attachment unavailable; `docs/TASK-021_PROVIDER_ACCEPTANCE.md` | ProviderCase webhook transport | Local `httptest` auth/idempotency/retry tests PASS; no authorized endpoint or credential configured | BLOCKED_EXTERNAL | EXT-003: no external delivery, reference, provider-side retry, or audit confirmation is claimed. |
 
 ## Coverage audit: P1 requirement rows
 
@@ -153,16 +153,36 @@ missing plan attachment is not treated as product evidence.
 | TASK-026 | Bounded manual/runtime evidence closure | BLOCKED_EXTERNAL | `docs/TASK-026_MANUAL_ACCEPTANCE.md`; P0/P1/P2/TASK-018 records | Bounded scripted rows pass, but native Windows, public TLS, authorized provider and non-WEB gates remain external. |
 | TASK-027 | Final product concept acceptance and complete traceability matrix | PASS | This matrix; requested commit set; recorded verifier ledger; all rows and blockers enumerated | Closure is bounded. Full production release remains gated by the `BLOCKED_EXTERNAL` rows above. |
 
-## Traceability matrix: BUG-001..006
+## Traceability matrix: BUG-001..006 (canonical defect namespace)
+
+| ID | Canonical defect meaning | Status | Evidence | Exact note |
+|---|---|---|---|---|
+| BUG-001 | Wrong confirmed incident violation | PASS | `c95b5a3`; incident lifecycle integration evidence; `docs/P0_ACCEPTANCE_RUNBOOK.md` | Incident creation uses the confirmed violation type, including mixed baseline/contract evaluations. |
+| BUG-002 | Wrong verification evidence relation | PASS | `157486d`; verification/evidence-chain regression evidence; `docs/P1_ACCEPTANCE.md` | Candidate and verifying observations retain their persisted relation and snapshots. |
+| BUG-003 | Global login rate limit behind Caddy | PASS | `c36c75c`; proxy-aware auth rate-limit integration evidence; `README.md` | Production Caddy forwarding is trusted only from the configured proxy boundary. |
+| BUG-004 | Agent update before activation | PASS | `9b43faf`; API/Rust activation handshake tests; `docs/TASK-024_P2_ACCEPTANCE.md` | Update success is not reported until the installed agent confirms activation. |
+| BUG-005 | ProviderCase timeline overwritten | PASS | `0231162`, `fa0d1ef`; persisted ProviderCase evidence/timeline regression; `docs/TASK-024_P2_ACCEPTANCE.md` | Workspace detail reloads persisted evidence and preserves the canonical timeline projection. |
+| BUG-006 | Windows readiness wrong port | PASS | `9918763`; Windows/Caddy readiness artifact; `docs/TASK-022_WINDOWS_ACCEPTANCE.md` | Readiness targets the public Caddy HTTPS surface; backend `:8080` remains internal and `:8000` is not probed. |
+
+## Traceability matrix: ACC-FIX-001..006 (acceptance-fix namespace)
 
 | ID | Defect / acceptance claim | Status | Evidence | Exact note |
 |---|---|---|---|---|
-| BUG-001 | Closed incident duration is persisted as a positive `started_at`→`closed_at` value | PASS | `d27eced`; lifecycle integration assertion; P0/TASK-018 evidence | No negative/zero duration is accepted by the recorded regression. |
-| BUG-002 | Demo reset removes dependent provider draft generations before provider cases | PASS | `6ae95f4`; reset integration test; TASK-018 `3/3` verifier result | The prior FK reset failure is covered by the fix and current bounded result. |
-| BUG-003 | Demo lines have effective line-context versions for historical resolution | PASS | `acf9869`; reset/seed integration test | Historical context resolution is asserted for the seeded demo line. |
-| BUG-004 | Incident evidence chain exposes available status, confirmation and observation IDs | PASS | `4c4d971`; evidence-chain tests; TASK-018 verifier | Evidence shape is validated rather than accepted from a non-empty response alone. |
-| BUG-005 | Recovery state survives contract lifecycle and a returning violation reopens a provider-sent incident | PASS | `f4e85a2`; measurement integration tests | Recovery remains observed/confirmed only from qualifying evidence. |
-| BUG-006 | Evidence report is explicitly historical-only | PASS | `7baa013`; report regression test; P1/P2 report checks | Current configuration is not presented as historical evidence. |
+| ACC-FIX-001 | Closed incident duration is persisted as a positive `started_at`→`closed_at` value | PASS | `d27eced`; lifecycle integration assertion; P0/TASK-018 evidence | No negative/zero duration is accepted by the recorded regression. |
+| ACC-FIX-002 | Demo reset removes dependent provider draft generations before provider cases | PASS | `6ae95f4`; reset integration test; TASK-018 `3/3` verifier result | The prior FK reset failure is covered by the fix and current bounded result. |
+| ACC-FIX-003 | Demo lines have effective line-context versions for historical resolution | PASS | `acf9869`; reset/seed integration test | Historical context resolution is asserted for the seeded demo line. |
+| ACC-FIX-004 | Incident evidence chain exposes available status, confirmation and observation IDs | PASS | `4c4d971`; evidence-chain tests; TASK-018 verifier | Evidence shape is validated rather than accepted from a non-empty response alone. |
+| ACC-FIX-005 | Recovery state survives contract lifecycle and a returning violation reopens a provider-sent incident | PASS | `f4e85a2`; measurement integration tests | Recovery remains observed/confirmed only from qualifying evidence. |
+| ACC-FIX-006 | Evidence report is explicitly historical-only | PASS | `7baa013`; report regression test; P1/P2 report checks | Current configuration is not presented as historical evidence. |
+
+## Traceability matrix: EXT-001..004 (external blocker namespace)
+
+| ID | External blocker | Status | Authoritative artifact | Boundary |
+|---|---|---|---|---|
+| EXT-001 | Public TLS/ACME | BLOCKED_EXTERNAL | `docs/TASK-020_TLS_ACME_ACCEPTANCE.md` | Controlled DNS, ACME issuance, public HTTPS redirect/protected endpoint, and restart proof are unavailable; local Caddy evidence is retained. |
+| EXT-002 | Native Windows | BLOCKED_EXTERNAL | `docs/TASK-022_WINDOWS_ACCEPTANCE.md` | Native topology/readiness, reboot, install/uninstall/purge, tray diagnostics, and update activation are unavailable. |
+| EXT-003 | Authorized provider | BLOCKED_EXTERNAL | `docs/TASK-021_PROVIDER_ACCEPTANCE.md` | No authorized endpoint/credential exists for external delivery, reference, provider retry, or audit confirmation. |
+| EXT-004 | Local Ollama/model | BLOCKED_EXTERNAL | `docs/TASK-016_AI_PROVIDER_ACCEPTANCE.md` | No Ollama process or `/api/tags` endpoint was available; no live `SUCCEEDED` draft is inferred. |
 
 ## Release-profile traceability
 

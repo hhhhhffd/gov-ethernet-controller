@@ -26,15 +26,15 @@ executed evidence is recorded for that particular check.
 
 ## External and interactive gates not available here
 
-- Native Windows: the bounded report covers SCM/runtime startup, service
+- Native Windows (`EXT-002`): the bounded report covers SCM/runtime startup, service
   recovery, performance probing, local offline queue/resend, and preservation
   checks. Truly interactive gaps—production topology/HTTPS readiness, clean
   install, service/reboot recovery, uninstall/purge, tray IPC/diagnostics, and
   update activation—remain `BLOCKED_EXTERNAL` for the Agent acceptance row.
-- Public DNS/ACME/TLS remains `BLOCKED_EXTERNAL` per
+- Public DNS/ACME/TLS (`EXT-001`) remains `BLOCKED_EXTERNAL` per
   `docs/TASK-020_TLS_ACME_ACCEPTANCE.md`; Linux Compose topology is not public
   TLS evidence.
-- Authorized provider delivery remains `BLOCKED_EXTERNAL` per
+- Authorized provider delivery (`EXT-003`) remains `BLOCKED_EXTERNAL` per
   `docs/TASK-021_PROVIDER_ACCEPTANCE.md`: no authorized endpoint or credential
   was configured or probed. The latest TASK-018 verifier exercised ProviderCase
   population, the explicit human-review gate, and the `MANUAL_FALLBACK` path,

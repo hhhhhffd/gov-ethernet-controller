@@ -104,6 +104,7 @@ Caddy сам выполняет HTTP→HTTPS redirect и хранит ACME-со�
 `LINKWATCH_TRUSTED_PROXY_CIDRS` и заставляет Caddy перезаписывать
 `X-Forwarded-For`. Пустая или некорректная trust-конфигурация не позволяет
 production server запуститься; прямой запрос всегда ключуется по immediate peer.
+Это canonical fix для BUG-003 (global login rate limit behind Caddy).
 После DNS/ACME настройки выполните `LINKWATCH_PUBLIC_URL=https://...`
 `./scripts/production-tls-smoke.sh`: он проверяет redirect, certificate
 validation, readiness и отказ unauthenticated protected endpoint.
@@ -148,7 +149,7 @@ make smoke
 Go backend через Compose health/dependency conditions и при timeout печатает
 `docker compose ps` и логи Caddy/server/PostgreSQL. Он не проверяет и не
 публикует backend `:8000`; `linkwatch-server:8080` остаётся только во внутренней
-Compose-сети. Перед стартом topology check можно выполнить отдельно:
+Compose-сети (BUG-006). Перед стартом topology check можно выполнить отдельно:
 
 ```powershell
 .\scripts\windows\test-vko-prod.ps1
