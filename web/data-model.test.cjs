@@ -38,6 +38,24 @@ test("registry-only schools stay neutral and mapped lines retain backend status"
   assert.equal(model.linkwatch.monitoredSchoolCount, 1);
 });
 
+test("registry keeps supplied official RU and KK names for presentation", () => {
+  const model = buildFrontendModel({
+    registryPayload: {
+      schools: [{
+        registry_id: "registry-localized",
+        official_name: "Available official name",
+        official_name_ru: "Официальное русское наименование",
+        official_name_kk: "Ресми қазақша атауы",
+        latitude: 50.1,
+        longitude: 82.1,
+      }],
+    },
+  });
+
+  assert.equal(model.registry.schools[0].officialNameRu, "Официальное русское наименование");
+  assert.equal(model.registry.schools[0].officialNameKk, "Ресми қазақша атауы");
+});
+
 test("multiple lines remain separate while monitored-school KPI is deduplicated", () => {
   const model = buildFrontendModel({
     registryPayload: registry,

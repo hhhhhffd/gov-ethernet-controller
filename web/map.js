@@ -9,7 +9,12 @@
   });
   const STATUS_PRIORITY = Object.freeze(["NO_INTERNET", "DEGRADED", "NO_DATA", "OK", "UNKNOWN"]);
   const STATUS_SET = new Set(STATUS_PRIORITY);
-  const state = { map: null, tileLayer: null, config: null, layers: null, lastRender: null, resizeObserver: null, onMarkerClick: null, tileError: false };
+  const state = {
+    map: null, tileLayer: null, config: null, layers: null, lastRender: null, resizeObserver: null, onMarkerClick: null, tileError: false,
+    presentation: { t: () => "", schoolName: (school) => school?.officialName ?? school?.name ?? "" },
+  };
+  function mapText(key, values) { return state.presentation?.t?.(key, values) || ""; }
+  function schoolName(school, fallback) { return state.presentation?.schoolName?.(school, fallback) || fallback || ""; }
 
   function mapConfig() {
     const overrides = window.LINKWATCH_MAP_CONFIG || {};
@@ -20,7 +25,7 @@
     const status = document.getElementById("mapTileStatus");
     if (!status) return;
     status.hidden = !unavailable;
-    status.textContent = unavailable ? "Подложка карты временно недоступна" : "";
+    status.textContent = unavailable ? mapText("map.tileUnavailable") : "";
   }
 
   function validCoordinate(value) {
@@ -86,7 +91,7 @@
     const markers = [];
     registryRows(registry).forEach((school) => {
       const coordinate = coordinateForSchool(school); if (!coordinate) return;
-      const context = { kind: "registry", registryId: school.registryId ?? school.registry_id ?? school.id ?? null, school, lines: [], status: "UNKNOWN", mode: "registry", label: school.officialName ?? school.name ?? "Школа из реестра" };
+      const context = { kind: "registry", registryId: school.registryId ?? school.registry_id ?? school.id ?? null, school, lines: [], status: "UNKNOWN", mode: "registry", label: schoolName(school, mapText("school.registry")) };
       markers.push(createMarker(coordinate, { icon: icon("linkwatch-registry-marker", '<span aria-hidden="true"></span>', [12, 12]), keyboard: true, title: context.label }, context));
     });
     return markers;
@@ -104,7 +109,7 @@
       const status = mode === "historical" ? aggregateHistoricalStatus(group.lines, historicalByLine) : aggregateStatus(group.lines);
       const evidence = group.lines.map((line) => ({ lineId: line.id ?? line.line_id ?? null, status: mode === "historical" ? historicalStatusForLine(line, historicalByLine) : statusForLine(line), historical: historicalByLine?.[line.id] ?? null }));
       const school = group.lines[0]?.registrySchool ?? null;
-      return { ...group, school, status, mode, evidence, label: school?.officialName ?? group.lines[0]?.school_name ?? "Мониторинговая школа" };
+      return { ...group, school, status, mode, evidence, label: schoolName(school, group.lines[0]?.school_name || mapText("school.monitoring")) };
     });
   }
   function createMonitoringMarkers(groups) {
@@ -168,7 +173,8 @@
     groups.forEach((group) => {
       if (group.markers.length === 1) { state.layers.registryClusters.addLayer(group.markers[0]); return; }
       const displayCoordinate = clusterDisplayCoordinate(group);
-      const marker = createMarker(displayCoordinate, { icon: icon("linkwatch-registry-cluster", `<span aria-label="${group.markers.length} школ">${group.markers.length}</span>`, [28, 28]), keyboard: true, title: `${group.markers.length} школ в группе` }, { kind: "registry-cluster", count: group.markers.length, members: group.markers.map((item) => item.__linkwatchContext), lines: [], mode: "registry", label: `${group.markers.length} школ в группе` });
+      const label = mapText("map.clusterTitle", { count: group.markers.length });
+      const marker = createMarker(displayCoordinate, { icon: icon("linkwatch-registry-cluster", '<span aria-label="' + label + '">' + group.markers.length + "</span>", [28, 28]), keyboard: true, title: label }, { kind: "registry-cluster", count: group.markers.length, members: group.markers.map((item) => item.__linkwatchContext), lines: [], mode: "registry", label });
       if (typeof marker.on === "function") marker.on("click", () => fitToCoordinates(group.markers.map((item) => coordinateForSchool(item.__linkwatchContext?.school)), { maxZoom: state.config.maxZoom, singleZoom: state.config.maxZoom }));
       state.layers.registryClusters.addLayer(marker);
     });
@@ -207,7 +213,7 @@
     let container = document.getElementById(options.containerId || "leafletMap");
     if (!container) {
       const mapWrap = document.getElementById("mapWrap"); if (!mapWrap) return null;
-      container = document.createElement("div"); container.id = options.containerId || "leafletMap"; container.className = "leaflet-map"; container.setAttribute("role", "application"); container.setAttribute("aria-label", "Карта Восточно-Казахстанской области"); mapWrap.insertBefore(container, mapWrap.firstChild);
+      container = document.createElement("div"); container.id = options.containerId || "leafletMap"; container.className = "leaflet-map"; container.setAttribute("role", "application"); container.setAttribute("aria-label", mapText("app.regionMap")); mapWrap.insertBefore(container, mapWrap.firstChild);
     }
     if (!container || !window.L) return null;
     state.config = mapConfig(); state.map = window.L.map(container, { attributionControl: true, zoomControl: false, minZoom: state.config.minZoom, maxZoom: state.config.maxZoom }).setView(state.config.center, state.config.zoom);
@@ -234,7 +240,7 @@
     const map = init(context); if (!map) return false; clearLayers();
     const mode = context.mode || "current"; const registry = context.registry ?? context.model?.registry; const registryMarkers = createRegistryMarkers(registry); const monitoringGroups = monitoringRows(context.lines, mode, context.historicalByLine); const monitoringMarkers = createMonitoringMarkers(monitoringGroups);
     state.layers.registryMarkers = registryMarkers; state.layers.monitoringMarkers = monitoringMarkers; state.layers.registryClusters = state.layers.registryClusters || layerGroup(); state.layers.monitoring = state.layers.monitoring || layerGroup(); addLayer(state.layers.registryClusters); addLayer(state.layers.monitoring); monitoringMarkers.forEach((marker) => state.layers.monitoring.addLayer(marker));
-    state.lastRender = { mode, registryMarkerCount: registryMarkers.length, monitoringMarkerCount: monitoringMarkers.length, monitoringLineCount: monitoringGroups.reduce((count, group) => count + group.lines.length, 0), statuses: monitoringGroups.map((group) => group.status) };
+    state.lastRender = { mode, registryMarkerCount: registryMarkers.length, monitoringMarkerCount: monitoringMarkers.length, monitoringLineCount: monitoringGroups.reduce((count, group) => count + group.lines.length, 0), statuses: monitoringGroups.map((group) => group.status), context };
     rebuildRegistryClusters(); updateRegistryHitTargets(monitoringGroups); fitToCoordinates([...registryMarkers.map((marker) => coordinateForSchool(marker.__linkwatchContext.school)), ...monitoringGroups.map((group) => group.coordinate)], { maxZoom: state.config.fitMaxZoom }); refreshSize(); return true;
   }
   function resetView() { if (state.map && state.config) state.map.setView(state.config.center, state.config.zoom); }
@@ -243,5 +249,12 @@
     getMap: () => state.map, getConfig: () => state.config || mapConfig(), getLastRender: () => state.lastRender, getLayers: () => state.layers,
     getMarkerContext: (marker) => marker?.__linkwatchContext ?? null,
     setMarkerClickHandler: (handler) => { state.onMarkerClick = typeof handler === "function" ? handler : null; },
+    setPresentation: (presentation) => {
+      state.presentation = presentation && typeof presentation.t === "function" ? presentation : state.presentation;
+      const container = document.getElementById("leafletMap");
+      if (container?.setAttribute) container.setAttribute("aria-label", mapText("app.regionMap"));
+      if (state.tileError) setTileAvailability(true);
+      if (state.lastRender?.context) render(state.lastRender.context);
+    },
   };
 })(window);

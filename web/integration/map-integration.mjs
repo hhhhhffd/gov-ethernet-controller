@@ -1,5 +1,5 @@
 import { apiAliases, unwrapCollection } from "../core/api.mjs";
-import { formatDate, humanRole, humanStatus } from "../core/presentation.mjs";
+import { createPresentation } from "../core/presentation.mjs";
 
 function normalizeLine(raw) {
   const school = raw.school || raw.organization || {};
@@ -19,7 +19,7 @@ function normalizeLine(raw) {
     provider_id: raw.provider_id || provider.id || "—",
     provider: typeof provider === "string" ? provider : raw.provider_name || provider.name || "—",
     technology: raw.technology || raw.connection_type || "—",
-    role: raw.role_label || humanRole(raw.role),
+    role: raw.role || "UNKNOWN",
     status: operationalStatus,
     linkwatchStatus: operationalStatus,
     line_status: raw.line_status || raw.status || "UNKNOWN",
@@ -39,7 +39,8 @@ function historicalByLine(aggregate, analytics) {
   return result;
 }
 
-export function createMapIntegration({ api, reports, mapApi = globalThis.LinkwatchMap, dataModel = globalThis.LinkwatchDataModel } = {}) {
+export function createMapIntegration({ api, reports, mapApi = globalThis.LinkwatchMap, dataModel = globalThis.LinkwatchDataModel, presentation = createPresentation() } = {}) {
+  let activePresentation = presentation;
   const state = {
     lines: [], model: null, mapMode: "current", coverage: "all", historicalByLine: {},
     registryUnavailable: true, mappingUnavailable: true, registryError: null, operationalError: null,
@@ -113,7 +114,7 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
   }
   return {
     state,
-    init(options = {}) { return mapApi?.init(options); },
+    init(options = {}) { mapApi?.setPresentation?.(activePresentation); return mapApi?.init(options); },
     loadCurrent,
     loadHistorical,
     render,
@@ -122,12 +123,17 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
     getLine(id) { return state.lines.find((line) => line.id === id) || null; },
     registryStatus() {
       const total = state.model?.registry?.total;
-      if (state.registryLoading) return { state: "loading", text: "Реестр загружается…" };
-      if (state.registryUnavailable) return { state: "unavailable", text: "Реестр недоступен" };
-      if (state.mappingUnavailable) return { state: "mapping-unavailable", text: `Реестр: ${total ?? "—"} школ · связка недоступна` };
-      return { state: "available", text: `Реестр: ${total ?? "—"} школ` };
+      if (state.registryLoading) return { state: "loading", text: activePresentation.t("map.registryLoading") };
+      if (state.registryUnavailable) return { state: "unavailable", text: activePresentation.t("map.registryUnavailable") };
+      if (state.mappingUnavailable) return { state: "mapping-unavailable", text: activePresentation.t("map.registryMappingUnavailable", { count: total ?? activePresentation.empty() }) };
+      return { state: "available", text: activePresentation.t("map.registryAvailable", { count: total ?? activePresentation.empty() }) };
     },
-    summary() { return { lineCount: state.lines.length, mode: state.mapMode, status: state.operationalError ? "unavailable" : "available", modeLabel: state.mapMode === "historical" ? "Историческое evidence" : "Текущее состояние" }; },
-    linePresentation(line) { return { status: humanStatus(line?.linkwatchStatus || line?.status), observedAt: formatDate(line?.latest?.at, true) }; },
+    summary() { return { lineCount: state.lines.length, mode: state.mapMode, status: state.operationalError ? "unavailable" : "available", modeLabel: state.mapMode === "historical" ? activePresentation.t("map.historical") : activePresentation.t("map.current") }; },
+    linePresentation(line) { return { status: activePresentation.status(line?.linkwatchStatus || line?.status).label, observedAt: activePresentation.formatDate(line?.latest?.at, true) }; },
+    setPresentation(nextPresentation) {
+      if (!nextPresentation || typeof nextPresentation.t !== "function") return;
+      activePresentation = nextPresentation;
+      mapApi?.setPresentation?.(activePresentation);
+    },
   };
 }

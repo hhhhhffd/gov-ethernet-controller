@@ -1,7 +1,7 @@
 import { createApiClient } from "./core/api.mjs";
 import { createCapabilityState } from "./core/capabilities.mjs";
 import { createI18n } from "./core/i18n.mjs";
-import { escapeHtml, formatDate, formatNumber, humanRole, humanStatus, humanUserRole, statusPresentation } from "./core/presentation.mjs";
+import { createPresentation, escapeHtml } from "./core/presentation.mjs";
 import { createShellRouter } from "./core/router.mjs";
 import { createSession } from "./core/session.mjs";
 import { createThemeState } from "./core/theme.mjs";
@@ -15,19 +15,20 @@ import { createProviderCaseBoundary } from "./features/provider-case.mjs";
 import { createReportsBoundary } from "./features/reports.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
-const state = { capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null };
+const state = { capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null, currentLine: null };
 
 let session;
+const i18n = createI18n();
+const presentation = createPresentation(i18n);
 const api = createApiClient({
   getToken: () => session?.token || "",
-  onUnauthorized: async () => { session?.clear(); showLogin("Сессия истекла. Войдите снова."); },
+  onUnauthorized: async () => { session?.clear(); showLogin("auth.sessionExpired"); },
   onForbidden: async () => { if (session?.hasToken()) await session.bootstrap(); },
 });
 session = createSession({ api, onChange: handleSessionChange });
-const i18n = createI18n();
 const theme = createThemeState();
 const reports = createReportsBoundary(api);
-const map = createMapIntegration({ api, reports });
+const map = createMapIntegration({ api, reports, presentation });
 const lines = createLinesBoundary(api);
 const router = createShellRouter({
   canAccess(view) {
@@ -41,23 +42,31 @@ const router = createShellRouter({
   onChange: renderRoute,
 });
 const boundaries = {
-  api, session, capabilities: () => state.capabilities, map,
-  lines, incidents: createIncidentsBoundary(api), reports,
-  notifications: createNotificationsBoundary(api),
-  providerCases: createProviderCaseBoundary(api),
-  admin: createAdminBoundary(api),
-  audit: createAuditBoundary(api),
+  api, session, capabilities: () => state.capabilities, map, lines,
+  incidents: createIncidentsBoundary(api), reports, notifications: createNotificationsBoundary(api),
+  providerCases: createProviderCaseBoundary(api), admin: createAdminBoundary(api), audit: createAuditBoundary(api),
 };
 
-function showLogin(message = "Введите рабочие учётные данные.", resolving = false) {
+function localizeStaticContent() {
+  document.querySelectorAll("[data-i18n]").forEach((element) => { element.textContent = i18n.t(element.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((element) => { element.setAttribute("aria-label", i18n.t(element.dataset.i18nAriaLabel)); });
+  document.querySelectorAll("[data-i18n-title]").forEach((element) => { element.setAttribute("title", i18n.t(element.dataset.i18nTitle)); });
+  document.querySelectorAll("[data-locale]").forEach((control) => {
+    const active = control.dataset.locale === i18n.locale;
+    control.toggleAttribute("aria-pressed", active);
+    control.setAttribute("aria-label", i18n.t("locale.switch"));
+  });
+}
+
+function showLogin(messageKey = "auth.enterCredentials", resolving = false) {
   const backdrop = $("#authBackdrop");
   if (!backdrop) return;
-  $("#authMessage").textContent = message;
+  $("#authMessage").textContent = i18n.t(messageKey);
   $("#loginUsername").disabled = resolving;
   $("#loginPassword").disabled = resolving;
   $("#loginSubmit").disabled = resolving;
   backdrop.hidden = false;
-  if (!resolving) $("#loginUsername").value ? $("#loginPassword").focus() : $("#loginUsername").focus();
+  if (!resolving) ($("#loginUsername").value ? $("#loginPassword") : $("#loginUsername")).focus();
 }
 
 function hideLogin() {
@@ -77,23 +86,15 @@ function renderRoute(snapshot = router.getState()) {
     if (!active) button.removeAttribute("aria-current");
   });
   const liveStatus = $("#mapLiveStatus");
-  if (liveStatus) liveStatus.textContent = `Открыт раздел: ${snapshot.view}`;
-  const hash = snapshot.view === "map" ? "" : `#${snapshot.view}`;
-  if (globalThis.location && globalThis.location.hash !== hash) globalThis.history?.replaceState?.({}, "", `${globalThis.location.pathname}${hash}`);
+  if (liveStatus) liveStatus.textContent = i18n.t("map.openSection", { section: i18n.t("nav." + snapshot.view) });
+  const hash = snapshot.view === "map" ? "" : "#" + snapshot.view;
+  if (globalThis.location && globalThis.location.hash !== hash) globalThis.history?.replaceState?.({}, "", globalThis.location.pathname + hash);
 }
 
 function renderPrimaryNav() {
-  const destinations = {
-    map: true,
-    incidents: state.capabilities.canRead("incident"),
-    reports: state.capabilities.canRead("report"),
-  };
-  document.querySelectorAll("#primaryNav [data-route]").forEach((button) => {
-    button.hidden = !destinations[button.dataset.route];
-  });
-  document.querySelectorAll("[data-capability]").forEach((control) => {
-    control.hidden = !state.capabilities.has(control.dataset.capability);
-  });
+  const destinations = { map: true, incidents: state.capabilities.canRead("incident"), reports: state.capabilities.canRead("report") };
+  document.querySelectorAll("#primaryNav [data-route]").forEach((button) => { button.hidden = !destinations[button.dataset.route]; });
+  document.querySelectorAll("[data-capability]").forEach((control) => { control.hidden = !state.capabilities.has(control.dataset.capability); });
   const current = router.getState().view;
   if (!destinations[current]) router.navigate("map");
   else renderRoute();
@@ -104,23 +105,20 @@ function renderSession(snapshot = session.getState()) {
   const workspace = $("#authenticatedWorkspace");
   if (workspace) workspace.hidden = !authenticated;
   if (authenticated) hideLogin();
-  else if (snapshot.resolving) showLogin("Проверяем сохранённую сессию…", true);
+  else if (snapshot.resolving) showLogin("auth.checkingSession", true);
   else showLogin();
   const user = session.user || {};
   const userName = $("#sessionUser");
   const userRole = $("#sessionRole");
-  if (userName) userName.textContent = user.name || user.full_name || user.username || "—";
-  if (userRole) userRole.textContent = user.role_label || humanUserRole(user.role);
+  if (userName) userName.textContent = user.name || user.full_name || user.username || presentation.empty();
+  if (userRole) userRole.textContent = presentation.userRole(user.role);
   document.documentElement.dataset.authenticated = authenticated ? "true" : "false";
 }
 
 function handleSessionChange(snapshot) {
   state.capabilities = createCapabilityState(snapshot.user);
   document.documentElement.dataset.capabilities = state.capabilities.capabilities.join(" ");
-  if (!snapshot.authenticated) {
-    state.mapLoaded = false;
-    state.mapLoadPromise = null;
-  }
+  if (!snapshot.authenticated) { state.mapLoaded = false; state.mapLoadPromise = null; state.currentLine = null; }
   renderSession(snapshot);
   renderPrimaryNav();
   if (snapshot.authenticated) initializeAuthenticatedWorkspace();
@@ -129,30 +127,23 @@ function handleSessionChange(snapshot) {
 function renderMapStatus() {
   const summary = map.summary();
   const registry = map.registryStatus();
-  const lineCount = $("#lineCount");
-  if (lineCount) lineCount.textContent = String(summary.lineCount);
-  const visibleCount = $("#mapVisibleCount");
-  if (visibleCount) visibleCount.textContent = String(summary.lineCount);
-  const mode = $("#mapModeLabel");
-  if (mode) mode.textContent = summary.modeLabel;
-  const footer = $("#mapFooterNote");
-  if (footer) footer.textContent = summary.mode === "historical" ? "Историческое evidence · current state не используется" : "Текущее состояние из latest LineState";
-  const registryStatus = $("#registryDataStatus");
-  if (registryStatus) { registryStatus.textContent = registry.text; registryStatus.dataset.state = registry.state; }
-  const operationalStatus = $("#operationalStatus");
-  if (operationalStatus) {
-    operationalStatus.textContent = summary.status === "available" ? `${formatNumber(summary.lineCount)} линий доступны в текущем scope` : "Операционные данные недоступны";
-    operationalStatus.dataset.state = summary.status;
+  if ($("#lineCount")) $("#lineCount").textContent = String(summary.lineCount);
+  if ($("#mapVisibleCount")) $("#mapVisibleCount").textContent = String(summary.lineCount);
+  if ($("#mapModeLabel")) $("#mapModeLabel").textContent = summary.modeLabel;
+  if ($("#mapFooterNote")) $("#mapFooterNote").textContent = summary.mode === "historical" ? i18n.t("map.historicalSource") : i18n.t("map.currentSource");
+  if ($("#registryDataStatus")) { $("#registryDataStatus").textContent = registry.text; $("#registryDataStatus").dataset.state = registry.state; }
+  if ($("#operationalStatus")) {
+    $("#operationalStatus").textContent = summary.status === "available" ? i18n.t("map.monitoringAvailable", { count: summary.lineCount }) : i18n.t("map.operationalUnavailable");
+    $("#operationalStatus").dataset.state = summary.status;
   }
-  const error = $("#mapError");
-  if (error) { error.hidden = !map.state.operationalError; error.textContent = map.state.operationalError ? "Сервер мониторинга недоступен. Повторите загрузку." : ""; }
+  if ($("#mapError")) { $("#mapError").hidden = !map.state.operationalError; $("#mapError").textContent = map.state.operationalError ? i18n.t("map.serverUnavailable") : ""; }
 }
 
 async function loadAuthenticatedMap() {
   if (state.mapLoadPromise) return state.mapLoadPromise;
   state.mapLoadPromise = map.loadCurrent()
     .then(() => { state.mapLoaded = true; renderMapStatus(); })
-    .catch((error) => { state.mapLoaded = true; renderMapStatus(); showToast(error.status === 403 ? "Карта недоступна для текущего scope" : "Карта временно недоступна", "warn"); })
+    .catch((error) => { state.mapLoaded = true; renderMapStatus(); showToast(error.status === 403 ? "map.forbidden" : "map.temporarilyUnavailable", "warn"); })
     .finally(() => { state.mapLoadPromise = null; });
   return state.mapLoadPromise;
 }
@@ -167,29 +158,32 @@ function initializeAuthenticatedWorkspace() {
   loadAuthenticatedMap();
 }
 
-function showToast(message, tone = "") {
+function showToast(messageKey, tone = "") {
   const region = $("#toastRegion");
   if (!region) return;
   region.replaceChildren();
   const item = document.createElement("div");
-  item.className = `toast ${tone}`;
-  item.textContent = message;
+  item.className = "toast " + tone;
+  item.textContent = i18n.t(messageKey);
   region.appendChild(item);
   clearTimeout(state.toastTimer);
   state.toastTimer = setTimeout(() => item.remove(), 4200);
 }
 
 function mapFields(fields) {
-  return fields.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value ?? "—")}</dd></div>`).join("");
+  return fields.map(([label, value]) => "<div><dt>" + escapeHtml(label) + "</dt><dd>" + escapeHtml(value ?? presentation.empty()) + "</dd></div>").join("");
 }
-
-function popupSchoolName(school, line) { return school?.officialName || school?.official_name || school?.name || line?.school_name || "Школа из реестра"; }
-
+function popupSchoolName(school, line) { return presentation.schoolName(school, line?.school_name); }
 function popupLine(line) {
-  const presentation = statusPresentation(line.linkwatchStatus || line.status);
+  const status = presentation.status(line.linkwatchStatus || line.status);
   return {
     title: popupSchoolName(line.registrySchool, line),
-    fields: [["Линия", line.id], ["Провайдер", line.provider], ["Тип подключения", line.technology], ["Роль линии", humanRole(line.role)], ["Статус", presentation.label], ["Последнее наблюдение", formatDate(line.latest?.at, true)]],
+    fields: [
+      [i18n.t("field.line"), line.id], [i18n.t("field.provider"), line.provider],
+      [i18n.t("field.connectionType"), presentation.connectionType(line.technology)],
+      [i18n.t("field.lineRole"), presentation.role(line.role)], [i18n.t("field.status"), status.label],
+      [i18n.t("field.lastObserved"), presentation.formatDate(line.latest?.at, true)],
+    ],
   };
 }
 
@@ -203,20 +197,23 @@ function renderPopup(context) {
   let summary = "";
   openLineButton.hidden = true;
   if (context.kind === "registry-cluster") {
-    title = `${context.count} школ в группе`;
-    summary = "Реестр школ · выберите школу для просмотра официальных данных";
-    fields.innerHTML = `<div><dt>Школы</dt><dd>${context.members.map((member) => `<button type="button" class="map-member" data-popup-registry-id="${escapeHtml(member.registryId)}">${escapeHtml(popupSchoolName(member.school))}</button>`).join("")}</dd></div>`;
+    title = i18n.t("map.clusterTitle", { count: context.count });
+    summary = i18n.t("map.clusterSummary");
+    fields.innerHTML = "<div><dt>" + escapeHtml(i18n.t("field.schools")) + "</dt><dd>" + context.members.map((member) => '<button type="button" class="map-member" data-popup-registry-id="' + escapeHtml(member.registryId) + '">' + escapeHtml(popupSchoolName(member.school)) + "</button>").join("") + "</dd></div>";
   } else if (context.kind === "registry") {
     title = popupSchoolName(school);
-    summary = "Официальная запись реестра";
-    fields.innerHTML = mapFields([["Район", school?.district], ["Адрес", school?.address], ["Источник координат", school?.coordinateSource], ["Статус мониторинга", i18n.t("notMonitored")]]);
+    summary = i18n.t("map.registrySummary");
+    fields.innerHTML = mapFields([[i18n.t("field.district"), school?.district], [i18n.t("field.address"), school?.address], [i18n.t("field.coordinateSource"), presentation.coordinateSource(school?.coordinateSource)], [i18n.t("field.monitoringStatus"), presentation.status("NOT_MONITORED").label]]);
   } else {
-    const lines = context.lines || [];
-    const selected = lines[0];
+    const linesAtSchool = context.lines || [];
+    const selected = linesAtSchool[0];
     const content = popupLine(selected || {});
     title = content.title;
-    summary = context.mode === "historical" ? "Историческое evidence · current state не используется" : "Текущее состояние из latest LineState";
-    fields.innerHTML = (lines.length > 1 ? `<div><dt>Линии школы</dt><dd>${lines.map((line) => `<button type="button" class="map-member" data-popup-line-id="${escapeHtml(line.id)}">${escapeHtml(line.id)} · ${escapeHtml(humanStatus(line.linkwatchStatus || line.status))}</button>`).join("")}</dd></div>` : "") + mapFields(content.fields);
+    summary = context.mode === "historical" ? i18n.t("map.historicalSource") : i18n.t("map.currentSource");
+    const selector = linesAtSchool.length > 1
+      ? "<div><dt>" + escapeHtml(i18n.t("field.lines")) + "</dt><dd>" + linesAtSchool.map((line) => '<button type="button" class="map-member" data-popup-line-id="' + escapeHtml(line.id) + '">' + escapeHtml(line.id) + " · " + escapeHtml(presentation.status(line.linkwatchStatus || line.status).label) + "</button>").join("") + "</dd></div>"
+      : "";
+    fields.innerHTML = selector + mapFields(content.fields);
     openLineButton.hidden = !selected;
     openLineButton.dataset.lineId = selected?.id || "";
   }
@@ -235,7 +232,6 @@ function renderPopup(context) {
 }
 
 function openMapPopup(context, trigger = null) { state.mapPopupContext = context; state.mapPopupTrigger = trigger; renderPopup(context); }
-
 function closeMapPopup(restoreFocus = true) {
   const popup = $("#mapPopup");
   if (!popup) return;
@@ -246,34 +242,36 @@ function closeMapPopup(restoreFocus = true) {
   state.mapPopupTrigger = null;
 }
 
-async function openLine(id) {
-  const localLine = map.getLine(id);
-  let line = localLine;
-  try {
-    const response = await lines.get(id);
-    line = { ...localLine, ...(response?.data || response) };
-  } catch (error) {
-    if (![404, 403].includes(error.status)) showToast("Детали линии временно недоступны", "warn");
-  }
-  if (!line) return;
-  const drawer = $("#detailDrawer");
-  if (!drawer) return;
-  $("#drawerTitle").textContent = line.school_name || line.id;
-  $("#drawerSubtitle").textContent = `${line.id} · ${humanRole(line.role)} · ${line.provider || "—"}`;
-  $("#drawerStatus").innerHTML = `<span class="status-badge ${escapeHtml(statusPresentation(line.status).tone)}">${escapeHtml(humanStatus(line.status))}</span><p>${escapeHtml(line.reason || "Состояние получено от backend LineState.")}</p>`;
-  $("#drawerContext").innerHTML = mapFields([["Линия", line.id], ["Школа", line.school_name], ["Район", line.district], ["Провайдер", line.provider], ["Тип подключения", line.technology], ["Последнее наблюдение", formatDate(line.latest?.at, true)]]);
-  $("#drawerMetrics").innerHTML = mapFields([["Download", formatNumber(line.latest?.download, " Мбит/с")], ["Upload", formatNumber(line.latest?.upload, " Мбит/с")], ["Ping", formatNumber(line.latest?.ping, " мс")]]);
+function renderLineDrawer(line) {
+  if (!line || !$("#detailDrawer")) return;
+  state.currentLine = line;
+  $("#drawerTitle").textContent = popupSchoolName(line.registrySchool, line) || line.id;
+  $("#drawerSubtitle").textContent = [line.id, presentation.role(line.role), line.provider || presentation.empty()].join(" · ");
+  const status = presentation.status(line.status);
+  $("#drawerStatus").innerHTML = '<span class="status-badge ' + escapeHtml(status.tone) + '">' + escapeHtml(status.label) + "</span><p>" + escapeHtml(i18n.t("reason.lineState")) + "</p>";
+  $("#drawerContext").innerHTML = mapFields([[i18n.t("field.line"), line.id], [i18n.t("field.school"), popupSchoolName(line.registrySchool, line)], [i18n.t("field.district"), line.district], [i18n.t("field.provider"), line.provider], [i18n.t("field.connectionType"), presentation.connectionType(line.technology)], [i18n.t("field.lastObserved"), presentation.formatDate(line.latest?.at, true)]]);
+  $("#drawerMetrics").innerHTML = mapFields([[i18n.t("field.download"), presentation.formatNumber(line.latest?.download, i18n.t("unit.mbps"))], [i18n.t("field.upload"), presentation.formatNumber(line.latest?.upload, i18n.t("unit.mbps"))], [i18n.t("field.ping"), presentation.formatNumber(line.latest?.ping, i18n.t("unit.ms"))]]);
   $("#drawerBackdrop").hidden = false;
-  drawer.hidden = false;
-  drawer.classList.add("open");
+  $("#detailDrawer").hidden = false;
+  $("#detailDrawer").classList.add("open");
 }
 
+async function openLine(id) {
+  let line = map.getLine(id);
+  try {
+    const response = await lines.get(id);
+    line = { ...line, ...(response?.data || response) };
+  } catch (error) {
+    if (![404, 403].includes(error.status)) showToast("map.lineDetailsUnavailable", "warn");
+  }
+  if (line) renderLineDrawer(line);
+}
 function closeDrawer() {
   $("#detailDrawer")?.classList.remove("open");
   if ($("#detailDrawer")) $("#detailDrawer").hidden = true;
   if ($("#drawerBackdrop")) $("#drawerBackdrop").hidden = true;
+  state.currentLine = null;
 }
-
 async function refreshMap() {
   if (!session.authenticated) return;
   state.mapLoaded = false;
@@ -286,21 +284,22 @@ function bindEvents() {
     event.preventDefault();
     const submit = $("#loginSubmit");
     submit.disabled = true;
-    $("#authMessage").textContent = "Проверяем учётные данные…";
+    $("#authMessage").textContent = i18n.t("auth.checkingCredentials");
     try { await session.login({ username: $("#loginUsername").value.trim(), password: $("#loginPassword").value }); }
-    catch (error) { showLogin(error.status === 401 ? "Не удалось войти. Проверьте имя пользователя и пароль." : "Сервис авторизации пока недоступен."); }
+    catch (error) { showLogin(error.status === 401 ? "auth.invalidCredentials" : "auth.serviceUnavailable"); }
     finally { submit.disabled = false; }
   });
-  $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (_) { showToast("Сеанс не удалось завершить на сервере", "warn"); } });
+  $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (error) { showToast("error.unknown", "warn"); } });
   $("#refreshButton")?.addEventListener("click", refreshMap);
   $("#mapFilter")?.addEventListener("submit", (event) => event.preventDefault());
   document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => {
     if (router.navigate(button.dataset.route)) $("#accountControl")?.removeAttribute("open");
   }));
+  document.querySelectorAll("[data-locale]").forEach((button) => button.addEventListener("click", () => i18n.setLocale(button.dataset.locale)));
   $("#mapListMode")?.addEventListener("change", async (event) => {
     const mode = event.target.value === "historical" ? "historical" : "current";
     if (mode === "current") map.setMode(mode);
-    else { try { await map.loadHistorical("period=week"); } catch (_) { showToast("Исторические данные недоступны", "warn"); } }
+    else { try { await map.loadHistorical("period=week"); } catch (error) { showToast("map.historicalUnavailable", "warn"); } }
     renderMapStatus();
   });
   $("#coverageFilter")?.addEventListener("change", (event) => { map.setCoverage(event.target.value); renderMapStatus(); });
@@ -315,13 +314,20 @@ function bindEvents() {
   globalThis.LinkwatchMap?.setMarkerClickHandler((context, marker) => openMapPopup(context, marker));
 }
 
-function mapApiAction(action) {
-  const currentMap = globalThis.LinkwatchMap?.getMap();
-  if (currentMap?.[action]) currentMap[action]();
+function refreshLocale() {
+  localizeStaticContent();
+  map.setPresentation(presentation);
+  renderRoute();
+  renderSession();
+  renderMapStatus();
+  if (state.mapPopupContext) renderPopup(state.mapPopupContext);
+  if (state.currentLine) renderLineDrawer(state.currentLine);
 }
 
 async function boot() {
+  localizeStaticContent();
   bindEvents();
+  i18n.subscribe(refreshLocale);
   renderSession();
   if (!session.hasToken()) return;
   try {
@@ -329,9 +335,9 @@ async function boot() {
     const requestedRoute = globalThis.location?.hash?.slice(1);
     if (requestedRoute) router.navigate(requestedRoute);
   } catch (error) {
-    showLogin(error.status === 401 || error.status === 403 ? "Сессия недействительна. Войдите снова." : "Сервис авторизации пока недоступен.");
+    showLogin(error.status === 401 || error.status === 403 ? "auth.invalidSession" : "auth.serviceUnavailable");
   }
 }
 
-globalThis.LinkwatchApp = { i18n, theme, router, state, boundaries, refreshMap, openLine, openMapPopup };
+globalThis.LinkwatchApp = { i18n, presentation, theme, router, state, boundaries, refreshMap, openLine, openMapPopup };
 document.addEventListener("DOMContentLoaded", boot);

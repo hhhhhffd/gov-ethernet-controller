@@ -3,7 +3,7 @@ const test = require("node:test");
 
 test("presentation boundary exposes human labels and stable status tones", async () => {
   const presentation = await import("./core/presentation.mjs");
-  assert.equal(presentation.humanStatus("NO_INTERNET"), "Нет соединения");
+  assert.equal(presentation.humanStatus("NO_INTERNET"), "Нет интернета");
   assert.equal(presentation.statusPresentation("DEGRADED").tone, "unstable");
   assert.match(presentation.formatNumber(12.4, " Мбит/с"), /12,4/);
 });

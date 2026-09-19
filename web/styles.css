@@ -48,6 +48,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; overflow: hidden !important; clip: rect(0 0 0 0) !important; white-space: nowrap !important; }
 
 .workspace { width: 100%; height: 100%; }
+.locale-switch {
+  position: fixed;
+  z-index: 1300;
+  top: 20px;
+  right: 205px;
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--ref-border-soft);
+  border-radius: 9px;
+  background: var(--ref-surface-secondary);
+}
+.locale-switch button {
+  min-width: 37px;
+  height: 35px;
+  padding: 0 8px;
+  border: 0;
+  border-right: 1px solid var(--ref-border-soft);
+  background: transparent;
+  color: var(--ref-text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+.locale-switch button:last-child { border-right: 0; }
+.locale-switch button[aria-pressed="true"] { background: var(--ref-nav-active); color: var(--ref-text-primary); }
 .map-workspace { position: fixed; z-index: 0; inset: 0; overflow: hidden; background: var(--ref-canvas-0); }
 .leaflet-map { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; background: var(--ref-canvas-0); }
 
@@ -144,6 +168,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .toast.warn { color: var(--ref-red); }
 
 @media (max-width: 1199px) {
+  .locale-switch { top: 16px; right: 195px; }
   .shell-top-left { top: 16px; left: 20px; gap: 22px; }
   .shell-top-right { top: 16px; right: 20px; }
   .map-tools { right: 20px; }
@@ -151,6 +176,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 
 @media (max-width: 900px) {
+  .locale-switch { right: 185px; }
   .shell-top-left { left: 14px; gap: 14px; }
   .shell-top-right { right: 14px; }
   .reference-nav-item { min-width: 72px; padding-inline: 11px; }
@@ -160,6 +186,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
 }
 
 @media (max-width: 620px) {
+  .locale-switch { top: 12px; right: 10px; }
   .shell-top-left { gap: 8px; }
   .shell-logo { width: 18px; }
   .reference-nav-item { min-width: 62px; height: 34px; padding-inline: 8px; border-radius: 9px; font-size: 10px; }

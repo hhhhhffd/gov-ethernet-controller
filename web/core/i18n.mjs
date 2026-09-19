@@ -1,27 +1,78 @@
+export const LOCALE_STORAGE_KEY = "linkwatch_locale";
+export const SUPPORTED_LOCALES = Object.freeze(["ru", "kk"]);
+
 const RU = Object.freeze({
-  appName: "LINKWATCH",
-  signIn: "Войти",
-  signOut: "Выйти",
-  username: "Имя пользователя",
-  password: "Пароль",
-  map: "Карта",
-  mapCurrent: "Текущее состояние",
-  mapHistorical: "Историческое evidence",
-  mapLoading: "Загрузка карты…",
-  mapUnavailable: "Операционные данные недоступны",
-  registryLoading: "Реестр загружается…",
-  registryUnavailable: "Реестр недоступен",
-  notMonitored: "Не подключена к мониторингу",
+  "app.workspace": "Рабочая область LINKWATCH", "app.mapWorkspace": "Карта школ и линий", "app.regionMap": "Карта Восточно-Казахстанской области", "app.sections": "Основные разделы", "app.tools": "Инструменты рабочей области", "app.account": "Учётная запись",
+  "nav.map": "Карта", "nav.incidents": "Инциденты", "nav.reports": "Отчёты", "nav.admin": "Управление", "nav.audit": "Журнал действий",
+  "action.refreshMap": "Обновить карту", "action.signIn": "Войти", "action.signOut": "Выйти", "action.openLine": "Открыть линию", "action.closeMapCard": "Закрыть карточку на карте", "action.closeLineCard": "Закрыть карточку линии", "action.zoomIn": "Увеличить карту", "action.zoomOut": "Уменьшить карту", "action.resetMap": "Вернуть исходный охват карты",
+  "auth.title": "Вход в рабочий контур", "auth.enterCredentials": "Введите рабочие учётные данные.", "auth.checkingSession": "Проверяем сохранённую сессию…", "auth.checkingCredentials": "Проверяем учётные данные…", "auth.sessionExpired": "Сессия истекла. Войдите снова.", "auth.invalidCredentials": "Не удалось войти. Проверьте имя пользователя и пароль.", "auth.serviceUnavailable": "Сервис авторизации пока недоступен.", "auth.invalidSession": "Сессия недействительна. Войдите снова.", "field.username": "Имя пользователя", "field.password": "Пароль",
+  "map.filter": "Фильтр карты", "map.state": "Состояние", "map.coverage": "Охват", "map.current": "Текущее состояние", "map.historical": "Исторические данные", "map.allSchools": "Все школы", "map.monitored": "Подключены к мониторингу", "map.controls": "Управление картой", "map.lineCount": "линий", "map.openSection": "Открыт раздел: {section}", "map.currentSource": "Текущее состояние по последнему подтверждённому наблюдению", "map.historicalSource": "Исторические данные; текущее состояние не используется", "map.tileUnavailable": "Подложка карты временно недоступна", "map.cluster": "Школы в группе", "map.clusterTitle": "Школ в группе: {count}", "map.clusterSummary": "Реестр школ; выберите школу для просмотра официальных данных", "map.registrySummary": "Официальная запись реестра", "map.monitoringAvailable": "Линий доступно в текущем охвате: {count}", "map.operationalUnavailable": "Операционные данные недоступны", "map.serverUnavailable": "Сервер мониторинга недоступен. Повторите загрузку.", "map.forbidden": "Карта недоступна для текущего охвата", "map.temporarilyUnavailable": "Карта временно недоступна", "map.historicalUnavailable": "Исторические данные недоступны", "map.lineDetailsUnavailable": "Детали линии временно недоступны", "map.registryLoading": "Реестр загружается…", "map.registryUnavailable": "Реестр недоступен", "map.registryMappingUnavailable": "Реестр: {count} школ; связь с организациями недоступна", "map.registryAvailable": "Реестр: {count} школ",
+  "field.lines": "Линии школы", "field.schools": "Школы", "field.line": "Линия", "field.school": "Школа", "field.district": "Район", "field.address": "Адрес", "field.provider": "Провайдер", "field.connectionType": "Тип подключения", "field.lineRole": "Роль линии", "field.status": "Статус", "field.lastObserved": "Последнее наблюдение", "field.coordinateSource": "Источник координат", "field.monitoringStatus": "Статус мониторинга", "field.download": "Скорость загрузки", "field.upload": "Скорость отправки", "field.ping": "Задержка",
+  "school.registry": "Школа из реестра", "school.monitoring": "Школа с мониторингом", "school.noOfficialName": "Официальное наименование не указано",
+  "status.OK": "Норма", "status.HEALTHY": "Норма", "status.DEGRADED": "Нестабильно", "status.UNSTABLE": "Нестабильно", "status.CRITICAL": "Критично", "status.DOWN": "Нет соединения", "status.OUTAGE": "Нет соединения", "status.NO_INTERNET": "Нет интернета", "status.NO_DATA": "Нет свежих данных", "status.NOT_MONITORED": "Не подключена к мониторингу", "status.UNKNOWN": "Состояние неизвестно", "status.STALE": "Нет свежих данных", "status.ATTENTION": "Требует внимания", "status.DEVIATES": "Не соответствует договору",
+  "role.PRIMARY": "Основная", "role.RESERVE": "Резервная", "role.INACTIVE": "Неактивная", "role.UNKNOWN": "Роль не указана",
+  "userRole.ADMIN": "Администратор", "userRole.OBLAST": "Областной оператор", "userRole.DISTRICT": "Районный оператор", "userRole.PROVIDER": "Провайдер", "userRole.SCHOOL": "Школа", "userRole.UNKNOWN": "Роль не указана",
+  "type.FIBER": "Оптоволокно", "type.GPON": "Оптоволокно GPON", "type.ETHERNET": "Ethernet", "type.RADIO": "Радиоканал", "type.SATELLITE": "Спутниковая связь", "type.LTE": "Сотовая связь LTE", "type.DSL": "DSL", "type.UNKNOWN": "Тип подключения не указан",
+  "incident.NEW": "Новый", "incident.SENT_TO_PROVIDER": "Передан провайдеру", "incident.IN_PROGRESS": "В работе", "incident.WAITING_INFO": "Ожидает информации", "incident.RESOLVED": "Устранён; ожидает проверки", "incident.CLOSED": "Закрыт", "incident.UNKNOWN": "Статус инцидента неизвестен",
+  "delivery.PENDING": "Ожидает отправки", "delivery.GENERATED": "Сформировано", "delivery.DELIVERING": "Отправляется", "delivery.SENT": "Отправлено", "delivery.FAILED": "Ошибка отправки", "delivery.UNKNOWN": "Статус отправки неизвестен",
+  "lineState.ACTIVE": "Активна", "lineState.INACTIVE": "Неактивна", "lineState.DELETED": "Удалена", "lineState.UNKNOWN": "Состояние линии неизвестно", "coordinate.OFFICIAL": "Официальный источник", "coordinate.UNKNOWN": "Источник не указан", "coordinate.NONE": "Координаты не указаны",
+  "event.notification.queued": "Уведомление поставлено в очередь", "event.recovery.observed": "Восстановление наблюдается", "event.recovery.confirmed": "Восстановление подтверждено", "event.provider.draft.created": "Черновик обращения провайдеру создан", "event.provider.case.sent": "Обращение провайдеру отправлено", "event.provider.case.delivery.failed": "Не удалось доставить обращение провайдеру", "event.provider.reported.fixed": "Провайдер сообщил об устранении", "event.sent.to.provider": "Инцидент передан провайдеру", "event.assigned": "Назначен ответственный", "event.status.changed": "Статус инцидента изменён", "event.comment": "Добавлен комментарий", "event.incident.created": "Инцидент создан", "event.incident.closed": "Инцидент закрыт", "event.unknown": "Системное событие",
+  "action.situation.merge": "Объединение ситуаций", "action.situation.split": "Разделение ситуации", "action.configuration.impact.preview": "Проверка влияния изменений", "action.agent.version.created": "Версия агента создана", "action.agent.version.updated": "Версия агента обновлена", "action.notification.sent": "Уведомление отправлено", "action.notification.delivery.failed": "Не удалось доставить уведомление", "action.unknown": "Системное действие", "reason.lineState": "Состояние определено сервером мониторинга.",
+  "empty.value": "—", "empty.noData": "Нет данных", "relative.justNow": "только что", "relative.minutesAgo": "{count} мин назад", "relative.hoursAgo": "{count} ч назад", "unit.mbps": " Мбит/с", "unit.ms": " мс", "error.400": "Запрос содержит некорректные данные.", "error.401": "Требуется повторный вход.", "error.403": "Действие недоступно для текущего охвата.", "error.404": "Данные не найдены.", "error.409": "Действие сейчас недоступно.", "error.422": "Данные не прошли проверку.", "error.500": "Сервис временно недоступен.", "error.unknown": "Сервис временно недоступен.", "locale.ru": "РУ", "locale.kk": "ҚАЗ", "locale.switch": "Выбрать язык интерфейса",
 });
 
-export function createI18n({ locale = "ru", messages = { ru: RU } } = {}) {
-  let currentLocale = locale;
+const KK = Object.freeze({
+  "app.workspace": "LINKWATCH жұмыс аймағы", "app.mapWorkspace": "Мектептер мен желілер картасы", "app.regionMap": "Шығыс Қазақстан облысының картасы", "app.sections": "Негізгі бөлімдер", "app.tools": "Жұмыс аймағының құралдары", "app.account": "Тіркелгі",
+  "nav.map": "Карта", "nav.incidents": "Оқиғалар", "nav.reports": "Есептер", "nav.admin": "Басқару", "nav.audit": "Әрекеттер журналы",
+  "action.refreshMap": "Картаны жаңарту", "action.signIn": "Кіру", "action.signOut": "Шығу", "action.openLine": "Желіні ашу", "action.closeMapCard": "Картадағы карточканы жабу", "action.closeLineCard": "Желі карточкасын жабу", "action.zoomIn": "Картаны үлкейту", "action.zoomOut": "Картаны кішірейту", "action.resetMap": "Картаның бастапқы ауқымын қайтару",
+  "auth.title": "Жұмыс контурына кіру", "auth.enterCredentials": "Жұмыс тіркелгі деректерін енгізіңіз.", "auth.checkingSession": "Сақталған сессия тексерілуде…", "auth.checkingCredentials": "Тіркелгі деректері тексерілуде…", "auth.sessionExpired": "Сессия мерзімі аяқталды. Қайта кіріңіз.", "auth.invalidCredentials": "Кіру мүмкін болмады. Пайдаланушы аты мен құпиясөзді тексеріңіз.", "auth.serviceUnavailable": "Авторизация сервисі әзірге қолжетімсіз.", "auth.invalidSession": "Сессия жарамсыз. Қайта кіріңіз.", "field.username": "Пайдаланушы аты", "field.password": "Құпиясөз",
+  "map.filter": "Карта сүзгісі", "map.state": "Күйі", "map.coverage": "Қамту", "map.current": "Ағымдағы күй", "map.historical": "Тарихи деректер", "map.allSchools": "Барлық мектептер", "map.monitored": "Мониторингке қосылған", "map.controls": "Картаны басқару", "map.lineCount": "желілер", "map.openSection": "Ашық бөлім: {section}", "map.currentSource": "Ағымдағы күй соңғы расталған бақылау бойынша", "map.historicalSource": "Тарихи деректер; ағымдағы күй пайдаланылмайды", "map.tileUnavailable": "Карта негізі уақытша қолжетімсіз", "map.cluster": "Топтағы мектептер", "map.clusterTitle": "Топтағы мектептер: {count}", "map.clusterSummary": "Мектептер тізілімі; ресми деректерді көру үшін мектепті таңдаңыз", "map.registrySummary": "Тізілімнің ресми жазбасы", "map.monitoringAvailable": "Ағымдағы қамтуда қолжетімді желілер: {count}", "map.operationalUnavailable": "Операциялық деректер қолжетімсіз", "map.serverUnavailable": "Мониторинг сервері қолжетімсіз. Қайта жүктеп көріңіз.", "map.forbidden": "Карта ағымдағы қамту үшін қолжетімсіз", "map.temporarilyUnavailable": "Карта уақытша қолжетімсіз", "map.historicalUnavailable": "Тарихи деректер қолжетімсіз", "map.lineDetailsUnavailable": "Желі деректері уақытша қолжетімсіз", "map.registryLoading": "Тізілім жүктелуде…", "map.registryUnavailable": "Тізілім қолжетімсіз", "map.registryMappingUnavailable": "Тізілім: {count} мектеп; ұйымдармен байланыс қолжетімсіз", "map.registryAvailable": "Тізілім: {count} мектеп",
+  "field.lines": "Мектеп желілері", "field.schools": "Мектептер", "field.line": "Желі", "field.school": "Мектеп", "field.district": "Аудан", "field.address": "Мекенжай", "field.provider": "Провайдер", "field.connectionType": "Қосылым түрі", "field.lineRole": "Желі рөлі", "field.status": "Күйі", "field.lastObserved": "Соңғы бақылау", "field.coordinateSource": "Координаттар көзі", "field.monitoringStatus": "Мониторинг күйі", "field.download": "Жүктеп алу жылдамдығы", "field.upload": "Жіберу жылдамдығы", "field.ping": "Кідіріс",
+  "school.registry": "Тізілімдегі мектеп", "school.monitoring": "Мониторингтегі мектеп", "school.noOfficialName": "Ресми атауы көрсетілмеген",
+  "status.OK": "Қалыпты", "status.HEALTHY": "Қалыпты", "status.DEGRADED": "Тұрақсыз", "status.UNSTABLE": "Тұрақсыз", "status.CRITICAL": "Өте маңызды", "status.DOWN": "Байланыс жоқ", "status.OUTAGE": "Байланыс жоқ", "status.NO_INTERNET": "Интернет жоқ", "status.NO_DATA": "Жаңа деректер жоқ", "status.NOT_MONITORED": "Мониторингке қосылмаған", "status.UNKNOWN": "Күйі белгісіз", "status.STALE": "Жаңа деректер жоқ", "status.ATTENTION": "Назар аударуды қажет етеді", "status.DEVIATES": "Шартқа сәйкес емес",
+  "role.PRIMARY": "Негізгі", "role.RESERVE": "Резервтік", "role.INACTIVE": "Белсенді емес", "role.UNKNOWN": "Рөлі көрсетілмеген",
+  "userRole.ADMIN": "Әкімші", "userRole.OBLAST": "Облыстық оператор", "userRole.DISTRICT": "Аудандық оператор", "userRole.PROVIDER": "Провайдер", "userRole.SCHOOL": "Мектеп", "userRole.UNKNOWN": "Рөлі көрсетілмеген",
+  "type.FIBER": "Талшықты-оптикалық байланыс", "type.GPON": "GPON талшықты-оптикалық байланысы", "type.ETHERNET": "Ethernet", "type.RADIO": "Радиоарна", "type.SATELLITE": "Спутниктік байланыс", "type.LTE": "LTE ұялы байланысы", "type.DSL": "DSL", "type.UNKNOWN": "Қосылым түрі көрсетілмеген",
+  "incident.NEW": "Жаңа", "incident.SENT_TO_PROVIDER": "Провайдерге жіберілді", "incident.IN_PROGRESS": "Жұмыста", "incident.WAITING_INFO": "Ақпарат күтілуде", "incident.RESOLVED": "Жойылды; тексеру күтілуде", "incident.CLOSED": "Жабық", "incident.UNKNOWN": "Оқиға күйі белгісіз",
+  "delivery.PENDING": "Жіберуді күтуде", "delivery.GENERATED": "Қалыптастырылды", "delivery.DELIVERING": "Жіберілуде", "delivery.SENT": "Жіберілді", "delivery.FAILED": "Жіберу қатесі", "delivery.UNKNOWN": "Жіберу күйі белгісіз",
+  "lineState.ACTIVE": "Белсенді", "lineState.INACTIVE": "Белсенді емес", "lineState.DELETED": "Жойылған", "lineState.UNKNOWN": "Желі күйі белгісіз", "coordinate.OFFICIAL": "Ресми дереккөз", "coordinate.UNKNOWN": "Дереккөз көрсетілмеген", "coordinate.NONE": "Координаттар көрсетілмеген",
+  "event.notification.queued": "Хабарлама кезекке қойылды", "event.recovery.observed": "Қалпына келу байқалды", "event.recovery.confirmed": "Қалпына келу расталды", "event.provider.draft.created": "Провайдерге өтініштің жобасы жасалды", "event.provider.case.sent": "Провайдерге өтініш жіберілді", "event.provider.case.delivery.failed": "Провайдерге өтініш жеткізілмеді", "event.provider.reported.fixed": "Провайдер ақаудың жойылғанын хабарлады", "event.sent.to.provider": "Оқиға провайдерге жіберілді", "event.assigned": "Жауапты адам тағайындалды", "event.status.changed": "Оқиға күйі өзгертілді", "event.comment": "Түсініктеме қосылды", "event.incident.created": "Оқиға жасалды", "event.incident.closed": "Оқиға жабылды", "event.unknown": "Жүйелік оқиға",
+  "action.situation.merge": "Жағдайларды біріктіру", "action.situation.split": "Жағдайды бөлу", "action.configuration.impact.preview": "Өзгерістер әсерін тексеру", "action.agent.version.created": "Агент нұсқасы жасалды", "action.agent.version.updated": "Агент нұсқасы жаңартылды", "action.notification.sent": "Хабарлама жіберілді", "action.notification.delivery.failed": "Хабарлама жеткізілмеді", "action.unknown": "Жүйелік әрекет", "reason.lineState": "Күйді мониторинг сервері анықтады.",
+  "empty.value": "—", "empty.noData": "Деректер жоқ", "relative.justNow": "жаңа ғана", "relative.minutesAgo": "{count} мин бұрын", "relative.hoursAgo": "{count} сағ бұрын", "unit.mbps": " Мбит/с", "unit.ms": " мс", "error.400": "Сұрауда қате деректер бар.", "error.401": "Қайта кіру қажет.", "error.403": "Әрекет ағымдағы қамту үшін қолжетімсіз.", "error.404": "Деректер табылмады.", "error.409": "Әрекет қазір қолжетімсіз.", "error.422": "Деректер тексеруден өтпеді.", "error.500": "Сервис уақытша қолжетімсіз.", "error.unknown": "Сервис уақытша қолжетімсіз.", "locale.ru": "РУ", "locale.kk": "ҚАЗ", "locale.switch": "Интерфейс тілін таңдау",
+});
+
+export const MESSAGES = Object.freeze({ ru: RU, kk: KK });
+
+function interpolate(template, values) {
+  return template.replace(/\{([\w.-]+)\}/g, (_, key) => String(values?.[key] ?? "—"));
+}
+
+export function createI18n({ locale, messages = MESSAGES, storage = globalThis.localStorage, root = globalThis.document?.documentElement } = {}) {
+  const initial = locale || storage?.getItem(LOCALE_STORAGE_KEY) || "ru";
+  let currentLocale = SUPPORTED_LOCALES.includes(initial) && messages[initial] ? initial : "ru";
+  const listeners = new Set();
+  function apply() { root?.setAttribute("lang", currentLocale); }
+  function t(key, values, fallback) {
+    const template = messages[currentLocale]?.[key];
+    if (typeof template === "string") return interpolate(template, values);
+    return fallback ?? messages[currentLocale]?.["empty.value"] ?? "—";
+  }
+  apply();
   return {
     get locale() { return currentLocale; },
-    setLocale(nextLocale) { if (messages[nextLocale]) currentLocale = nextLocale; return currentLocale; },
-    t(key, fallback = key) { return messages[currentLocale]?.[key] ?? fallback; },
     messages,
+    has(key, localeName = currentLocale) { return typeof messages[localeName]?.[key] === "string"; },
+    t,
+    setLocale(nextLocale) {
+      if (!SUPPORTED_LOCALES.includes(nextLocale) || !messages[nextLocale]) return currentLocale;
+      currentLocale = nextLocale;
+      storage?.setItem(LOCALE_STORAGE_KEY, currentLocale);
+      apply();
+      listeners.forEach((listener) => listener(currentLocale));
+      return currentLocale;
+    },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
   };
 }
 
-export { RU as RU_MESSAGES };
+export { RU as RU_MESSAGES, KK as KK_MESSAGES };

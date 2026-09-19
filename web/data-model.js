@@ -46,8 +46,10 @@
     return {
       registryId,
       schoolId: text(raw.school_id),
-      name: text(raw.official_name ?? raw.name, "Без названия"),
-      officialName: text(raw.official_name ?? raw.name, "Без названия"),
+      name: text(raw.official_name ?? raw.name),
+      officialName: text(raw.official_name ?? raw.name),
+      officialNameRu: text(raw.official_name_ru),
+      officialNameKk: text(raw.official_name_kk),
       nameRu: text(raw.name_ru),
       nameKk: text(raw.name_kk),
       district: text(raw.district, "—"),

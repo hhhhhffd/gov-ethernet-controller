@@ -78,6 +78,10 @@ const lines = [
 ];
 
 const mapApi = window.LinkwatchMap;
+mapApi.setPresentation({
+  t(key) { return key === "map.tileUnavailable" ? "Подложка карты временно недоступна" : key; },
+  schoolName(school, fallback) { return school?.officialName || fallback || ""; },
+});
 assert.equal(mapApi.init({ containerId: "leafletMap" }), map);
 tileLayer.handlers.tileerror();
 assert.equal(tileStatus.hidden, false, "tile failure must be visible without disabling the map");
