@@ -900,10 +900,8 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Tim
 		healthyObservation = len(recent) > 0 && recent[0].Valid && !hasViolation(recent[0], active.ViolationType)
 	}
 	healthyStreak := false
-	if healthyObservation && current != nil && (current.ConnectionState == "NO_INTERNET" || current.ConnectionState == "DEGRADED") {
-		if active != nil {
-			healthyStreak = len(confirmedForCode(lineID, recent, incidentMode, recoveryPolicy, active.ViolationType, true)) > 0
-		}
+	if active != nil && healthyObservation {
+		healthyStreak = len(confirmedForCode(lineID, recent, incidentMode, recoveryPolicy, active.ViolationType, true)) > 0
 	}
 	connectionState := connectionStateForResult(result)
 	if connectionState == "UNKNOWN" && current != nil {
@@ -922,7 +920,12 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Tim
 		contractState = "DEVIATES"
 	}
 	recoveryState := "NONE"
-	if current != nil && (current.ConnectionState == "NO_INTERNET" || current.ConnectionState == "DEGRADED") && healthyObservation {
+	if active != nil && healthyObservation {
+		recoveryState = "OBSERVED"
+		if healthyStreak {
+			recoveryState = "CONFIRMED"
+		}
+	} else if current != nil && (current.ConnectionState == "NO_INTERNET" || current.ConnectionState == "DEGRADED") && healthyObservation {
 		recoveryState = "OBSERVED"
 		if healthyStreak {
 			recoveryState = "CONFIRMED"
@@ -1189,7 +1192,7 @@ func updateRecovery(ctx context.Context, tx pgx.Tx, lineID, mode string, at time
 	}
 	isProblem := hasViolation(recent[0], item.ViolationType)
 	if isProblem {
-		if item.Status == "RESOLVED" {
+		if item.RecoveryState == "OBSERVED" && item.Status != "IN_PROGRESS" {
 			if _, err := tx.Exec(ctx, `UPDATE incidents SET status='IN_PROGRESS',recovery_state='NONE',resolved_at=NULL WHERE id=$1`, item.ID); err != nil {
 				return err
 			}

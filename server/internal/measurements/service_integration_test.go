@@ -141,6 +141,10 @@ func TestIncidentUsesConfirmedContractViolationWithLateBaselineViolation(t *test
 	}
 
 	lastRecovery := submitMeasurement(t, service, fixture, base.Add(4*time.Minute), "contract-recovery-1", 100, 150)
+	state := readLineState(t, db, fixture.lineID)
+	if state.RecoveryState != "OBSERVED" {
+		t.Fatalf("contract-only recovery line state = %q, want OBSERVED", state.RecoveryState)
+	}
 	submitMeasurement(t, service, fixture, base.Add(5*time.Minute), "contract-recovery-2", 100, 150)
 	submitMeasurement(t, service, fixture, base.Add(6*time.Minute), "contract-recovery-3", 100, 150)
 	incident = readLatestIncident(t, db, fixture.lineID)
@@ -149,6 +153,37 @@ func TestIncidentUsesConfirmedContractViolationWithLateBaselineViolation(t *test
 	}
 	if len(incidentEvidenceIDsFromEvent(t, db, incident.ID, "RECOVERY_CONFIRMED")) != 3 || lastRecovery.MeasurementID <= 0 {
 		t.Fatalf("contract recovery evidence was not persisted")
+	}
+}
+
+func TestRecoveryViolationReopensProviderSentIncident(t *testing.T) {
+	db := openMeasurementIntegrationDB(t)
+	t.Cleanup(db.Close)
+	contractUploadMinimum := 100.0
+	fixture := createMeasurementIntegrationFixture(t, db, &contractUploadMinimum, 2)
+	t.Cleanup(func() { cleanupMeasurementIntegrationFixture(t, db, fixture) })
+	service := &Service{DB: db}
+	base := time.Date(2026, 9, 19, 13, 0, 0, 0, time.UTC)
+
+	submitMeasurement(t, service, fixture, base, "provider-reopen-1", 100, 10)
+	submitMeasurement(t, service, fixture, base.Add(time.Minute), "provider-reopen-2", 100, 10)
+	submitMeasurement(t, service, fixture, base.Add(2*time.Minute), "provider-reopen-3", 100, 10)
+	incident := readLatestIncident(t, db, fixture.lineID)
+	setLifecycleIncidentStatus(t, db, incident.ID, "SENT_TO_PROVIDER", "SENT_TO_PROVIDER", base.Add(2*time.Minute))
+
+	submitMeasurement(t, service, fixture, base.Add(3*time.Minute), "provider-reopen-recovery", 100, 150)
+	incident = readLatestIncident(t, db, fixture.lineID)
+	if incident.Status != "SENT_TO_PROVIDER" || incident.Recovery != "OBSERVED" {
+		t.Fatalf("provider-sent recovery = status %s recovery %s, want SENT_TO_PROVIDER/OBSERVED", incident.Status, incident.Recovery)
+	}
+
+	submitMeasurement(t, service, fixture, base.Add(4*time.Minute), "provider-reopen-violation", 100, 10)
+	incident = readLatestIncident(t, db, fixture.lineID)
+	if incident.Status != "IN_PROGRESS" || incident.Recovery != "NONE" {
+		t.Fatalf("provider-sent violation return = status %s recovery %s, want IN_PROGRESS/NONE", incident.Status, incident.Recovery)
+	}
+	if got := incidentEventTypes(t, db, incident.ID); !containsEventType(got, "REOPENED") {
+		t.Fatalf("provider-sent recovery reopen event missing: %v", got)
 	}
 }
 
