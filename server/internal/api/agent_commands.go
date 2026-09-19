@@ -163,6 +163,12 @@ func (s *Server) agentCommandLease(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		commands[i].Status = "LEASED"
+		if commands[i].CommandType == "AGENT_UPDATE" {
+			if _, err := tx.Exec(r.Context(), `UPDATE agent_update_attempts SET status='DOWNLOADING',updated_at=now() WHERE device_id=$1 AND command_id=$2 AND status='REQUESTED'`, device.ID, commands[i].ID); err != nil {
+				writeError(w, 500, "could not mark agent update download")
+				return
+			}
+		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "could not commit command lease")
@@ -223,7 +229,7 @@ func (s *Server) agentCommandAck(w http.ResponseWriter, r *http.Request, id stri
 			ReleaseID string `json:"release_id"`
 		}
 		if json.Unmarshal(command.Payload, &payload) == nil && payload.ReleaseID != "" {
-			_, _ = s.DB.Pool.Exec(r.Context(), `UPDATE agent_update_attempts SET status=$1,attempt_count=attempt_count+1,detail_json=$2::jsonb,last_error=NULLIF($3,''),updated_at=now() WHERE release_id=$4 AND device_id=$5 AND command_id=$6`, updateAckStatus(request.Result, request.Status), request.Result, strings.TrimSpace(request.Error), payload.ReleaseID, device.ID, command.ID)
+			_, _ = s.DB.Pool.Exec(r.Context(), `UPDATE agent_update_attempts SET status=CASE WHEN status IN ('SUCCEEDED','ROLLED_BACK') THEN status ELSE $1 END,attempt_count=attempt_count+1,detail_json=CASE WHEN status IN ('SUCCEEDED','ROLLED_BACK') THEN detail_json ELSE $2::jsonb END,last_error=NULLIF($3,''),updated_at=now() WHERE release_id=$4 AND device_id=$5 AND command_id=$6`, updateAckStatus(request.Result, request.Status), request.Result, strings.TrimSpace(request.Error), payload.ReleaseID, device.ID, command.ID)
 		}
 	}
 	writeJSON(w, http.StatusOK, command)

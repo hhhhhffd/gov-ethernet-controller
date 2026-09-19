@@ -45,6 +45,16 @@ fn main() {
 
 fn run() -> Result<(), String> {
     let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.first().map(String::as_str) == Some("--activation-watchdog") {
+        let record = args
+            .get(1)
+            .ok_or("activation watchdog record path missing")?;
+        return update::run_activation_watchdog(std::path::Path::new(record));
+    }
+    if args.first().map(String::as_str) == Some("--apply-update-helper") {
+        let record = args.get(1).ok_or("update helper record path missing")?;
+        return update::run_activation_helper(std::path::Path::new(record));
+    }
     if args
         .iter()
         .any(|arg| arg == "version" || arg == "--version")
@@ -118,6 +128,8 @@ fn run_mode(mode: String, service_stop: Option<StopToken>) -> Result<(), String>
         ));
     }
     let queue = Queue::open(&config.queue_dir).map_err(|error| format!("open queue: {error}"))?;
+    update::resume_activation_guard(&config.queue_dir, update::running_version())?;
+    let restart_args = vec![mode.clone()];
     // Both long-running and one-shot modes write the durable spool. Keep
     // them mutually exclusive so a one-shot upload cannot race the scheduler
     // or remove an item while the run loop is processing the same batch.
@@ -147,7 +159,14 @@ fn run_mode(mode: String, service_stop: Option<StopToken>) -> Result<(), String>
     let mut probe = probe::build(&config)?;
     let mut client = Client::new(config.clone())?;
     if mode == "once" {
-        run_once(&mut config, &mut *probe, &queue, &mut client)
+        run_once(
+            &mut config,
+            &mut *probe,
+            &queue,
+            &mut client,
+            &restart_args,
+            service_mode,
+        )
     } else {
         let manual_probe = Arc::new(ManualProbeControl::default());
         #[cfg(windows)]
@@ -163,6 +182,8 @@ fn run_mode(mode: String, service_stop: Option<StopToken>) -> Result<(), String>
             client,
             stop_token.expect("run mode installs a stop token"),
             manual_probe,
+            restart_args,
+            service_mode,
         )
     }
 }
@@ -254,9 +275,21 @@ fn run_once(
     probe: &mut dyn Probe,
     queue: &Queue,
     client: &mut Client,
+    restart_args: &[String],
+    service_mode: bool,
 ) -> Result<(), String> {
     let mut telemetry = RuntimeTelemetry::new();
-    process_commands(config, probe, queue, client);
+    if process_commands(
+        config,
+        probe,
+        queue,
+        client,
+        &telemetry,
+        restart_args,
+        service_mode,
+    ) {
+        return Ok(());
+    }
     match client.heartbeat(&telemetry.snapshot(queue)) {
         Ok(_) => telemetry.record_heartbeat(true),
         Err(error) => {
@@ -319,6 +352,8 @@ fn run_loop(
     mut client: Client,
     stop: StopToken,
     manual_probe: Arc<ManualProbeControl>,
+    restart_args: Vec<String>,
+    service_mode: bool,
 ) -> Result<(), String> {
     let state_path = queue.state_path();
     let mut state = scheduler::State::load(&state_path)
@@ -386,7 +421,17 @@ fn run_loop(
                 telemetry.record_heartbeat(true);
             }
             flush_pending(&client, &queue);
-            process_commands(&mut config, &mut *probe, &queue, &mut client);
+            if process_commands(
+                &mut config,
+                &mut *probe,
+                &queue,
+                &mut client,
+                &telemetry,
+                &restart_args,
+                service_mode,
+            ) {
+                return Ok(());
+            }
             if use_server_config() {
                 if let Ok(remote) = client.server_config() {
                     let before = (
@@ -556,12 +601,15 @@ fn process_commands(
     probe: &mut dyn Probe,
     queue: &Queue,
     client: &mut Client,
-) {
+    telemetry: &RuntimeTelemetry,
+    restart_args: &[String],
+    service_mode: bool,
+) -> bool {
     let commands = match client.poll_commands(1) {
         Ok(commands) => commands,
         Err(error) => {
             logging::event(format!("command poll failure: {error}"));
-            return;
+            return false;
         }
     };
     for command in commands {
@@ -599,15 +647,12 @@ fn process_commands(
             continue;
         }
         if command.command_type == "AGENT_UPDATE" {
-            let result = match update::apply_command(
+            let status = match update::apply_command(
                 &command.payload,
-                &config.agent_version,
+                update::running_version(),
                 &config.queue_dir,
             ) {
-                Ok(status) => {
-                    config.agent_version = status.version.clone();
-                    json!({"status":"SUCCEEDED","version":status.version,"artifact_sha256":status.artifact_sha256})
-                }
+                Ok(status) => status,
                 Err(error) => {
                     let status = if error.contains("rollback") {
                         "ROLLED_BACK"
@@ -623,7 +668,39 @@ fn process_commands(
                     continue;
                 }
             };
-            let _ = client.acknowledge_command(command.id, "DONE", result, None);
+            let result = update::ack_payload(&status, &telemetry.boot_id);
+            match client.acknowledge_command(command.id, "DONE", result, None) {
+                Ok(_) if status.phase == update::UpdatePhase::Installing => {
+                    if let Err(error) =
+                        update::activate_pending(&status, restart_args, service_mode)
+                    {
+                        logging::event(format!(
+                            "agent update activation failed release={} version={}: {error}",
+                            status.release_id, status.version
+                        ));
+                        let report = json!({
+                            "release_id": status.release_id,
+                            "version": status.version,
+                            "status": "ROLLED_BACK",
+                            "error": error,
+                        });
+                        if let Err(report_error) = client
+                            .heartbeat_with_activation(&telemetry.snapshot(queue), Some(report))
+                        {
+                            logging::event(format!(
+                                "agent update rollback report failed: {report_error}"
+                            ));
+                        }
+                    } else {
+                        return true;
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => logging::event(format!(
+                    "agent update acknowledgement failed release={}: {error}",
+                    status.release_id
+                )),
+            }
             continue;
         }
         if command.command_type != "LIVE_VERIFY" {
@@ -666,6 +743,7 @@ fn process_commands(
             Err(error) => logging::event(format!("LIVE_VERIFY upload deferred: {error}")),
         }
     }
+    false
 }
 
 fn persist_runtime_state(config: &Config, telemetry: &RuntimeTelemetry, queue: &Queue) {
@@ -673,7 +751,7 @@ fn persist_runtime_state(config: &Config, telemetry: &RuntimeTelemetry, queue: &
     let state = json!({
         "device_id": &config.device_id,
         "hostname": &telemetry.hostname,
-        "agent_version": &config.agent_version,
+        "agent_version": update::running_version(),
         "server": &config.server_url,
         "dashboard_url": config.dashboard_url.as_ref().unwrap_or(&config.server_url),
         // A non-empty spool is actionable even when heartbeat still reaches
@@ -728,7 +806,7 @@ fn event(config: &Config, result: Value) -> Value {
     let mut object = result.as_object().cloned().unwrap_or_default();
     object.insert("client_event_id".into(), json!(Uuid::new_v4()));
     object.insert("device_id".into(), json!(config.device_id));
-    object.insert("agent_version".into(), json!(config.agent_version));
+    object.insert("agent_version".into(), json!(update::running_version()));
     object.insert("observed_at".into(), json!(chrono_like_now()));
     Value::Object(object)
 }
@@ -788,6 +866,7 @@ fn time_format(seconds: u64, nanos: u32) -> String {
 mod tests {
     use super::event;
     use crate::config::Config;
+    use crate::update;
     use serde_json::json;
 
     #[test]
@@ -796,9 +875,11 @@ mod tests {
         config.school_id = "legacy-school".into();
         config.line_id = "legacy-line".into();
         config.monitoring_point_id = "legacy-point".into();
+        config.agent_version = "configured-but-not-running".into();
 
         let payload = event(&config, json!({"mode": "LIGHT"}));
         assert_eq!(payload["device_id"], "device-42-primary");
+        assert_eq!(payload["agent_version"], update::running_version());
         assert!(payload.get("school_id").is_none());
         assert!(payload.get("line_id").is_none());
         assert!(payload.get("monitoring_point_id").is_none());

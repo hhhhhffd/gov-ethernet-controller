@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -10,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"linkwatch/server/internal/auth"
 )
@@ -128,7 +131,7 @@ func (s *Server) adminAgentUpdate(w http.ResponseWriter, r *http.Request, p *aut
 		if err != nil {
 			continue
 		}
-		if _, err = tx.Exec(r.Context(), `INSERT INTO agent_update_attempts(release_id,device_id,command_id,status,detail_json) VALUES($1,$2,$3,'REQUESTED',$4::jsonb) ON CONFLICT(release_id,device_id) DO UPDATE SET command_id=EXCLUDED.command_id,status='REQUESTED',last_error=NULL,updated_at=now()`, payload.ReleaseID, deviceID, commandID, string(commandPayload)); err != nil {
+		if _, err = tx.Exec(r.Context(), `INSERT INTO agent_update_attempts(release_id,device_id,command_id,status,detail_json) VALUES($1,$2,$3,'REQUESTED',$4::jsonb) ON CONFLICT(release_id,device_id) DO UPDATE SET command_id=EXCLUDED.command_id,status=CASE WHEN agent_update_attempts.status='SUCCEEDED' THEN 'SUCCEEDED' ELSE 'REQUESTED' END,detail_json=CASE WHEN agent_update_attempts.status='SUCCEEDED' THEN agent_update_attempts.detail_json ELSE EXCLUDED.detail_json END,last_error=NULL,updated_at=now()`, payload.ReleaseID, deviceID, commandID, string(commandPayload)); err != nil {
 			writeError(w, 500, "could not persist update attempt")
 			return
 		}
@@ -153,10 +156,107 @@ func updateAckStatus(result json.RawMessage, commandStatus string) string {
 		return "FAILED"
 	}
 	var value struct {
-		Status string `json:"status"`
+		Status           string `json:"status"`
+		RestartRequested bool   `json:"restart_requested"`
 	}
-	if json.Unmarshal(result, &value) == nil && value.Status == "SUCCEEDED" {
-		return "SUCCEEDED"
+	if json.Unmarshal(result, &value) == nil {
+		switch value.Status {
+		case "DOWNLOADING":
+			return "DOWNLOADING"
+		case "VERIFIED":
+			return "VERIFIED"
+		case "INSTALLING":
+			if value.RestartRequested {
+				return "INSTALLING"
+			}
+		case "SUCCEEDED":
+			// Older agents used SUCCEEDED for an install ACK. Preserve the
+			// activation invariant for those ACKs until a heartbeat proves the
+			// new process is running.
+			return "INSTALLING"
+		case "ALREADY_CURRENT":
+			return "VERIFIED"
+		}
 	}
 	return "VERIFIED"
+}
+
+type agentUpdateActivationReport struct {
+	ReleaseID string `json:"release_id"`
+	Version   string `json:"version"`
+	Status    string `json:"status"`
+	Error     string `json:"error"`
+}
+
+type agentUpdateActivationTransition struct {
+	ReleaseID string `json:"release_id"`
+	Version   string `json:"version"`
+	Status    string `json:"status"`
+}
+
+func updateHeartbeatTransition(attemptStatus, expectedVersion, runningVersion, previousBootID, incomingBootID string, restartRequested bool) string {
+	if attemptStatus != "INSTALLING" || !restartRequested || previousBootID == "" || incomingBootID == "" || previousBootID == incomingBootID {
+		return ""
+	}
+	if expectedVersion == runningVersion {
+		return "SUCCEEDED"
+	}
+	return "ROLLED_BACK"
+}
+
+func (s *Server) reconcileAgentUpdateHeartbeat(ctx context.Context, tx pgx.Tx, deviceID, runningVersion, bootID string, allowAutomatic bool, report *agentUpdateActivationReport) ([]agentUpdateActivationTransition, error) {
+	transitions := make([]agentUpdateActivationTransition, 0, 2)
+	if report != nil && report.ReleaseID != "" {
+		status := "FAILED"
+		if report.Status == "ROLLED_BACK" {
+			status = "ROLLED_BACK"
+		}
+		var transition agentUpdateActivationTransition
+		err := tx.QueryRow(ctx, `UPDATE agent_update_attempts a SET status=$3,last_error=NULLIF($4,''),detail_json=COALESCE(a.detail_json,'{}'::jsonb)||jsonb_build_object('status',$3,'error',$4,'reported_at',now()),updated_at=now() WHERE a.release_id=$1 AND a.device_id=$2 AND a.status NOT IN ('SUCCEEDED','ROLLED_BACK') RETURNING a.release_id,(SELECT version FROM agent_update_releases WHERE release_id=a.release_id)`, report.ReleaseID, deviceID, status, strings.TrimSpace(report.Error)).Scan(&transition.ReleaseID, &transition.Version)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if err == nil {
+			transition.Status = status
+			transitions = append(transitions, transition)
+		}
+	}
+	if !allowAutomatic {
+		return transitions, nil
+	}
+	rows, err := tx.Query(ctx, `UPDATE agent_update_attempts a SET status='ROLLED_BACK',last_error=COALESCE(a.last_error,'running agent version did not match requested release'),detail_json=COALESCE(a.detail_json,'{}'::jsonb)||jsonb_build_object('status','ROLLED_BACK','running_version',$2,'rollback_observed_at',now()),updated_at=now() FROM agent_update_releases r WHERE a.release_id=r.release_id AND a.device_id=$1 AND a.status='INSTALLING' AND a.detail_json->>'restart_requested'='true' AND r.version<>$2 AND NULLIF(a.detail_json->>'previous_boot_id','') IS NOT NULL AND a.detail_json->>'previous_boot_id'<>NULLIF($3,'') RETURNING a.release_id,r.version`, deviceID, runningVersion, bootID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var transition agentUpdateActivationTransition
+		if err := rows.Scan(&transition.ReleaseID, &transition.Version); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		transition.Status = "ROLLED_BACK"
+		transitions = append(transitions, transition)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	rows, err = tx.Query(ctx, `UPDATE agent_update_attempts a SET status='SUCCEEDED',last_error=NULL,detail_json=COALESCE(a.detail_json,'{}'::jsonb)||jsonb_build_object('status','SUCCEEDED','running_version',$2,'activated_at',now()),updated_at=now() FROM agent_update_releases r WHERE a.release_id=r.release_id AND a.device_id=$1 AND a.status='INSTALLING' AND a.detail_json->>'restart_requested'='true' AND r.version=$2 AND NULLIF(a.detail_json->>'previous_boot_id','') IS NOT NULL AND a.detail_json->>'previous_boot_id'<>NULLIF($3,'') RETURNING a.release_id,r.version`, deviceID, runningVersion, bootID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var transition agentUpdateActivationTransition
+		if err := rows.Scan(&transition.ReleaseID, &transition.Version); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		transition.Status = "SUCCEEDED"
+		transitions = append(transitions, transition)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	return transitions, nil
 }

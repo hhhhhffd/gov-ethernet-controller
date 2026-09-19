@@ -120,11 +120,18 @@ impl Client {
             .map_err(|error| format!("decode server response: {error}"))
     }
     pub fn heartbeat(&self, telemetry: &HeartbeatTelemetry) -> Result<Value, String> {
+        self.heartbeat_with_activation(telemetry, None)
+    }
+    pub fn heartbeat_with_activation(
+        &self,
+        telemetry: &HeartbeatTelemetry,
+        update_activation: Option<Value>,
+    ) -> Result<Value, String> {
         let url = format!(
             "{}/api/v1/agent/heartbeat",
             self.config.server_url.trim_end_matches('/')
         );
-        let payload = heartbeat_payload(&self.config.agent_version, telemetry);
+        let payload = current_heartbeat_payload(telemetry, update_activation);
         let response = self
             .http
             .post(url)
@@ -136,9 +143,15 @@ impl Client {
         if !response.status().is_success() {
             return Err(format!("server returned HTTP {}", response.status()));
         }
-        response
+        let response: Value = response
             .json()
-            .map_err(|error| format!("decode heartbeat response: {error}"))
+            .map_err(|error| format!("decode heartbeat response: {error}"))?;
+        crate::update::handle_heartbeat_response(
+            &response,
+            &self.config.queue_dir,
+            crate::update::running_version(),
+        )?;
+        Ok(response)
     }
     pub fn server_config(&self) -> Result<Value, String> {
         let url = format!(
@@ -241,8 +254,28 @@ impl Client {
     }
 }
 
+#[cfg(test)]
 fn heartbeat_payload(agent_version: &str, telemetry: &HeartbeatTelemetry) -> Value {
-    json!({
+    heartbeat_payload_with_activation(agent_version, telemetry, None)
+}
+
+fn current_heartbeat_payload(
+    telemetry: &HeartbeatTelemetry,
+    update_activation: Option<Value>,
+) -> Value {
+    heartbeat_payload_with_activation(
+        crate::update::running_version(),
+        telemetry,
+        update_activation,
+    )
+}
+
+fn heartbeat_payload_with_activation(
+    agent_version: &str,
+    telemetry: &HeartbeatTelemetry,
+    update_activation: Option<Value>,
+) -> Value {
+    let mut payload = json!({
         "agent_version": agent_version,
         "hostname": telemetry.hostname,
         "boot_id": telemetry.boot_id,
@@ -251,7 +284,11 @@ fn heartbeat_payload(agent_version: &str, telemetry: &HeartbeatTelemetry) -> Val
         "queue_depth": telemetry.queue_depth,
         "last_probe_at": telemetry.last_probe_at,
         "last_probe_status": telemetry.last_probe_status,
-    })
+    });
+    if let Some(update_activation) = update_activation {
+        payload["update_activation"] = update_activation;
+    }
+    payload
 }
 
 fn build_http_client(config: &Config) -> Result<reqwest::blocking::Client, String> {
@@ -323,7 +360,10 @@ fn permanent_rejection(response: &Value, payload: &Value) -> Option<PermanentRej
 
 #[cfg(test)]
 mod tests {
-    use super::{acknowledged, heartbeat_payload, permanent_rejection, Client, HeartbeatTelemetry};
+    use super::{
+        acknowledged, current_heartbeat_payload, heartbeat_payload, permanent_rejection, Client,
+        HeartbeatTelemetry,
+    };
     use crate::{config::Config, queue::Queue};
     use serde_json::json;
     use tempfile::tempdir;
@@ -375,6 +415,12 @@ mod tests {
         assert_eq!(payload["uptime_seconds"], 7);
         assert_eq!(payload["queue_depth"], 3);
         assert_eq!(payload["last_probe_status"], "ok");
+    }
+
+    #[test]
+    fn heartbeat_uses_the_running_binary_version() {
+        let payload = current_heartbeat_payload(&HeartbeatTelemetry::default(), None);
+        assert_eq!(payload["agent_version"], crate::update::running_version());
     }
 
     #[test]

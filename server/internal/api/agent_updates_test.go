@@ -32,7 +32,31 @@ func TestUpdateAckStatusPreservesRollback(t *testing.T) {
 	if got := updateAckStatus(json.RawMessage(`{"status":"ROLLED_BACK"}`), "FAILED"); got != "ROLLED_BACK" {
 		t.Fatalf("status = %q", got)
 	}
-	if got := updateAckStatus(json.RawMessage(`{"status":"SUCCEEDED"}`), "DONE"); got != "SUCCEEDED" {
+	if got := updateAckStatus(json.RawMessage(`{"status":"INSTALLING","restart_requested":true}`), "DONE"); got != "INSTALLING" {
 		t.Fatalf("status = %q", got)
+	}
+	if got := updateAckStatus(json.RawMessage(`{"status":"DOWNLOADING"}`), "DONE"); got != "DOWNLOADING" {
+		t.Fatalf("downloading ACK status = %q", got)
+	}
+	if got := updateAckStatus(json.RawMessage(`{"status":"SUCCEEDED"}`), "DONE"); got != "INSTALLING" {
+		t.Fatalf("legacy success ACK status = %q", got)
+	}
+	if got := updateAckStatus(json.RawMessage(`{"status":"ALREADY_CURRENT"}`), "DONE"); got != "VERIFIED" {
+		t.Fatalf("already-current ACK status = %q", got)
+	}
+}
+
+func TestUpdateHeartbeatTransitionRequiresNewBootAndExactVersion(t *testing.T) {
+	if got := updateHeartbeatTransition("INSTALLING", "1.0.1", "1.0.1", "boot-old", "boot-new", true); got != "SUCCEEDED" {
+		t.Fatalf("success transition = %q", got)
+	}
+	if got := updateHeartbeatTransition("INSTALLING", "1.0.1", "1.0.0", "boot-old", "boot-new", true); got != "ROLLED_BACK" {
+		t.Fatalf("rollback transition = %q", got)
+	}
+	if got := updateHeartbeatTransition("INSTALLING", "1.0.1", "1.0.1", "boot-old", "boot-old", true); got != "" {
+		t.Fatalf("same-boot transition = %q", got)
+	}
+	if got := updateHeartbeatTransition("VERIFIED", "1.0.1", "1.0.1", "boot-old", "boot-new", true); got != "" {
+		t.Fatalf("verified transition = %q", got)
 	}
 }

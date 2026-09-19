@@ -99,15 +99,16 @@ func (s *Server) agentHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var payload struct {
-		AgentVersion    string     `json:"agent_version"`
-		Hostname        string     `json:"hostname"`
-		SeenAt          *time.Time `json:"seen_at"`
-		BootID          string     `json:"boot_id"`
-		BootStartedAt   *time.Time `json:"boot_started_at"`
-		UptimeSeconds   *int64     `json:"uptime_seconds"`
-		QueueDepth      *int64     `json:"queue_depth"`
-		LastProbeAt     *time.Time `json:"last_probe_at"`
-		LastProbeStatus *string    `json:"last_probe_status"`
+		AgentVersion     string                       `json:"agent_version"`
+		Hostname         string                       `json:"hostname"`
+		SeenAt           *time.Time                   `json:"seen_at"`
+		BootID           string                       `json:"boot_id"`
+		BootStartedAt    *time.Time                   `json:"boot_started_at"`
+		UptimeSeconds    *int64                       `json:"uptime_seconds"`
+		QueueDepth       *int64                       `json:"queue_depth"`
+		LastProbeAt      *time.Time                   `json:"last_probe_at"`
+		LastProbeStatus  *string                      `json:"last_probe_status"`
+		UpdateActivation *agentUpdateActivationReport `json:"update_activation"`
 	}
 	if err := decodeJSON(r, &payload); err != nil {
 		writeError(w, 422, "invalid heartbeat payload")
@@ -209,11 +210,28 @@ WHERE id=$11`, lastSeen, payload.AgentVersion, acceptTelemetry, payload.BootID, 
 		writeError(w, 500, "could not store heartbeat")
 		return
 	}
+	transitions, err := s.reconcileAgentUpdateHeartbeat(
+		r.Context(),
+		tx,
+		device.ID,
+		payload.AgentVersion,
+		payload.BootID,
+		acceptTelemetry && (bootChanged || currentBootID == nil),
+		payload.UpdateActivation,
+	)
+	if err != nil {
+		writeError(w, 500, "could not reconcile agent update")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "could not store heartbeat")
 		return
 	}
-	writeJSON(w, 200, map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "hostname": heartbeatHostname(payload.Hostname, device.Hostname), "last_seen": lastSeen, "agent_version": payload.AgentVersion})
+	response := map[string]interface{}{"device_id": device.ID, "line_id": device.LineID, "hostname": heartbeatHostname(payload.Hostname, device.Hostname), "last_seen": lastSeen, "agent_version": payload.AgentVersion}
+	if len(transitions) > 0 {
+		response["update_activation"] = transitions[0]
+	}
+	writeJSON(w, 200, response)
 }
 
 func heartbeatHostname(value string, fallback *string) interface{} {
