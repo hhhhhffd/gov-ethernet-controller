@@ -187,7 +187,9 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .toast.warn { color: var(--ref-red); }
 
 .incidents-surface { position: fixed; z-index: 300; inset: 0; overflow: auto; padding: 76px 27px 28px; background: var(--ref-canvas-0); }
+.reports-surface { position: fixed; z-index: 300; inset: 0; overflow: auto; padding: 76px 27px 28px; background: var(--ref-canvas-0); }
 .incidents-shell { width: min(1320px, 100%); margin: 0 auto; }
+.reports-shell { width: min(1320px, 100%); margin: 0 auto; }
 .incidents-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
 .incidents-header h1, .incident-detail h2, .incident-detail h3 { margin: 0; color: var(--ref-text-primary); font-weight: 600; }
 .incidents-header h1 { font-size: 18px; }
@@ -248,6 +250,25 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .back-action { margin-bottom: 14px; }
 
 :root[data-route="incidents"] .map-filter-island, :root[data-route="incidents"] .map-tools, :root[data-route="incidents"] .map-meta, :root[data-route="incidents"] .map-popup, :root[data-route="incidents"] .detail-drawer, :root[data-route="incidents"] .drawer-backdrop { display: none !important; }
+:root[data-route="reports"] .map-filter-island, :root[data-route="reports"] .map-tools, :root[data-route="reports"] .map-meta, :root[data-route="reports"] .map-popup, :root[data-route="reports"] .detail-drawer, :root[data-route="reports"] .drawer-backdrop { display: none !important; }
+
+.report-filters { display: flex; flex-wrap: wrap; align-items: end; gap: 9px; margin-bottom: 14px; }
+.report-filters label, .report-export label { display: grid; gap: 4px; color: var(--ref-text-muted); font-size: 10px; }
+.report-filters input, .report-filters select, .report-export select { min-width: 132px; height: 32px; padding: 0 8px; border: 1px solid var(--ref-border-soft); border-radius: 8px; background: var(--ref-surface-inset); color: var(--ref-text-primary); }
+.report-overview, .report-tables { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.report-panel { min-width: 0; margin-bottom: 14px; padding: 16px; border: 1px solid var(--ref-border-soft); border-radius: var(--theme-panel-radius); background: var(--ref-surface-main); }
+.report-panel h2 { margin: 0 0 12px; color: var(--ref-text-primary); font-size: 13px; font-weight: 600; }
+.report-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; margin: 0; }
+.report-grid > div { display: grid; gap: 3px; padding: 8px 0; border-top: 1px solid var(--ref-border-soft); }
+.report-grid dt { font-size: 9px; }
+.report-grid dd { color: var(--ref-text-primary); font-size: 12px; }
+.report-note { margin: 10px 0 0; color: var(--ref-text-secondary); font-size: 10px; }
+.report-table-wrap { overflow: auto; }
+.report-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+.report-table th, .report-table td { padding: 8px; border-top: 1px solid var(--ref-border-soft); text-align: left; white-space: nowrap; }
+.report-table th { color: var(--ref-text-muted); font-size: 9px; font-weight: 500; }
+.report-export form, .report-evidence-action { display: flex; flex-wrap: wrap; align-items: end; gap: 9px; }
+.report-export .primary-action { margin-top: 0; }
 
 /* Light shell keeps the canonical raster basemap until a verified light URL is configured. */
 .leaflet-map[data-map-theme="light"][data-map-style="alidade-smooth-dark"] .leaflet-control-attribution {
@@ -273,6 +294,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .map-tools { right: 14px; }
   .map-meta { bottom: 14px; left: 14px; }
   .incidents-surface { padding: 70px 14px 18px; }
+  .reports-surface { padding: 70px 14px 18px; }
+  .report-overview, .report-tables { grid-template-columns: 1fr; }
   .incidents-layout { grid-template-columns: 1fr; }
   .incident-detail { order: -1; }
   .incident-row { grid-template-columns: 104px minmax(150px, 1fr) 96px; }
@@ -292,6 +315,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .map-meta { right: 10px; left: 10px; }
   .map-popup { top: 132px; left: 10px; width: min(320px, calc(100% - 20px)); }
   .incidents-surface { padding: 104px 10px 14px; }
+  .reports-surface { padding: 104px 10px 14px; }
   .incidents-header { align-items: stretch; flex-direction: column; }
   .incident-filters { align-items: stretch; flex-direction: column; }
   .incident-filters select { width: 100%; }

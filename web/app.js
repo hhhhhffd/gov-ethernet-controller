@@ -14,6 +14,7 @@ import { createLinesBoundary } from "./features/lines.mjs";
 import { createNotificationsBoundary } from "./features/notifications.mjs";
 import { createProviderCaseBoundary } from "./features/provider-case.mjs";
 import { createReportsBoundary } from "./features/reports.mjs";
+import { defaultReportFilters, reportAvailability, reportContextFilters, reportEvidenceSummary, reportFilterOptions, reportQuery, reportState } from "./features/reports-presentation.mjs";
 import { filterIncidents, incidentSeverityValues, incidentStatusValues, presentIncident, presentRecovery, presentSituation, presentTimeline, relatedSituations } from "./features/incidents-presentation.mjs";
 import { presentProviderCase, providerCaseActions } from "./features/provider-case-presentation.mjs";
 import { activeIncident, availableMetrics, createSelectedSchool, mergeLineDetail, selectedLine, selectSchoolLine } from "./features/school-detail.mjs";
@@ -23,6 +24,7 @@ const state = {
   capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, selectedSchool: null,
   mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null,
   incidents: createIncidentSurfaceState(),
+  reports: createReportsSurfaceState(),
 };
 
 let session;
@@ -61,6 +63,13 @@ function createIncidentSurfaceState() {
     state: "idle", items: [], filters: { status: "", severity: "" }, selectedId: null, detail: null, detailState: "idle",
     situations: [], situationsState: "idle", selectedSituationId: null, situation: null, situationState: "idle",
     providerCase: { selectedId: null, state: "idle", detail: null, actionState: "idle", actionError: "", generated: null },
+  };
+}
+
+function createReportsSurfaceState() {
+  return {
+    state: "idle", filters: defaultReportFilters(), aggregate: null, analytics: null, passport: null,
+    aggregateState: "idle", analyticsState: "idle", passportState: "idle", preview: null, previewState: "idle", loadPromise: null,
   };
 }
 
@@ -130,6 +139,9 @@ function renderRoute(snapshot = router.getState()) {
   const hash = snapshot.view === "map" ? "" : "#" + snapshot.view;
   if (globalThis.location && globalThis.location.hash !== hash) globalThis.history?.replaceState?.({}, "", globalThis.location.pathname + hash);
   if (snapshot.view === "incidents") loadIncidents();
+  if (snapshot.view === "reports") loadReports();
+  renderIncidentsSurface();
+  renderReportsSurface();
 }
 
 function renderPrimaryNav() {
@@ -164,6 +176,7 @@ function handleSessionChange(snapshot) {
     state.mapLoadPromise = null;
     state.selectedSchool = null;
     state.incidents = createIncidentSurfaceState();
+    state.reports = createReportsSurfaceState();
   }
   renderSession(snapshot);
   renderPrimaryNav();
@@ -529,6 +542,150 @@ function renderIncidentsSurface() {
 
   root.innerHTML = '<div class="incidents-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("incidents.title")) + "</h1><p>" + escapeHtml(i18n.t("incidents.subtitle")) + '</p></div><button class="secondary-action" type="button" data-incidents-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + "</button></header><div class="incident-filters">" + filters + '<span class="incident-count">' + escapeHtml(i18n.t("incidents.count", { count: items.length })) + '</span></div><div class="incidents-layout"><section class="incidents-list" aria-label="' + escapeHtml(i18n.t("incidents.title")) + '"><div class="incident-row incident-row-head" aria-hidden="true"><span>' + escapeHtml(i18n.t("field.status")) + "</span><span>" + escapeHtml(i18n.t("field.school")) + "</span><span>" + escapeHtml(i18n.t("field.line")) + "</span><span>" + escapeHtml(i18n.t("incidents.started")) + "</span><span>" + escapeHtml(i18n.t("incidents.duration")) + "</span><span>" + escapeHtml(i18n.t("incidents.lastUpdate")) + "</span></div>" + list + '</section><aside class="incident-detail" aria-live="polite">' + renderIncidentDetail() + "</aside></div></div>";
   bindIncidentSurfaceEvents(root);
+}
+
+function reportSurfaceState() { return state.reports; }
+
+function reportNumber(value, suffix = "") {
+  if (value === null || value === undefined || value === "") return i18n.t("reports.valueUnavailable");
+  const number = Number(value);
+  return Number.isFinite(number) ? presentation.formatNumber(number, suffix) : String(value);
+}
+
+function reportOptions(items, selected, label, value = (item) => item) {
+  return ['<option value="">' + escapeHtml(label) + "</option>"].concat(items.map((item) => {
+    const itemValue = value(item);
+    return '<option value="' + escapeHtml(itemValue) + '"' + (String(itemValue) === String(selected) ? " selected" : "") + ">" + escapeHtml(typeof item === "object" ? item.name : item) + "</option>";
+  })).join("");
+}
+
+function renderReportTable(title, headers, rows) {
+  if (!rows.length) return '<section class="report-panel"><h2>' + escapeHtml(title) + '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.empty")) + "</p></section>";
+  return '<section class="report-panel report-table-wrap"><h2>' + escapeHtml(title) + '</h2><table class="report-table"><thead><tr>' + headers.map((header) => "<th>" + escapeHtml(header) + "</th>").join("") + "</tr></thead><tbody>" + rows.map((row) => "<tr>" + row.map((value) => "<td>" + escapeHtml(value) + "</td>").join("") + "</tr>").join("") + "</tbody></table></section>";
+}
+
+function renderReportsSurface() {
+  const root = $("#reportsSurface");
+  if (!root) return;
+  const view = reportSurfaceState();
+  const active = router.getState().view === "reports";
+  root.hidden = !active;
+  if (!active) return;
+  if (view.state === "loading" || view.state === "idle") {
+    root.innerHTML = '<div class="reports-shell"><p class="surface-state" role="status">' + escapeHtml(i18n.t("reports.loading")) + "</p></div>";
+    return;
+  }
+  const options = reportFilterOptions(map.state.lines);
+  const filters = view.filters;
+  const form = '<form class="report-filters" data-report-filters><label>' + escapeHtml(i18n.t("reports.from")) + '<input name="from" type="date" required value="' + escapeHtml(filters.from) + '"></label><label>' + escapeHtml(i18n.t("reports.to")) + '<input name="to" type="date" required value="' + escapeHtml(filters.to) + '"></label><label>' + escapeHtml(i18n.t("reports.region")) + '<select name="district">' + reportOptions(options.districts, filters.district, i18n.t("reports.allRegions")) + '</select></label><label>' + escapeHtml(i18n.t("field.provider")) + '<select name="provider">' + reportOptions(options.providers, filters.provider, i18n.t("reports.allProviders")) + '</select></label><label>' + escapeHtml(i18n.t("field.line")) + '<select name="line_id">' + reportOptions(options.lines, filters.line_id, i18n.t("reports.allLines")) + '</select></label><label>' + escapeHtml(i18n.t("field.school")) + '<select name="school_id">' + reportOptions(options.schools, filters.school_id, i18n.t("reports.allSchools"), (school) => school.id) + '</select></label><button class="secondary-action" type="submit">' + escapeHtml(i18n.t("reports.apply")) + '</button><button class="secondary-action" type="button" data-reports-refresh>' + escapeHtml(i18n.t("reports.refresh")) + "</button></form>";
+  const aggregate = view.aggregate;
+  const analytics = view.analytics;
+  const passport = view.passport;
+  const aggregateMessage = view.aggregateState === "error" ? i18n.t("reports.unavailable") : reportState(aggregate, i18n);
+  const aggregatePanel = aggregateMessage ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.measurements")) + '</h2><p class="surface-state' + (view.aggregateState === "error" ? " error" : "") + '">' + escapeHtml(aggregateMessage) + "</p></section>" : '<section class="report-panel report-measures"><h2>' + escapeHtml(i18n.t("reports.measurements")) + '</h2><dl class="report-grid"><div><dt>' + escapeHtml(i18n.t("reports.measurements")) + "</dt><dd>" + escapeHtml(reportNumber(aggregate.measurement_count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.availability")) + "</dt><dd>" + escapeHtml(reportAvailability(aggregate.availability_pct, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.completeness")) + "</dt><dd>" + escapeHtml(reportAvailability(aggregate.data_completeness_pct, i18n)) + "</dd></div></dl><p class=\"report-note\">" + escapeHtml(i18n.t("reports.historicalOnly")) + "</p></section>";
+  const trendRows = Array.isArray(analytics?.trend) ? analytics.trend.map((item) => [item.key, reportNumber(item.measurements), reportNumber(item.valid_evidence), reportAvailability(item.average_availability, i18n)]) : [];
+  const rankingRows = Array.isArray(analytics?.ranking) ? analytics.ranking.map((item) => [item.line_id || i18n.t("empty.value"), reportNumber(item.measurements), reportNumber(item.valid_evidence), reportAvailability(item.contract_compliance, i18n)]) : [];
+  const analyticsPanel = view.analyticsState === "error" ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.analytics")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<div class="report-tables">' + renderReportTable(i18n.t("reports.trend"), [i18n.t("reports.to"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.availability")], trendRows) + renderReportTable(i18n.t("reports.ranking"), [i18n.t("field.line"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.contract")], rankingRows) + "</div>";
+  const evidence = reportEvidenceSummary(passport, { i18n, presentation });
+  const qualityPanel = view.passportState === "error" ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2><dl class="report-grid"><div><dt>' + escapeHtml(i18n.t("reports.baseline")) + "</dt><dd>" + escapeHtml(reportAvailability(passport?.baseline_compliance, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.contract")) + "</dt><dd>" + escapeHtml(reportAvailability(passport?.contract_compliance, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.incidents")) + "</dt><dd>" + escapeHtml(reportNumber(passport?.incidents?.count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.evidenceCount")) + "</dt><dd>" + escapeHtml(reportNumber(evidence.count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.evidenceProvenance")) + "</dt><dd>" + escapeHtml(evidence.provenance) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.lastVerified")) + "</dt><dd>" + escapeHtml(evidence.lastVerified) + "</dd></div></dl>" + (passport?.sufficient_data === false ? '<p class="report-note">' + escapeHtml(i18n.t("reports.insufficient")) + "</p>" : "") + '<div class="report-evidence-action"><button class="secondary-action" type="button" data-evidence-preview>' + escapeHtml(i18n.t("reports.evidencePreview")) + '</button><p class="report-note">' + escapeHtml(i18n.t("reports.evidenceHtmlOnly")) + "</p></div></section>";
+  const canExport = state.capabilities.has("report.export");
+  const preview = view.preview;
+  const previewText = view.previewState === "error" ? i18n.t("reports.previewUnavailable") : preview ? i18n.t(preview.limited ? "reports.previewLimited" : "reports.previewRows", { count: preview.count }) : "";
+  const exportPanel = '<section class="report-panel report-export"><h2>' + escapeHtml(i18n.t("reports.export")) + (canExport ? "</h2><form data-report-export><label>" + escapeHtml(i18n.t("reports.exportKind")) + '<select name="kind"><option value="raw">' + escapeHtml(i18n.t("reports.exportRaw")) + '</option><option value="aggregate">' + escapeHtml(i18n.t("reports.exportAggregate")) + '</option></select></label><label>' + escapeHtml(i18n.t("reports.exportFormat")) + '<select name="format"><option value="csv">CSV</option><option value="xlsx">XLSX</option><option value="json">JSON</option></select></label><button class="secondary-action" type="button" data-export-preview>' + escapeHtml(i18n.t("reports.preview")) + '</button><button class="primary-action" type="submit">' + escapeHtml(i18n.t("reports.download")) + "</button></form>" + (previewText ? '<p class="surface-state' + (view.previewState === "error" ? " error" : "") + '">' + escapeHtml(previewText) + (preview?.columns?.length ? " " + escapeHtml(i18n.t("reports.previewColumns")) + ": " + escapeHtml(preview.columns.join(", ")) : "") + "</p>" : "") : '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.exportUnavailable")) + "</p>") + "</section>";
+  root.innerHTML = '<div class="reports-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("reports.title")) + "</h1><p>" + escapeHtml(i18n.t("reports.subtitle")) + "</p></div></header>" + form + '<div class="report-overview">' + aggregatePanel + qualityPanel + "</div>" + analyticsPanel + exportPanel + "</div>";
+  bindReportSurfaceEvents(root);
+}
+
+function reportSelectionContext() {
+  return { line: selectedLine(state.selectedSchool), incident: state.incidents.detail };
+}
+
+async function loadReports({ force = false } = {}) {
+  const view = reportSurfaceState();
+  if (!session.authenticated || !state.capabilities.canRead("report")) return;
+  if (view.state === "loading") return view.loadPromise;
+  if (view.state === "idle") view.filters = reportContextFilters(view.filters, reportSelectionContext());
+  if (view.state === "ready" && !force) { renderReportsSurface(); return; }
+  const request = reportQuery(view.filters);
+  if (request.error) { view.state = "ready"; view.aggregateState = view.analyticsState = view.passportState = "error"; renderReportsSurface(); return; }
+  view.state = "loading";
+  renderReportsSurface();
+  view.loadPromise = Promise.allSettled([reports.aggregate(request.query), reports.analytics(request.query), reports.qualityPassport(request.query)]).then(([aggregate, analytics, passport]) => {
+    view.aggregateState = aggregate.status === "fulfilled" ? "ready" : "error";
+    view.analyticsState = analytics.status === "fulfilled" ? "ready" : "error";
+    view.passportState = passport.status === "fulfilled" ? "ready" : "error";
+    view.aggregate = aggregate.status === "fulfilled" ? objectPayload(aggregate.value) : null;
+    view.analytics = analytics.status === "fulfilled" ? objectPayload(analytics.value) : null;
+    view.passport = passport.status === "fulfilled" ? objectPayload(passport.value) : null;
+    view.state = "ready";
+    renderReportsSurface();
+  }).finally(() => { view.loadPromise = null; });
+  return view.loadPromise;
+}
+
+function reportExportQuery(form) {
+  const request = reportQuery(reportSurfaceState().filters);
+  if (request.error) return request;
+  const query = new URLSearchParams(request.query);
+  query.set("kind", form.elements.kind.value);
+  query.set("format", form.elements.format.value);
+  return { error: null, query: query.toString() };
+}
+
+async function previewReportExport(root) {
+  const form = root.querySelector("[data-report-export]");
+  if (!form || !state.capabilities.has("report.export")) return;
+  const request = reportExportQuery(form);
+  if (request.error) { reportSurfaceState().previewState = "error"; renderReportsSurface(); return; }
+  reportSurfaceState().previewState = "loading";
+  try { reportSurfaceState().preview = objectPayload(await reports.exportPreview(request.query)); reportSurfaceState().previewState = "ready"; }
+  catch (error) { reportSurfaceState().preview = null; reportSurfaceState().previewState = "error"; }
+  renderReportsSurface();
+}
+
+async function downloadReportExport(event) {
+  event.preventDefault();
+  const request = reportExportQuery(event.currentTarget);
+  if (request.error || !state.capabilities.has("report.export")) return;
+  try { triggerDownload(await reports.exportData(request.query), `linkwatch-report.${event.currentTarget.elements.format.value}`); }
+  catch (error) { showToast("reports.exportFailed", "warn"); }
+}
+
+function triggerDownload(response, filename) {
+  response.blob().then((blob) => {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }).catch(() => showToast("reports.exportFailed", "warn"));
+}
+
+async function previewEvidenceReport() {
+  const request = reportQuery(reportSurfaceState().filters);
+  if (request.error) return;
+  try {
+    const blob = await (await reports.evidenceReport(request.query)).blob();
+    const url = URL.createObjectURL(blob);
+    const preview = globalThis.open?.(url, "_blank", "noopener");
+    if (!preview) showToast("reports.exportFailed", "warn");
+  } catch (error) { showToast("reports.exportFailed", "warn"); }
+}
+
+function bindReportSurfaceEvents(root) {
+  root.querySelector("[data-report-filters]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    reportSurfaceState().filters = Object.fromEntries(new FormData(form));
+    reportSurfaceState().preview = null;
+    reportSurfaceState().previewState = "idle";
+    loadReports({ force: true });
+  });
+  root.querySelector("[data-reports-refresh]")?.addEventListener("click", () => loadReports({ force: true }));
+  root.querySelector("[data-export-preview]")?.addEventListener("click", () => previewReportExport(root));
+  root.querySelector("[data-report-export]")?.addEventListener("submit", downloadReportExport);
+  root.querySelector("[data-evidence-preview]")?.addEventListener("click", previewEvidenceReport);
 }
 
 function renderIncidentDetail() {
