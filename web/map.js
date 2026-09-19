@@ -108,7 +108,7 @@
     });
   }
   function createMonitoringMarkers(groups) {
-    return groups.map((group) => createMarker(group.coordinate, { icon: icon(`linkwatch-monitoring-marker linkwatch-status-${group.status.toLowerCase()}${group.mode === "historical" ? " linkwatch-historical-marker" : ""}`, '<span aria-hidden="true"></span>', [22, 22]), keyboard: true, title: group.label }, { kind: "monitoring", registryId: group.registryId, school: group.school, lines: group.lines, status: group.status, mode: group.mode, evidence: group.evidence, label: group.label }));
+    return groups.map((group) => createMarker(group.coordinate, { icon: icon(`linkwatch-monitoring-marker linkwatch-status-${group.status.toLowerCase()}${group.mode === "historical" ? " linkwatch-historical-marker" : ""}`, '<span aria-hidden="true"></span>', [22, 22]), keyboard: true, title: group.label, pane: "linkwatch-monitoring-pane", zIndexOffset: 1000 }, { kind: "monitoring", registryId: group.registryId, school: group.school, lines: group.lines, status: group.status, mode: group.mode, evidence: group.evidence, label: group.label }));
   }
   function clusterKey(coordinate, zoom) {
     const cell = Math.max(0.02, state.config.clusterCellDegrees / Math.max(1, 2 ** (zoom - 7)));
@@ -134,6 +134,20 @@
     });
     state.lastRender = state.lastRender ? { ...state.lastRender, registryClusterCount: groups.length, registryVisibleMarkerCount: groups.length } : state.lastRender;
   }
+  function coordinateKey(coordinate) {
+    return coordinate ? `${coordinate.latitude.toFixed(7)}:${coordinate.longitude.toFixed(7)}` : null;
+  }
+  function updateRegistryHitTargets(monitoringGroups) {
+    const monitoredCoordinates = new Set(monitoringGroups.map((group) => coordinateKey(group.coordinate)).filter(Boolean));
+    state.layers?.registryMarkers?.forEach((marker) => {
+      const coordinate = coordinateForSchool(marker.__linkwatchContext?.school);
+      const iconElement = marker.getElement?.() || marker._icon;
+      if (!iconElement) return;
+      // A monitored marker owns the shared coordinate; keep the registry marker
+      // visible but prevent it from intercepting the canonical monitoring target.
+      iconElement.style.pointerEvents = monitoredCoordinates.has(coordinateKey(coordinate)) ? "none" : "";
+    });
+  }
   function addLayer(layer) { if (layer && state.map && typeof state.map.addLayer === "function") state.map.addLayer(layer); }
   function fitToCoordinates(coordinates, options = {}) {
     const valid = coordinates.map(validCoordinate).filter(Boolean); state.lastRender = state.lastRender ? { ...state.lastRender, fitCoordinateCount: valid.length } : state.lastRender;
@@ -157,6 +171,10 @@
     }
     if (!container || !window.L) return null;
     state.config = mapConfig(); state.map = window.L.map(container, { attributionControl: true, zoomControl: false, minZoom: state.config.minZoom, maxZoom: state.config.maxZoom }).setView(state.config.center, state.config.zoom);
+    if (typeof state.map.createPane === "function") {
+      const monitoringPane = state.map.createPane("linkwatch-monitoring-pane");
+      monitoringPane.style.zIndex = "620";
+    }
     state.tileLayer = window.L.tileLayer(state.config.tileUrl, { attribution: state.config.attribution, maxZoom: state.config.maxZoom });
     if (typeof state.tileLayer.on === "function") {
       state.tileLayer.on("tileerror", () => setTileAvailability(true));
@@ -177,7 +195,7 @@
     const mode = context.mode || "current"; const registry = context.registry ?? context.model?.registry; const registryMarkers = createRegistryMarkers(registry); const monitoringGroups = monitoringRows(context.lines, mode, context.historicalByLine); const monitoringMarkers = createMonitoringMarkers(monitoringGroups);
     state.layers.registryMarkers = registryMarkers; state.layers.monitoringMarkers = monitoringMarkers; state.layers.registryClusters = state.layers.registryClusters || layerGroup(); state.layers.monitoring = state.layers.monitoring || layerGroup(); addLayer(state.layers.registryClusters); addLayer(state.layers.monitoring); monitoringMarkers.forEach((marker) => state.layers.monitoring.addLayer(marker));
     state.lastRender = { mode, registryMarkerCount: registryMarkers.length, monitoringMarkerCount: monitoringMarkers.length, monitoringLineCount: monitoringGroups.reduce((count, group) => count + group.lines.length, 0), statuses: monitoringGroups.map((group) => group.status) };
-    rebuildRegistryClusters(); fitToCoordinates([...registryMarkers.map((marker) => coordinateForSchool(marker.__linkwatchContext.school)), ...monitoringGroups.map((group) => group.coordinate)], { maxZoom: state.config.fitMaxZoom }); refreshSize(); return true;
+    rebuildRegistryClusters(); updateRegistryHitTargets(monitoringGroups); fitToCoordinates([...registryMarkers.map((marker) => coordinateForSchool(marker.__linkwatchContext.school)), ...monitoringGroups.map((group) => group.coordinate)], { maxZoom: state.config.fitMaxZoom }); refreshSize(); return true;
   }
   function resetView() { if (state.map && state.config) state.map.setView(state.config.center, state.config.zoom); }
   window.LinkwatchMap = {

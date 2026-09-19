@@ -288,7 +288,7 @@ async function runAuthoritativeMapAcceptance() {
       return `registry fetches=${counters.registry}; mapping fetches=${counters.mapping}; no N+1 asset loads`;
     });
     await surface("MAP-005", async () => {
-      const marker = page.locator(".leaflet-marker-icon.linkwatch-registry-marker").first();
+      const marker = page.locator('.leaflet-marker-icon.linkwatch-registry-marker[title*="только реестр"]').first();
       check(await marker.count() === 1, "registry-only Leaflet marker was not rendered");
       await marker.click();
       const text = await page.locator("#mapPopup").textContent();
@@ -320,7 +320,7 @@ async function runAuthoritativeMapAcceptance() {
     });
     await surface("MAP-009", async () => {
       await page.locator("#drawerClose").click();
-      const marker = page.locator(".leaflet-marker-icon.linkwatch-registry-marker").first();
+      const marker = page.locator('.leaflet-marker-icon.linkwatch-registry-marker[title*="только реестр"]').first();
       await marker.click();
       const text = await page.locator("#mapPopup").textContent();
       check(!text.includes("NO_DATA") && !text.includes("Нет данных") && !text.includes("Нет актуальных данных"), "registry-only popup exposed fake NO_DATA/metric state");
