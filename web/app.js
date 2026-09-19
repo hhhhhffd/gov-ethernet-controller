@@ -632,6 +632,12 @@
     const role = popupText(line?.role || line?.line_role);
     return `<button type="button" class="map-popup-line-choice" data-popup-line-id="${escapeHtml(id)}"><span>${escapeHtml(id)}<small>${escapeHtml(provider)} · ${escapeHtml(role)}</small></span><span class="status-badge ${historical ? "historical" : statusClass(popupLineStatus(line))}">${escapeHtml(status)}</span></button>`;
   }
+  function mapPopupRegistryChoice(context) {
+    const school = context?.school || {};
+    const registryId = school.registryId || school.registry_id || school.id || "";
+    const address = school.address || school.locality || school.district || "Адрес не указан";
+    return `<button type="button" class="map-popup-line-choice map-popup-school-choice" data-popup-registry-id="${escapeHtml(registryId)}"><span>${escapeHtml(popupSchoolName(school))}<small>Registry ID ${escapeHtml(registryId)} · ${escapeHtml(address)}</small></span><span aria-hidden="true">Открыть&nbsp;→</span></button>`;
+  }
   function closeMapPopup(restoreFocus = true) {
     const trigger = state.mapPopupTrigger;
     state.mapPopupLineID = null;
@@ -646,16 +652,20 @@
     const lines = Array.isArray(context?.lines) ? context.lines.filter(Boolean) : [];
     const school = context?.school || lines[0]?.registrySchool || null;
     const registryOnly = context?.kind === "registry";
+    const registryCluster = context?.kind === "registry-cluster";
+    const clusterMembers = registryCluster ? (Array.isArray(context.members) ? context.members.filter((member) => member?.school) : []) : [];
     closeMapPopup(false);
-    state.mapPopupLineID = registryOnly ? "__registry__" : lines.length ? popupLineID(lines[0]) : null;
+    state.mapPopupLineID = registryOnly || registryCluster ? "__registry__" : lines.length ? popupLineID(lines[0]) : null;
     state.mapPopupTrigger = trigger || null;
     const triggerElement = trigger?.nodeType ? trigger : trigger?._icon;
     if (triggerElement) triggerElement.setAttribute("aria-expanded", "true");
     const historical = !registryOnly && (context?.mode === "historical" || isHistoricalMode());
-    $("#mapPopupTitle").textContent = popupSchoolName(school, lines[0]);
-    $("#mapPopupSummary").textContent = registryOnly ? "Официальный registry layer · Не подключена к мониторингу" : historical ? `Historical evidence · ${periodLabel()} · current state не используется` : "Current operational data · latest LineState";
+    $("#mapPopupTitle").textContent = registryCluster ? `${clusterMembers.length} школ в группе` : popupSchoolName(school, lines[0]);
+    $("#mapPopupSummary").textContent = registryCluster ? "Реестровый кластер · выберите конкретную школу" : registryOnly ? "Официальный registry layer · Не подключена к мониторингу" : historical ? `Historical evidence · ${periodLabel()} · current state не используется` : "Current operational data · latest LineState";
     const commonFields = [["Реестровый / School ID", school?.schoolId || school?.school_id || school?.registryId || lines[0]?.school_id], ["Район", school?.district || lines[0]?.district], ["Населённый пункт", school?.locality], ["Адрес", school?.address], ["Источник координат", popupCoordinateSource(school)], ["Происхождение данных", popupProvenance(school)]];
-    if (registryOnly) {
+    if (registryCluster) {
+      mapPopupFields([["Школ в группе", clusterMembers.length], ["Мониторинг", "Не применяется к реестровому кластеру"]]);
+    } else if (registryOnly) {
       mapPopupFields(commonFields.concat([["Мониторинг", "Не подключена к мониторингу"]]));
     } else if (lines.length === 1) {
       const line = lines[0]; const latest = line.latest || {}; const summary = historicalSummary(line);
@@ -669,7 +679,13 @@
     const openButton = $("#mapPopupOpenLine");
     choices.innerHTML = "";
     openButton.hidden = true;
-    if (!registryOnly && lines.length > 1) {
+    if (registryCluster) {
+      choices.innerHTML = `<div class="panel-kicker">ВЫБЕРИТЕ ШКОЛУ</div>${clusterMembers.map(mapPopupRegistryChoice).join("")}`;
+      $$('[data-popup-registry-id]', choices).forEach((button) => button.addEventListener("click", () => {
+        const member = clusterMembers.find((item) => String(item.school.registryId || item.school.registry_id || item.school.id || "") === button.dataset.popupRegistryId);
+        if (member) openMapPopupForContext(member, trigger);
+      }));
+    } else if (!registryOnly && lines.length > 1) {
       choices.innerHTML = `<div class="panel-kicker">ВЫБЕРИТЕ ЛИНИЮ</div>${lines.map((line) => mapPopupLineChoice(line, historical)).join("")}`;
       $$('[data-popup-line-id]', choices).forEach((button) => button.addEventListener("click", () => { closeMapPopup(false); openLine(button.dataset.popupLineId); }));
     } else if (!registryOnly && lines.length === 1) {

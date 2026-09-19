@@ -3,9 +3,9 @@
   "use strict";
 
   const DEFAULT_MAP_CONFIG = Object.freeze({
-    tileUrl: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
-    center: [49.95, 82.62], zoom: 7, minZoom: 3, maxZoom: 18, fitMaxZoom: 13, clusterCellDegrees: 0.18,
+    tileUrl: "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
+    attribution: '&copy; <a href="https://stadiamaps.com/attribution/" target="_blank" rel="noopener">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
+    center: [49.95, 82.62], zoom: 7, minZoom: 3, maxZoom: 18, fitMaxZoom: 13, clusterRadiusPixels: 44,
   });
   const STATUS_PRIORITY = Object.freeze(["NO_INTERNET", "DEGRADED", "NO_DATA", "OK", "UNKNOWN"]);
   const STATUS_SET = new Set(STATUS_PRIORITY);
@@ -110,26 +110,66 @@
   function createMonitoringMarkers(groups) {
     return groups.map((group) => createMarker(group.coordinate, { icon: icon(`linkwatch-monitoring-marker linkwatch-status-${group.status.toLowerCase()}${group.mode === "historical" ? " linkwatch-historical-marker" : ""}`, '<span aria-hidden="true"></span>', [22, 22]), keyboard: true, title: group.label, pane: "linkwatch-monitoring-pane", zIndexOffset: 1000 }, { kind: "monitoring", registryId: group.registryId, school: group.school, lines: group.lines, status: group.status, mode: group.mode, evidence: group.evidence, label: group.label }));
   }
-  function clusterKey(coordinate, zoom) {
-    const cell = Math.max(0.02, state.config.clusterCellDegrees / Math.max(1, 2 ** (zoom - 7)));
-    return `${Math.floor((coordinate.latitude + 90) / cell)}:${Math.floor((coordinate.longitude + 180) / cell)}`;
+  function projectedPoint(coordinate, zoom) {
+    const point = state.map?.project?.([coordinate.latitude, coordinate.longitude], zoom);
+    if (point && Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y))) return { x: Number(point.x), y: Number(point.y) };
+    const scale = 256 * 2 ** zoom / 360;
+    return { x: coordinate.longitude * scale, y: coordinate.latitude * scale };
   }
   function clusterGroups(markers) {
-    const zoom = state.map?.getZoom?.() ?? state.config.zoom; const groups = new Map();
-    markers.forEach((marker) => {
+    const zoom = state.map?.getZoom?.() ?? state.config.zoom;
+    const radius = Number(state.config.clusterRadiusPixels) > 0 ? Number(state.config.clusterRadiusPixels) : 44;
+    const points = markers.map((marker) => {
       const context = marker.__linkwatchContext; const coordinate = coordinateForSchool(context.school); if (!coordinate) return;
-      const key = clusterKey(coordinate, zoom); if (!groups.has(key)) groups.set(key, { markers: [], latitude: 0, longitude: 0 });
-      const group = groups.get(key); group.markers.push(marker); group.latitude += coordinate.latitude; group.longitude += coordinate.longitude;
+      return { marker, coordinate, point: projectedPoint(coordinate, zoom) };
+    }).filter(Boolean);
+    const parent = points.map((_, index) => index);
+    const find = (index) => { while (parent[index] !== index) { parent[index] = parent[parent[index]]; index = parent[index]; } return index; };
+    const join = (left, right) => { const leftRoot = find(left); const rightRoot = find(right); if (leftRoot !== rightRoot) parent[rightRoot] = leftRoot; };
+    points.forEach((left, leftIndex) => points.slice(leftIndex + 1).forEach((right, offset) => {
+      const rightIndex = leftIndex + offset + 1;
+      if (Math.hypot(left.point.x - right.point.x, left.point.y - right.point.y) <= radius) join(leftIndex, rightIndex);
+    }));
+    const groups = new Map();
+    points.forEach((item, index) => {
+      const key = find(index); if (!groups.has(key)) groups.set(key, { markers: [], latitude: 0, longitude: 0 });
+      const group = groups.get(key); group.markers.push(item.marker); group.latitude += item.coordinate.latitude; group.longitude += item.coordinate.longitude;
     });
     return [...groups.values()].map((group) => ({ ...group, latitude: group.latitude / group.markers.length, longitude: group.longitude / group.markers.length }));
+  }
+  function clusterDisplayCoordinate(group) {
+    const center = { latitude: group.latitude, longitude: group.longitude };
+    const monitoringCoordinates = (state.layers?.monitoringMarkers || []).map((marker) => coordinateForSchool(marker.__linkwatchContext?.school)).filter(Boolean);
+    if (!monitoringCoordinates.length) return center;
+    const centerPoint = projectedPoint(center, state.map?.getZoom?.() ?? state.config.zoom);
+    const monitoringPoints = monitoringCoordinates.map((coordinate) => projectedPoint(coordinate, state.map?.getZoom?.() ?? state.config.zoom));
+    const centerDistance = Math.min(...monitoringPoints.map((point) => Math.hypot(centerPoint.x - point.x, centerPoint.y - point.y)));
+    if (centerDistance > 32) return center;
+    const candidates = group.markers.map((marker) => coordinateForSchool(marker.__linkwatchContext?.school)).filter(Boolean);
+    const selected = candidates.sort((left, right) => {
+      const leftPoint = projectedPoint(left, state.map?.getZoom?.() ?? state.config.zoom);
+      const rightPoint = projectedPoint(right, state.map?.getZoom?.() ?? state.config.zoom);
+      const leftDistance = Math.min(...monitoringPoints.map((point) => Math.hypot(leftPoint.x - point.x, leftPoint.y - point.y)));
+      const rightDistance = Math.min(...monitoringPoints.map((point) => Math.hypot(rightPoint.x - point.x, rightPoint.y - point.y)));
+      return rightDistance - leftDistance;
+    })[0] || center;
+    const selectedPoint = projectedPoint(selected, state.map?.getZoom?.() ?? state.config.zoom);
+    const nearestMonitoringPoint = monitoringPoints.reduce((nearest, point) => Math.hypot(selectedPoint.x - point.x, selectedPoint.y - point.y) < Math.hypot(selectedPoint.x - nearest.x, selectedPoint.y - nearest.y) ? point : nearest);
+    const distance = Math.hypot(selectedPoint.x - nearestMonitoringPoint.x, selectedPoint.y - nearestMonitoringPoint.y);
+    if (distance >= 42 || typeof state.map?.unproject !== "function") return selected;
+    const directionX = distance ? (selectedPoint.x - nearestMonitoringPoint.x) / distance : 1;
+    const directionY = distance ? (selectedPoint.y - nearestMonitoringPoint.y) / distance : 0;
+    const separated = state.map.unproject([nearestMonitoringPoint.x + directionX * 42, nearestMonitoringPoint.y + directionY * 42], state.map?.getZoom?.() ?? state.config.zoom);
+    return validCoordinate(separated) || selected;
   }
   function rebuildRegistryClusters() {
     if (!state.layers?.registryClusters) return;
     state.layers.registryClusters.clearLayers(); const groups = clusterGroups(state.layers.registryMarkers);
     groups.forEach((group) => {
       if (group.markers.length === 1) { state.layers.registryClusters.addLayer(group.markers[0]); return; }
-      const marker = createMarker({ latitude: group.latitude, longitude: group.longitude }, { icon: icon("linkwatch-registry-cluster", `<span aria-label="${group.markers.length} школ">${group.markers.length}</span>`, [28, 28]), keyboard: true, title: `${group.markers.length} школ в группе` }, { kind: "registry-cluster", count: group.markers.length, members: group.markers.map((item) => item.__linkwatchContext), mode: "registry", label: `${group.markers.length} школ в группе` });
-      if (typeof marker.on === "function") marker.on("click", () => state.map?.setView?.([group.latitude, group.longitude], Math.min((state.map.getZoom?.() ?? 7) + 2, state.config.maxZoom)));
+      const displayCoordinate = clusterDisplayCoordinate(group);
+      const marker = createMarker(displayCoordinate, { icon: icon("linkwatch-registry-cluster", `<span aria-label="${group.markers.length} школ">${group.markers.length}</span>`, [28, 28]), keyboard: true, title: `${group.markers.length} школ в группе` }, { kind: "registry-cluster", count: group.markers.length, members: group.markers.map((item) => item.__linkwatchContext), lines: [], mode: "registry", label: `${group.markers.length} школ в группе` });
+      if (typeof marker.on === "function") marker.on("click", () => fitToCoordinates(group.markers.map((item) => coordinateForSchool(item.__linkwatchContext?.school)), { maxZoom: state.config.maxZoom, singleZoom: state.config.maxZoom }));
       state.layers.registryClusters.addLayer(marker);
     });
     state.lastRender = state.lastRender ? { ...state.lastRender, registryClusterCount: groups.length, registryVisibleMarkerCount: groups.length } : state.lastRender;

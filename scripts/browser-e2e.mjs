@@ -160,6 +160,18 @@ const BROWSER_MAP_FIXTURE = Object.freeze({
         coordinate_source: "official-fixture",
         provenance: { source: "browser-e2e-test-fixture" },
       },
+      {
+        registry_id: "18383",
+        school_id: "fixture-school-032",
+        official_name: "Средняя школа №32",
+        district: "Усть-Каменогорск",
+        locality: "Усть-Каменогорск",
+        address: "ул. Школьная, 32",
+        latitude: 49.988825,
+        longitude: 82.575407,
+        coordinate_source: "official-fixture",
+        provenance: { source: "browser-e2e-test-fixture" },
+      },
     ],
   },
   mapping: {
@@ -222,7 +234,7 @@ async function configureFixturePage(page, options = {}) {
     counters.mapping += 1;
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(BROWSER_MAP_FIXTURE.mapping) });
   });
-  await page.route("https://tile.openstreetmap.org/**", async (route) => {
+  await page.route("https://tiles.stadiamaps.com/**", async (route) => {
     counters.tiles += 1;
     return route.fulfill({ status: 200, contentType: "image/png", body: FIXTURE_TILE_PNG });
   });
@@ -261,7 +273,7 @@ async function fixtureMarkerContexts(page) {
 async function runAuthoritativeMapAcceptance() {
   if (!browser) {
     const evidence = `Playwright unavailable: ${playwrightLoadError || "browser launch failed"}`;
-    for (const surfaceName of ["MAP-001", "MAP-002", "MAP-003", "MAP-004", "MAP-005", "MAP-006", "MAP-007", "MAP-008", "MAP-009", "MAP-010", "MAP-011", "MAP-012"]) record(surfaceName, "BLOCKED_EXTERNAL", evidence);
+    for (const surfaceName of ["MAP-001", "MAP-002", "MAP-003", "MAP-004", "MAP-005", "MAP-006", "MAP-007", "MAP-008", "MAP-009", "MAP-010", "MAP-011", "MAP-012", "MAP-013"]) record(surfaceName, "BLOCKED_EXTERNAL", evidence);
     return;
   }
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -273,14 +285,15 @@ async function runAuthoritativeMapAcceptance() {
     });
     await surface("MAP-002", async () => {
       const tileUrl = await page.evaluate(() => window.LinkwatchMap.getConfig().tileUrl);
-      check(tileUrl === "https://tile.openstreetmap.org/{z}/{x}/{y}.png", `unexpected OSM tile template: ${tileUrl}`);
-      return `configured tile template=${tileUrl}; requests mocked, live OSM tiles not required`;
+      check(tileUrl === "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png", `unexpected Stadia tile template: ${tileUrl}`);
+      return `configured Alidade Smooth Dark template=${tileUrl}; requests mocked, live Stadia tiles not required`;
     });
     await surface("MAP-003", async () => {
       const attribution = page.locator(".leaflet-control-attribution");
       check(await attribution.isVisible(), "Leaflet attribution is not visible");
-      check((await attribution.textContent()).includes("OpenStreetMap"), "visible attribution does not identify OpenStreetMap");
-      return "visible Leaflet attribution identifies OpenStreetMap contributors";
+      const text = await attribution.textContent();
+      check(text.includes("Stadia Maps") && text.includes("OpenMapTiles") && text.includes("OpenStreetMap"), "visible attribution is incomplete");
+      return "visible Leaflet attribution identifies Stadia Maps, OpenMapTiles, and OpenStreetMap contributors";
     });
     await surface("MAP-004", async () => {
       check(counters.registry === 1, `registry JSON was fetched ${counters.registry} times`);
@@ -344,7 +357,7 @@ async function runAuthoritativeMapAcceptance() {
       await page.locator("#mapPopupClose").click();
       await page.locator("#mapListMode").selectOption("current");
       await page.locator("#coverageFilter").selectOption("all");
-      await page.waitForFunction(() => document.querySelector("#mapVisibleCount")?.textContent?.trim() === "2", null, { timeout: 5000 });
+      await page.waitForFunction(() => document.querySelector("#mapVisibleCount")?.textContent?.trim() === "3", null, { timeout: 5000 });
       const allRegistryIDs = await page.evaluate(() => window.LinkwatchMap.getLayers().registryMarkers.map((marker) => marker.__linkwatchContext.registryId));
       await page.locator("#coverageFilter").selectOption("monitored");
       await page.waitForFunction(() => document.querySelector("#mapVisibleCount")?.textContent?.trim() === "1", null, { timeout: 5000 });
@@ -366,6 +379,22 @@ async function runAuthoritativeMapAcceptance() {
       } finally {
         await failureContext.close();
       }
+    });
+    await surface("MAP-013", async () => {
+      await page.locator("#coverageFilter").selectOption("all");
+      await page.waitForFunction(() => document.querySelector("#mapVisibleCount")?.textContent?.trim() === "3", null, { timeout: 5000 });
+      const cluster = page.locator(".leaflet-marker-icon.linkwatch-registry-cluster").first();
+      check(await cluster.count() === 1, "registry cluster marker was not rendered");
+      await cluster.click({ timeout: 5000 });
+      const popup = page.locator("#mapPopup");
+      check((await popup.textContent()).includes("школ в группе"), "cluster did not open its neutral member list");
+      check(!(await popup.textContent()).includes("Текущее состояние"), "cluster opened a false operational popup");
+      const school32 = popup.locator('[data-popup-registry-id="18383"]');
+      check(await school32.count() === 1, "school 32 is missing from the cluster member list");
+      await school32.click({ timeout: 5000 });
+      check((await page.locator("#mapPopupTitle").textContent()).includes("№32"), "school 32 selection did not open its registry card");
+      check((await page.locator("#mapPopup").textContent()).includes("ул. Школьная, 32"), "school 32 registry card omitted its address");
+      return "cluster opens a neutral member list and school 32 opens its registry card";
     });
   } finally {
     await context.close();

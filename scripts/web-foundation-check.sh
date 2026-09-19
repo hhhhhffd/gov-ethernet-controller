@@ -40,7 +40,10 @@ vm.runInContext(fs.readFileSync("web/map.js", "utf8"), context);
 
 const foundation = window.LinkwatchMap;
 assert.ok(foundation);
-assert.equal(foundation.DEFAULT_CONFIG.tileUrl, "https://tile.openstreetmap.org/{z}/{x}/{y}.png");
+assert.equal(foundation.DEFAULT_CONFIG.tileUrl, "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png");
+assert.match(foundation.DEFAULT_CONFIG.attribution, /Stadia Maps/);
+assert.match(foundation.DEFAULT_CONFIG.attribution, /OpenMapTiles/);
+assert.match(foundation.DEFAULT_CONFIG.attribution, /OpenStreetMap/);
 assert.equal(foundation.init({ containerId: "leafletMap" }), map);
 assert.equal(foundation.init({ containerId: "leafletMap" }), map);
 assert.equal(calls.map, 1, "map must be initialized once");

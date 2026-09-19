@@ -16,7 +16,8 @@ function createMarker(latLng, options = {}) {
     latLng,
     options,
     handlers,
-    on(name, callback) { handlers[name] = callback; return this; },
+    on(name, callback) { (handlers[name] ||= []).push(callback); return this; },
+    trigger(name, event = {}) { (handlers[name] || []).forEach((callback) => callback(event)); return this; },
     bindTooltip() { return this; },
   };
 }
@@ -28,6 +29,8 @@ const map = {
   bounds: null,
   setView(center, zoom) { this.center = center; this.zoom = zoom; return this; },
   getZoom() { return this.zoom; },
+  project([latitude, longitude], zoom) { const scale = 256 * 2 ** zoom / 360; return { x: longitude * scale, y: latitude * scale }; },
+  unproject([x, y], zoom) { const scale = 256 * 2 ** zoom / 360; return { lat: y / scale, lng: x / scale }; },
   fitBounds(bounds, options) { this.bounds = { bounds, options }; return this; },
   addLayer(layer) { this.layers.push(layer); return this; },
   removeLayer(layer) { this.layers = this.layers.filter((candidate) => candidate !== layer); return this; },
@@ -62,6 +65,7 @@ const registry = {
     { registryId: "school-1", officialName: "Школа 1", coordinate: { latitude: 49.90, longitude: 82.50 } },
     { registryId: "school-2", officialName: "Школа 2", coordinate: { latitude: 49.91, longitude: 82.51 } },
     { registryId: "school-3", officialName: "Школа 3", coordinate: { latitude: 50.30, longitude: 83.40 } },
+    { registryId: "18383", officialName: "Средняя школа №32", address: "ул. Школьная, 32", coordinate: { latitude: 49.988825, longitude: 82.575407 } },
     { registryId: "school-invalid", officialName: "Без координат", coordinate: { latitude: 191, longitude: 82 } },
   ],
 };
@@ -82,12 +86,19 @@ tileLayer.handlers.tileload();
 assert.equal(tileStatus.hidden, true, "tile status must clear after recovery");
 assert.equal(mapApi.render({ mode: "current", registry, lines }), true);
 const current = mapApi.getLastRender();
-assert.equal(current.registryMarkerCount, 3, "invalid registry coordinates must not render markers");
+assert.equal(current.registryMarkerCount, 4, "invalid registry coordinates must not render markers");
 assert.equal(current.monitoringMarkerCount, 1, "unmapped/coordinate-less lines must not render monitoring markers");
 assert.equal(current.statuses[0], "NO_INTERNET", "monitoring priority must use NO_INTERNET first");
 assert.equal(current.registryVisibleMarkerCount, 2, "nearby registry schools must use a deterministic cluster");
+const registryCluster = mapApi.getLayers().registryClusters.items.find((marker) => mapApi.getMarkerContext(marker)?.kind === "registry-cluster");
+assert.ok(registryCluster, "nearby registry schools must render a real cluster marker");
+const clusterContext = mapApi.getMarkerContext(registryCluster);
+assert.equal(clusterContext.lines.length, 0, "registry cluster must not expose operational lines");
+assert.ok(clusterContext.members.some((member) => member.registryId === "18383"), "school 32 must remain a cluster member");
 assert.ok(map.bounds, "render must fit the map to actual registry/monitoring coordinates");
 assert.ok(map.bounds.bounds.some(([latitude, longitude]) => latitude === 50.30 && longitude === 83.40));
+registryCluster.trigger("click");
+assert.equal(map.bounds.options.maxZoom, 18, "cluster click must fit members through the configured maximum zoom");
 
 const monitoringLayer = mapApi.getLayers().monitoring;
 assert.equal(monitoringLayer.items.length, 1);
@@ -107,6 +118,9 @@ assert.doesNotMatch(appSource, /map_x|map_y|index \* 59|index \* 37/, "productio
 assert.doesNotMatch(indexSource, /<svg[^>]*class=\"vko-map\"|class=\"map-gridlines\"|id=\"mapMarkers\"/, "Leaflet must be the only production map");
 assert.doesNotMatch(mapSource, /fetch\s*\(/, "markers must not issue per-school API calls");
 assert.doesNotMatch(mapSource, /permanent\s*:\s*true/, "schools must not receive permanent labels");
+assert.doesNotMatch(mapSource, /clusterCellDegrees/, "registry clustering must not use a fixed degree grid");
+assert.match(appSource, /registryCluster/, "cluster popup must have a dedicated neutral path");
+assert.match(appSource, /data-popup-registry-id/, "cluster popup must expose selectable registry members");
 assert.match(appSource, /demoMode.*URLSearchParams\(window\.location\.search\)\.get\("demo"\) === "1"/, "demo mode must be explicit");
 assert.match(appSource, /state\.lines = state\.demoMode \? sampleLines\.map\(normalizeLine\) : \[\]/, "API failure must not silently use demo lines");
 
