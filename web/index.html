@@ -59,7 +59,7 @@
           <div class="map-tools" data-i18n-aria-label="map.controls"><button id="mapZoomIn" type="button" data-i18n-aria-label="action.zoomIn">+</button><button id="mapZoomOut" type="button" data-i18n-aria-label="action.zoomOut">−</button><button id="mapReset" type="button" data-i18n-aria-label="action.resetMap">⌖</button></div>
           <section id="mapPopup" class="map-popup hidden" role="dialog" aria-modal="false" aria-labelledby="mapPopupTitle" aria-describedby="mapPopupSummary" tabindex="-1" hidden>
             <div class="map-popup-head"><div><h2 id="mapPopupTitle">—</h2><p id="mapPopupSummary">—</p></div><button id="mapPopupClose" type="button" data-i18n-aria-label="action.closeMapCard">×</button></div>
-            <div id="mapPopupFields" class="map-popup-fields"></div><button id="mapPopupOpenLine" class="primary-action" type="button" hidden data-i18n="action.openLine"></button>
+            <div id="mapPopupState" class="selection-state" role="status"></div><div id="mapPopupFields" class="map-popup-fields"></div><button id="mapPopupOpenLine" class="primary-action" type="button" hidden data-i18n="action.openSchoolDetail"></button>
           </section>
           <div class="map-meta"><span><b id="mapVisibleSchoolCount">—</b> <span data-i18n="map.visibleSchools"></span></span><span><b id="mapAttentionCount">—</b> <span data-i18n="map.attentionSchools"></span></span><span class="visually-hidden"><b id="lineCount">0</b> <span data-i18n="map.lineCount"></span></span><span class="visually-hidden" id="mapVisibleCount">0</span><span id="mapModeLabel"></span><span id="mapFooterNote"></span></div>
           <p id="mapError" class="state-message error" role="alert" hidden></p>
@@ -79,7 +79,7 @@
       <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
       <aside id="detailDrawer" class="detail-drawer" aria-hidden="true" hidden aria-labelledby="drawerTitle">
         <div class="drawer-head"><div><h2 id="drawerTitle">—</h2><p id="drawerSubtitle">—</p></div><button id="drawerClose" type="button" data-i18n-aria-label="action.closeLineCard">×</button></div>
-        <div id="drawerStatus" class="drawer-section"></div><dl id="drawerContext" class="drawer-grid"></dl><dl id="drawerMetrics" class="drawer-grid"></dl>
+        <div id="drawerState" class="selection-state" role="status"></div><div id="drawerStatus" class="drawer-section"></div><dl id="drawerContext" class="drawer-grid"></dl><dl id="drawerLine" class="drawer-grid"></dl><dl id="drawerMetrics" class="drawer-grid"></dl><dl id="drawerIncident" class="drawer-grid"></dl>
       </aside>
       <div id="toastRegion" class="toast-region" aria-live="polite"></div>
     </main>

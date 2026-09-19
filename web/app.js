@@ -14,9 +14,10 @@ import { createLinesBoundary } from "./features/lines.mjs";
 import { createNotificationsBoundary } from "./features/notifications.mjs";
 import { createProviderCaseBoundary } from "./features/provider-case.mjs";
 import { createReportsBoundary } from "./features/reports.mjs";
+import { activeIncident, availableMetrics, createSelectedSchool, mergeLineDetail, selectedLine, selectSchoolLine } from "./features/school-detail.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
-const state = { capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null, currentLine: null };
+const state = { capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, selectedSchool: null, mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null };
 
 let session;
 const i18n = createI18n();
@@ -141,7 +142,7 @@ function renderSession(snapshot = session.getState()) {
 function handleSessionChange(snapshot) {
   state.capabilities = createCapabilityState(snapshot.user);
   document.documentElement.dataset.capabilities = state.capabilities.capabilities.join(" ");
-  if (!snapshot.authenticated) { state.mapLoaded = false; state.mapLoadPromise = null; state.currentLine = null; }
+  if (!snapshot.authenticated) { state.mapLoaded = false; state.mapLoadPromise = null; state.selectedSchool = null; }
   renderSession(snapshot);
   renderPrimaryNav();
   if (snapshot.authenticated) initializeAuthenticatedWorkspace();
@@ -296,15 +297,41 @@ function popupLine(line) {
   };
 }
 
+function coordinateText(school) {
+  const coordinate = school?.coordinate;
+  if (!coordinate || !Number.isFinite(Number(coordinate.latitude)) || !Number.isFinite(Number(coordinate.longitude))) return i18n.t("school.coordinatesUnavailable");
+  return Number(coordinate.latitude).toFixed(6) + ", " + Number(coordinate.longitude).toFixed(6);
+}
+
+function registryProvenance(school) {
+  const provenance = school?.provenance;
+  if (typeof provenance === "string") return provenance || i18n.t("school.provenanceUnavailable");
+  return provenance?.source || provenance?.sourceUrl || i18n.t("school.provenanceUnavailable");
+}
+
+function knownValue(value) { return value === undefined || value === null || value === "" ? i18n.t("school.notProvided") : value; }
+
+function lineSelector(linesAtSchool, selectedLineId) {
+  if (linesAtSchool.length < 2) return "";
+  return "<div><dt>" + escapeHtml(i18n.t("field.lines")) + "</dt><dd>" + linesAtSchool.map((line) => {
+    const active = line.id === selectedLineId;
+    return '<button type="button" class="map-member" data-popup-line-id="' + escapeHtml(line.id) + '" aria-pressed="' + active + '">'
+      + escapeHtml(line.id) + " · " + escapeHtml(presentation.status(line.linkwatchStatus || line.status).label) + "</button>";
+  }).join("") + "</dd></div>";
+}
+
 function renderPopup(context) {
   const popup = $("#mapPopup");
   const openLineButton = $("#mapPopupOpenLine");
   const fields = $("#mapPopupFields");
   if (!popup || !fields) return;
   const school = context.school;
+  const selection = state.selectedSchool;
+  const stateElement = $("#mapPopupState");
   let title = context.label || popupSchoolName(school, context.lines?.[0]);
   let summary = "";
   openLineButton.hidden = true;
+  if (stateElement) { stateElement.textContent = ""; stateElement.className = "selection-state"; }
   if (context.kind === "registry-cluster") {
     title = i18n.t("map.clusterTitle", { count: context.count });
     summary = i18n.t("map.clusterSummary");
@@ -312,18 +339,22 @@ function renderPopup(context) {
   } else if (context.kind === "registry") {
     title = popupSchoolName(school);
     summary = i18n.t("map.registrySummary");
-    fields.innerHTML = mapFields([[i18n.t("field.district"), school?.district], [i18n.t("field.address"), school?.address], [i18n.t("field.coordinateSource"), presentation.coordinateSource(school?.coordinateSource)], [i18n.t("field.monitoringStatus"), presentation.status("NOT_MONITORED").label]]);
+    fields.innerHTML = mapFields([[i18n.t("field.registryNumber"), school?.registryId], [i18n.t("field.address"), school?.address], [i18n.t("field.monitoringStatus"), presentation.status("NOT_MONITORED").label]]);
+    if (stateElement) stateElement.textContent = presentation.statusDescription("NOT_MONITORED");
+    openLineButton.hidden = false;
   } else {
-    const linesAtSchool = context.lines || [];
-    const selected = linesAtSchool[0];
-    const content = popupLine(selected || {});
-    title = content.title;
+    const linesAtSchool = selection?.lines || context.lines || [];
+    const selected = selectedLine(selection);
+    const content = selected ? popupLine(selected) : null;
+    title = popupSchoolName(selection?.school || school, selected || linesAtSchool[0]);
     summary = context.mode === "historical" ? i18n.t("map.historicalSource") : i18n.t("map.currentSource");
-    const selector = linesAtSchool.length > 1
-      ? "<div><dt>" + escapeHtml(i18n.t("field.lines")) + "</dt><dd>" + linesAtSchool.map((line) => '<button type="button" class="map-member" data-popup-line-id="' + escapeHtml(line.id) + '">' + escapeHtml(line.id) + " · " + escapeHtml(presentation.status(line.linkwatchStatus || line.status).label) + "</button>").join("") + "</dd></div>"
-      : "";
-    fields.innerHTML = selector + mapFields(content.fields);
-    openLineButton.hidden = !selected;
+    fields.innerHTML = lineSelector(linesAtSchool, selection?.selectedLineId) + (content ? mapFields(content.fields) : "");
+    if (stateElement) {
+      stateElement.textContent = selected
+        ? presentation.statusDescription(selected.linkwatchStatus || selected.status)
+        : i18n.t("school.chooseLine");
+    }
+    openLineButton.hidden = false;
     openLineButton.dataset.lineId = selected?.id || "";
   }
   $("#mapPopupTitle").textContent = title;
@@ -335,12 +366,17 @@ function renderPopup(context) {
     if (member) openMapPopup(member);
   }));
   popup.querySelectorAll("[data-popup-line-id]").forEach((button) => button.addEventListener("click", () => {
-    const line = context.lines.find((item) => item.id === button.dataset.popupLineId);
-    if (line) { context.lines = [line]; renderPopup(context); }
+    state.selectedSchool = selectSchoolLine(state.selectedSchool, button.dataset.popupLineId);
+    renderPopup(context);
   }));
 }
 
-function openMapPopup(context, trigger = null) { state.mapPopupContext = context; state.mapPopupTrigger = trigger; renderPopup(context); }
+function openMapPopup(context, trigger = null) {
+  state.mapPopupContext = context;
+  state.mapPopupTrigger = trigger;
+  state.selectedSchool = context.kind === "registry-cluster" ? null : createSelectedSchool(context);
+  renderPopup(context);
+}
 function closeMapPopup(restoreFocus = true) {
   const popup = $("#mapPopup");
   if (!popup) return;
@@ -349,37 +385,94 @@ function closeMapPopup(restoreFocus = true) {
   if (restoreFocus) state.mapPopupTrigger?.getElement?.()?.focus?.();
   state.mapPopupContext = null;
   state.mapPopupTrigger = null;
+  if (!$("#detailDrawer")?.hidden) return;
+  state.selectedSchool = null;
 }
 
-function renderLineDrawer(line) {
-  if (!line || !$("#detailDrawer")) return;
-  state.currentLine = line;
-  $("#drawerTitle").textContent = popupSchoolName(line.registrySchool, line) || line.id;
-  $("#drawerSubtitle").textContent = [line.id, presentation.role(line.role), line.provider || presentation.empty()].join(" · ");
-  const status = presentation.status(line.status);
-  $("#drawerStatus").innerHTML = '<span class="status-badge ' + escapeHtml(status.tone) + '">' + escapeHtml(status.label) + "</span><p>" + escapeHtml(i18n.t("reason.lineState")) + "</p>";
-  $("#drawerContext").innerHTML = mapFields([[i18n.t("field.line"), line.id], [i18n.t("field.school"), popupSchoolName(line.registrySchool, line)], [i18n.t("field.district"), line.district], [i18n.t("field.provider"), line.provider], [i18n.t("field.connectionType"), presentation.connectionType(line.technology)], [i18n.t("field.lastObserved"), presentation.formatDate(line.latest?.at, true)]]);
-  $("#drawerMetrics").innerHTML = mapFields([[i18n.t("field.download"), presentation.formatNumber(line.latest?.download, i18n.t("unit.mbps"))], [i18n.t("field.upload"), presentation.formatNumber(line.latest?.upload, i18n.t("unit.mbps"))], [i18n.t("field.ping"), presentation.formatNumber(line.latest?.ping, i18n.t("unit.ms"))]]);
+function renderSchoolDrawer(selection = state.selectedSchool) {
+  if (!selection || !$("#detailDrawer")) return;
+  const school = selection.school;
+  const selected = selectedLine(selection);
+  const line = selection.detail || selected;
+  const drawerState = $("#drawerState");
+  $("#drawerTitle").textContent = popupSchoolName(school, line) || presentation.empty();
+  $("#drawerSubtitle").textContent = school?.registryId ? i18n.t("school.registryNumber", { number: school.registryId }) : presentation.empty();
+  drawerState.textContent = selection.detailState === "loading" ? i18n.t("school.detailLoading") : selection.detailState === "error" ? i18n.t("school.detailUnavailable") : "";
+  drawerState.className = "selection-state" + (selection.detailState === "error" ? " error" : "");
+  $("#drawerContext").innerHTML = mapFields([
+    [i18n.t("field.officialIdentity"), popupSchoolName(school, line)],
+    [i18n.t("field.registryNumber"), school?.registryId],
+    [i18n.t("field.address"), knownValue(school?.address)],
+    [i18n.t("field.coordinates"), coordinateText(school)],
+    [i18n.t("field.coordinateSource"), presentation.coordinateSource(school?.coordinateSource)],
+    [i18n.t("field.registryProvenance"), registryProvenance(school)],
+  ]);
+  if (!selected) {
+    $("#drawerStatus").innerHTML = selection.registryOnly
+      ? '<span class="status-badge no-data">' + escapeHtml(presentation.status("NOT_MONITORED").label) + "</span><p>" + escapeHtml(presentation.statusDescription("NOT_MONITORED")) + "</p>"
+      : "<p>" + escapeHtml(i18n.t("school.chooseLine")) + "</p>";
+    $("#drawerLine").innerHTML = lineSelector(selection.lines, null);
+    $("#drawerMetrics").innerHTML = "";
+    $("#drawerIncident").innerHTML = "";
+  } else {
+    const status = presentation.status(line.linkwatchStatus || line.status);
+    $("#drawerStatus").innerHTML = '<span class="status-badge ' + escapeHtml(status.tone) + '">' + escapeHtml(status.label) + "</span><p>" + escapeHtml(presentation.statusDescription(status.code)) + "</p>";
+    const contractNumber = line.contract?.contract_no;
+    $("#drawerLine").innerHTML = lineSelector(selection.lines, selected.id) + mapFields([
+      [i18n.t("field.line"), line.id], [i18n.t("field.provider"), knownValue(line.provider === "—" ? null : line.provider)],
+      [i18n.t("field.connectionType"), presentation.connectionType(line.technology)], [i18n.t("field.lineRole"), presentation.role(line.role)],
+      [i18n.t("field.lastObserved"), line.latest?.at ? presentation.formatDate(line.latest.at, true) : i18n.t("school.notObserved")],
+      ...(contractNumber ? [[i18n.t("field.contract"), contractNumber]] : []),
+    ]);
+    const metricLabels = { download: ["field.download", "unit.mbps"], upload: ["field.upload", "unit.mbps"], ping: ["field.ping", "unit.ms"], jitter: ["field.jitter", "unit.ms"], loss: ["field.loss", "unit.percent"] };
+    const metrics = availableMetrics(line);
+    $("#drawerMetrics").innerHTML = metrics.length
+      ? mapFields(metrics.map(([metric, value]) => [i18n.t(metricLabels[metric][0]), presentation.formatNumber(value, i18n.t(metricLabels[metric][1]))]))
+      : mapFields([[i18n.t("field.metrics"), i18n.t("school.metricsUnavailable")]]);
+    const incident = activeIncident(line);
+    $("#drawerIncident").innerHTML = incident ? mapFields([[i18n.t("field.activeIncident"), incident.incident_no || incident.number || incident.id], [i18n.t("field.incidentStatus"), presentation.incidentStatus(incident.status)]]) : "";
+  }
   $("#drawerBackdrop").hidden = false;
   $("#detailDrawer").hidden = false;
   $("#detailDrawer").classList.add("open");
+  $("#detailDrawer").setAttribute("aria-hidden", "false");
+  $("#detailDrawer").querySelectorAll("[data-popup-line-id]").forEach((button) => button.addEventListener("click", async () => {
+    state.selectedSchool = selectSchoolLine(state.selectedSchool, button.dataset.popupLineId);
+    renderSchoolDrawer();
+    if (state.mapPopupContext) renderPopup(state.mapPopupContext);
+    await openSelectedSchoolDetail();
+  }));
 }
 
-async function openLine(id) {
-  let line = map.getLine(id);
+async function openSelectedSchoolDetail() {
+  let selection = state.selectedSchool;
+  if (!selection) return;
+  const line = selectedLine(selection);
+  if (!line) { renderSchoolDrawer(selection); return; }
+  selection = { ...selection, detailState: "loading", detail: null };
+  state.selectedSchool = selection;
+  renderSchoolDrawer(selection);
   try {
-    const response = await lines.get(id);
-    line = { ...line, ...(response?.data || response) };
+    const response = await lines.get(line.id);
+    state.selectedSchool = { ...selection, detail: mergeLineDetail(line, response), detailState: "ready" };
   } catch (error) {
-    if (![404, 403].includes(error.status)) showToast("map.lineDetailsUnavailable", "warn");
+    state.selectedSchool = { ...selection, detailState: "error" };
   }
-  if (line) renderLineDrawer(line);
+  renderSchoolDrawer();
+}
+async function openLine(id) {
+  const line = map.getLine(id);
+  if (!line) return;
+  if (!state.selectedSchool || !state.selectedSchool.lines.some((item) => item.id === id)) {
+    state.selectedSchool = createSelectedSchool({ kind: "monitoring", school: line.registrySchool, lines: [line] }, id);
+  } else state.selectedSchool = selectSchoolLine(state.selectedSchool, id);
+  await openSelectedSchoolDetail();
 }
 function closeDrawer() {
   $("#detailDrawer")?.classList.remove("open");
   if ($("#detailDrawer")) $("#detailDrawer").hidden = true;
   if ($("#drawerBackdrop")) $("#drawerBackdrop").hidden = true;
-  state.currentLine = null;
+  if ($("#detailDrawer")) $("#detailDrawer").setAttribute("aria-hidden", "true");
 }
 async function refreshMap() {
   if (!session.authenticated) return;
@@ -423,7 +516,7 @@ function bindEvents() {
   $("#schoolSearch")?.addEventListener("input", (event) => { map.setFilters({ query: event.target.value }); renderMapStatus(); });
   $("#mapFiltersReset")?.addEventListener("click", () => { map.resetFilters(); renderMapStatus(); });
   $("#mapPopupClose")?.addEventListener("click", () => closeMapPopup());
-  $("#mapPopupOpenLine")?.addEventListener("click", () => openLine($("#mapPopupOpenLine").dataset.lineId));
+  $("#mapPopupOpenLine")?.addEventListener("click", openSelectedSchoolDetail);
   $("#drawerClose")?.addEventListener("click", closeDrawer);
   $("#drawerBackdrop")?.addEventListener("click", closeDrawer);
   $("#mapZoomIn")?.addEventListener("click", () => mapApiAction("zoomIn"));
@@ -442,7 +535,7 @@ function refreshLocale() {
   renderSession();
   renderMapStatus();
   if (state.mapPopupContext) renderPopup(state.mapPopupContext);
-  if (state.currentLine) renderLineDrawer(state.currentLine);
+  if (state.selectedSchool && !$("#detailDrawer")?.hidden) renderSchoolDrawer(state.selectedSchool);
 }
 
 async function boot() {

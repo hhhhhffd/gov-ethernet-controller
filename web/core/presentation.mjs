@@ -30,6 +30,9 @@ export function createPresentation(i18n = defaultI18n) {
       const tone = STATUS_TONES.critical.has(code) ? "critical" : STATUS_TONES.unstable.has(code) ? "unstable" : STATUS_TONES.noData.has(code) ? "no-data" : "healthy";
       return { code, label: enumLabel(i18n, "status", code), tone };
     },
+    statusDescription(value) {
+      return enumLabel(i18n, "statusDetail", value);
+    },
     role: (value) => enumLabel(i18n, "role", value),
     userRole: (value) => enumLabel(i18n, "userRole", value),
     incidentStatus: (value) => enumLabel(i18n, "incident", value),

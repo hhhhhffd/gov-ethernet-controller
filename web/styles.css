@@ -160,6 +160,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 dt { color: var(--ref-text-muted); }
 dd { margin: 0; overflow-wrap: anywhere; }
 .map-member { display: block; width: 100%; padding: 3px 0; border: 0; background: transparent; color: var(--ref-blue); text-align: left; }
+.map-member[aria-pressed="true"] { color: var(--ref-text-primary); font-weight: 600; }
+.selection-state { margin: 8px 0; color: var(--ref-text-secondary); font-size: 10px; }
+.selection-state.error { color: var(--ref-red); }
 .primary-action { height: 34px; margin-top: 14px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--ref-white-action); color: var(--ref-black-on-white); font-size: 11px; font-weight: 500; }
 
 .auth-backdrop { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(17 17 17 / 88%); }
