@@ -108,16 +108,23 @@ func (s *Server) providerCaseWorkspaceDetail(w http.ResponseWriter, r *http.Requ
 	}
 	evidence := []map[string]interface{}{}
 	var encoded []byte
-	if s.DB.Pool.QueryRow(r.Context(), `SELECT evidence_measurement_ids FROM provider_cases WHERE id=$1`, id).Scan(&encoded) == nil {
+	if evidenceErr := s.DB.Pool.QueryRow(r.Context(), `SELECT evidence_measurement_ids FROM provider_cases WHERE id=$1`, id).Scan(&encoded); evidenceErr == nil {
 		var ids []int64
-		if json.Unmarshal(encoded, &ids) == nil {
+		if unmarshalErr := json.Unmarshal(encoded, &ids); unmarshalErr == nil {
 			for _, measurementID := range ids {
 				var record measurementRecord
-				if s.DB.Pool.QueryRow(r.Context(), `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json,e.line_context_snapshot_json,e.verification_status FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id WHERE m.id=$1 AND m.line_id=$2`, measurementID, lineID).Scan(&record.ID, &record.DeviceID, &record.LineID, &record.PointID, &record.ClientEventID, &record.ObservedAt, &record.ReceivedAt, &record.Mode, &record.Download, &record.Upload, &record.Ping, &record.Jitter, &record.PacketLoss, &record.Availability, &record.ConnectionStatus, &record.Raw, &record.Quality, &record.BaselineState, &record.ContractState, &record.Violations, &record.Valid, &record.Reason, &record.PolicySnapshot, &record.ContractSnapshot, &record.LineContextSnapshot, &record.VerificationStatus) == nil {
+				evidenceErr := s.DB.Pool.QueryRow(r.Context(), `SELECT m.id,m.device_id,m.line_id,m.monitoring_point_id,m.client_event_id,m.observed_at,m.received_at,m.mode,m.download,m.upload,m.ping,m.jitter,m.packet_loss,m.availability,m.connection_status,m.raw_json,m.quality,e.baseline_state,e.contract_state,e.violations_json,e.valid,e.reason,e.policy_snapshot_json,e.contract_snapshot_json,e.line_context_snapshot_json,COALESCE(v.status,''),COALESCE(v.reason,''),v.candidate_snapshot_json,v.verifying_measurement_id,v.verifying_snapshot_json,v.verified_at FROM measurements m JOIN measurement_evaluations e ON e.measurement_id=m.id LEFT JOIN measurement_verifications v ON v.candidate_measurement_id=m.id WHERE m.id=$1 AND m.line_id=$2`, measurementID, lineID).Scan(&record.ID, &record.DeviceID, &record.LineID, &record.PointID, &record.ClientEventID, &record.ObservedAt, &record.ReceivedAt, &record.Mode, &record.Download, &record.Upload, &record.Ping, &record.Jitter, &record.PacketLoss, &record.Availability, &record.ConnectionStatus, &record.Raw, &record.Quality, &record.BaselineState, &record.ContractState, &record.Violations, &record.Valid, &record.Reason, &record.PolicySnapshot, &record.ContractSnapshot, &record.LineContextSnapshot, &record.VerificationStatus, &record.VerificationReason, &record.CandidateSnapshot, &record.VerifyingMeasurementID, &record.VerifyingSnapshot, &record.VerificationVerifiedAt)
+				if evidenceErr == nil {
 					evidence = append(evidence, evidenceChain(record))
+				} else {
+					s.Logger.Error("could not read provider case evidence measurement", "case_id", id, "measurement_id", measurementID, "line_id", lineID, "error", evidenceErr)
 				}
 			}
+		} else {
+			s.Logger.Error("could not decode provider case evidence ids", "case_id", id, "error", unmarshalErr)
 		}
+	} else {
+		s.Logger.Error("could not read provider case evidence ids", "case_id", id, "error", evidenceErr)
 	}
 	item["evidence_chain"] = evidence
 	writeProviderWorkspaceDetail(w, item)
