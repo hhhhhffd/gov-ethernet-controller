@@ -150,7 +150,7 @@ human review/send.
 LINKWATCH_SERVER_URL=http://127.0.0.1:8080 \
 LINKWATCH_DEVICE_ID=device-42-primary \
 LINKWATCH_DEVICE_TOKEN=demo-device-42-primary-token \
-LINKWATCH_PROBE=demo \
+LINKWATCH_PROBE=network \
 cargo run --release --manifest-path agent/Cargo.toml -- once
 ```
 

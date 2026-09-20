@@ -62,7 +62,7 @@ Heartbeat дополнительно передаёт hostname, session `boot_id
 LINKWATCH_SERVER_URL=http://127.0.0.1:8080 \
 LINKWATCH_DEVICE_ID=device-42-primary \
 LINKWATCH_DEVICE_TOKEN=demo-device-42-primary-token \
-LINKWATCH_PROBE=demo \
+LINKWATCH_PROBE=network \
 cargo run --release --manifest-path agent/Cargo.toml -- once
 ```
 
@@ -70,6 +70,11 @@ cargo run --release --manifest-path agent/Cargo.toml -- once
 `device_id`. Старые поля `school_id`, `line_id`, `monitoring_point_id` и их
 `VKO_*` aliases принимаются для совместимости с прежними конфигурациями, но не
 влияют на отправляемую телеметрию.
+
+Для ручной локальной проверки на Windows используйте готовый пример
+`agent/linkwatch-config.windows.example.json`: скопируйте его рядом с exe как
+`linkwatch-config.json`. Он настроен на development School 32 и настоящий
+сетевой probe, а не на DemoProbe.
 
 Для production используйте `LINKWATCH_PROBE=network` и контролируемые
 оператором endpoints в `LINKWATCH_CONFIG_FILE`/`VKO_PROBE_*`. NetworkProbe
