@@ -7,7 +7,7 @@ import { createSession } from "./core/session.mjs";
 import { createMapPresentationAdapter } from "./core/map-presentation.mjs";
 import { createThemeState } from "./core/theme.mjs";
 import { createMapIntegration } from "./integration/map-integration.mjs";
-import { createAdminBoundary } from "./features/admin.mjs";
+import { adminResourceDefinition, createAdminBoundary, writableAdminPayload } from "./features/admin.mjs";
 import { createAuditBoundary } from "./features/audit.mjs";
 import { createIncidentsBoundary } from "./features/incidents.mjs";
 import { createLinesBoundary } from "./features/lines.mjs";
@@ -15,10 +15,10 @@ import { createNotificationsBoundary } from "./features/notifications.mjs";
 import { createProviderCaseBoundary } from "./features/provider-case.mjs";
 import { createReportsBoundary } from "./features/reports.mjs";
 import { defaultReportFilters, reportAvailability, reportContextFilters, reportEvidenceSummary, reportFilterOptions, reportQuery, reportState } from "./features/reports-presentation.mjs";
-import { filterIncidents, incidentSeverityValues, incidentStatusValues, presentIncident, presentRecovery, presentSituation, presentTimeline, relatedSituations } from "./features/incidents-presentation.mjs";
-import { presentProviderCase, providerCaseActions } from "./features/provider-case-presentation.mjs";
+import { filterIncidents, incidentActions, incidentSeverityValues, incidentStatusValues, presentIncident, presentRecovery, presentSituation, presentTimeline, relatedSituations, situationActions } from "./features/incidents-presentation.mjs";
+import { presentProviderCase, providerCaseActions, providerCaseDeliveryRequest } from "./features/provider-case-presentation.mjs";
 import { activeIncident, availableMetrics, createSelectedSchool, mergeLineDetail, selectedLine, selectSchoolLine } from "./features/school-detail.mjs";
-import { adminResourceDefinitions, presentAgentVersion, presentAuditItem, presentNotification } from "./features/secondary-presentation.mjs";
+import { adminResourceDefinitions, presentAdminRecord, presentAgentVersion, presentAuditItem, presentNotification } from "./features/secondary-presentation.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const state = {
@@ -31,6 +31,48 @@ const state = {
   admin: createAdminSurfaceState(),
   audit: createAuditSurfaceState(),
 };
+
+const INCIDENT_STATUS_OPTIONS = Object.freeze(["NEW", "SENT_TO_PROVIDER", "IN_PROGRESS", "WAITING_INFO", "RESOLVED"]);
+const ACTION_COPY = Object.freeze({
+  ru: Object.freeze({
+    incidentProviderFixed: "Отметить устранение",
+    incidentSendToProvider: "Передать провайдеру",
+    incidentAssign: "Назначить ответственного",
+    incidentStatus: "Изменить статус",
+    situationLiveVerify: "Запросить проверку сейчас",
+    situationReason: "Причина изменения",
+    situationMergeTargets: "Ситуации для объединения",
+    situationSplitMembers: "Инциденты для новой ситуации",
+    notificationDispatch: "Отправить уведомление",
+    confirmIncidentProviderFixed: "Отметить, что провайдер сообщил об устранении инцидента?",
+    confirmIncidentSendToProvider: "Передать этот инцидент провайдеру?",
+    confirmIncidentAssign: "Назначить указанного ответственного за инцидент?",
+    confirmIncidentStatus: "Изменить статус инцидента?",
+    confirmSituationLiveVerify: "Запросить ограниченную проверку участников ситуации сейчас?",
+    confirmSituationMerge: "Объединить выбранные ситуации в новую корреляцию?",
+    confirmSituationSplit: "Разделить выбранные инциденты на отдельные корреляции?",
+    confirmNotificationDispatch: "Отправить это уведомление повторно?",
+  }),
+  kk: Object.freeze({
+    incidentProviderFixed: "Жойылғанын белгілеу",
+    incidentSendToProvider: "Провайдерге жіберу",
+    incidentAssign: "Жауаптыны тағайындау",
+    incidentStatus: "Күйін өзгерту",
+    situationLiveVerify: "Қазір тексеруді сұрау",
+    situationReason: "Өзгерту себебі",
+    situationMergeTargets: "Біріктірілетін жағдайлар",
+    situationSplitMembers: "Жаңа жағдайға бөлінетін оқиғалар",
+    notificationDispatch: "Хабарламаны жіберу",
+    confirmIncidentProviderFixed: "Провайдер оқиғаны жойғанын хабарлағанын белгілеу керек пе?",
+    confirmIncidentSendToProvider: "Осы оқиғаны провайдерге жіберу керек пе?",
+    confirmIncidentAssign: "Көрсетілген жауаптыны оқиғаға тағайындау керек пе?",
+    confirmIncidentStatus: "Оқиға күйін өзгерту керек пе?",
+    confirmSituationLiveVerify: "Жағдайға қатысушыларды қазір шектеулі тексеруді сұрау керек пе?",
+    confirmSituationMerge: "Таңдалған жағдайларды жаңа корреляцияға біріктіру керек пе?",
+    confirmSituationSplit: "Таңдалған оқиғаларды бөлек корреляцияларға бөлу керек пе?",
+    confirmNotificationDispatch: "Осы хабарламаны қайта жіберу керек пе?",
+  }),
+});
 
 let session;
 const i18n = createI18n();
@@ -67,6 +109,7 @@ function createIncidentSurfaceState() {
   return {
     state: "idle", items: [], filters: { status: "", severity: "" }, selectedId: null, detail: null, detailState: "idle",
     situations: [], situationsState: "idle", selectedSituationId: null, situation: null, situationState: "idle",
+    actionState: "idle", actionError: "", situationActionState: "idle", situationActionError: "",
     providerCase: { selectedId: null, state: "idle", detail: null, actionState: "idle", actionError: "", generated: null },
   };
 }
@@ -79,7 +122,7 @@ function createReportsSurfaceState() {
 }
 
 function createNotificationsSurfaceState() {
-  return { open: false, state: "idle", items: [], loadPromise: null };
+  return { open: false, state: "idle", items: [], loadPromise: null, actionId: null, actionState: "idle", actionError: "", actionErrorId: null };
 }
 
 function createAdminSurfaceState() {
@@ -88,6 +131,20 @@ function createAdminSurfaceState() {
 
 function createAuditSurfaceState() {
   return { state: "idle", tab: "log", items: [], filters: { action: "", object_type: "" }, nextBeforeId: "", versionsState: "idle", versions: [], selectedVersion: "", devicesState: "idle", devices: [], loadPromise: null };
+}
+
+function actionCopy(key) {
+  return ACTION_COPY[i18n.locale]?.[key] || ACTION_COPY.ru[key] || key;
+}
+
+function errorMessageKey(error) {
+  const status = Number(error?.status);
+  const key = Number.isInteger(status) ? `error.${status}` : "error.unknown";
+  return i18n.has(key) ? key : "error.unknown";
+}
+
+function confirmAction(key) {
+  return globalThis.confirm?.(actionCopy(key)) === true;
 }
 
 function localizeStaticContent() {
@@ -812,6 +869,10 @@ function notificationCloseLabel() {
   return i18n.locale === "kk" ? "Хабарландыруларды жабу" : "Закрыть уведомления";
 }
 
+function notificationDispatchLabel() {
+  return actionCopy("notificationDispatch");
+}
+
 function renderNotificationsSurface() {
   const root = $("#notificationsSurface");
   const button = $("#notificationsButton");
@@ -830,21 +891,30 @@ function renderNotificationsSurface() {
     root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">×</button></header><p class="surface-state error" role="alert">' + escapeHtml(i18n.t("notification.unavailable")) + '</p><button type="button" class="secondary-action" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + "</button>";
   } else {
     const rows = view.items.map((item) => {
-      const notification = presentNotification(item, { i18n, presentation });
+      const pending = view.actionState !== "idle" && String(view.actionId) === String(item?.id);
+      const availableNotification = presentNotification(item, { i18n, presentation, capabilities: state.capabilities });
+      const notification = presentNotification(item, { i18n, presentation, capabilities: state.capabilities, pending });
       const scope = notification.scopeAvailable ? "" : '<p class="notification-scope">' + escapeHtml(i18n.t("notification.scopeUnavailable")) + "</p>";
       const attempts = notification.attempts == null ? "" : '<small>' + escapeHtml(i18n.t("notification.attempts", { count: notification.attempts })) + "</small>";
       const next = notification.nextAttemptLabel ? '<small>' + escapeHtml(i18n.t("notification.nextAttempt")) + ": " + escapeHtml(notification.nextAttemptLabel) + "</small>" : "";
-      return '<article class="notification-item"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p><small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + '</article>';
+      const dispatch = availableNotification.actions?.canDispatch && notification.id != null ? '<button type="button" class="secondary-action" data-notification-dispatch="' + escapeHtml(notification.id) + '"' + (pending ? " disabled" : "") + '>' + escapeHtml(notificationDispatchLabel()) + "</button>" : "";
+      const actionError = String(view.actionErrorId) === String(item?.id) && view.actionError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.actionError)) + "</p>" : "";
+      return '<article class="notification-item"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p><small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + dispatch + actionError + '</article>';
     }).join("");
     root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div><button type="button" class="secondary-action utility-refresh" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + '</button><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">×</button></div></header>' + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("notification.empty")) + "</p>");
   }
   root.querySelector("[data-notifications-close]")?.addEventListener("click", closeNotifications);
   root.querySelector("[data-notifications-refresh]")?.addEventListener("click", () => loadNotifications({ force: true }));
+  root.querySelectorAll("[data-notification-dispatch]").forEach((button) => button.addEventListener("click", () => dispatchNotification(button.dataset.notificationDispatch)));
 }
 
 function closeNotifications(restoreFocus = true) {
   const trigger = state.notificationsTrigger;
   state.notifications.open = false;
+  state.notifications.actionId = null;
+  state.notifications.actionState = "idle";
+  state.notifications.actionError = "";
+  state.notifications.actionErrorId = null;
   state.notificationsTrigger = null;
   renderNotificationsSurface();
   if (restoreFocus && trigger?.isConnected) trigger.focus();
@@ -874,38 +944,61 @@ function toggleNotifications() {
     return;
   }
   state.notificationsTrigger = document.activeElement !== document.body ? document.activeElement : $("#notificationsButton");
+  state.notifications.actionError = "";
+  state.notifications.actionErrorId = null;
   state.notifications.open = !state.notifications.open;
   renderNotificationsSurface();
   $("#notificationsSurface")?.focus();
   loadNotifications();
 }
 
+async function dispatchNotification(id) {
+  const view = state.notifications;
+  if (!session.authenticated || !state.capabilities.has("notification.dispatch") || view.actionState !== "idle") return;
+  const item = view.items.find((candidate) => String(candidate?.id) === String(id));
+  const actions = presentNotification(item, { i18n, presentation, capabilities: state.capabilities }).actions;
+  if (!item || !actions?.canDispatch || !confirmAction("confirmNotificationDispatch")) return;
+  view.actionId = id;
+  view.actionState = "dispatching";
+  view.actionError = "";
+  renderNotificationsSurface();
+  try {
+    await boundaries.notifications.dispatch(id);
+    const readback = await boundaries.notifications.list({ limit: "50" });
+    if (!Array.isArray(readback)) throw new Error("notification readback unavailable");
+    view.items = readback;
+    view.actionId = null;
+    view.actionState = "idle";
+    view.actionErrorId = null;
+  } catch (error) {
+    view.actionId = null;
+    view.actionState = "idle";
+    view.actionError = errorMessageKey(error);
+    view.actionErrorId = id;
+  }
+  renderNotificationsSurface();
+}
+
 function adminResourceLabel(resource) { return i18n.t("admin.resources." + resource); }
-
-function adminFieldLabel(key) {
-  const labels = {
-    id: "field.registryNumber", line_id: "field.line", school_id: "field.school", organization_id: "field.school", provider_id: "field.provider",
-    name: "field.officialIdentity", username: "field.username", role: "field.lineRole", status: "field.status", technology: "field.connectionType",
-    active: "admin.status", disabled: "admin.status", blocked: "admin.status", last_seen: "audit.lastSeen", version: "audit.version",
-  };
-  return i18n.t(labels[key] || "admin.identity", undefined, key.replaceAll("_", " "));
-}
-
-function adminDisplayValue(key, value) {
-  if (value === null || value === undefined || value === "") return i18n.t("empty.noData");
-  if (typeof value === "boolean") return value ? i18n.t("status.ATTENTION") : i18n.t("status.OK");
-  if (/status|state/i.test(key)) return presentation.status(value).label;
-  if (key === "role") return presentation.role(value);
-  if (/technology|type/i.test(key)) return presentation.connectionType(value);
-  if (/created_at|updated_at|last_seen|release_at/i.test(key)) return presentation.formatDate(value, true);
-  if (typeof value === "object") return i18n.t("admin.details");
-  return String(value);
-}
 
 function adminRecordId(item) { return item?.id ?? item?.version ?? item?.line_id ?? item?.device_id ?? ""; }
 
 function adminResourceOptions() {
   return adminResourceDefinitions().filter((resource) => state.capabilities.has(resource.capability));
+}
+
+function adminResourceConfig(resource) {
+  return adminResourceOptions().find((item) => item.key === resource) || null;
+}
+
+function adminEditorMode(resource, id = "") {
+  const definition = adminResourceConfig(resource);
+  if (!definition) return "";
+  if (resource === "devices" && !id && definition.supportsRegistration) return "register";
+  if (id && definition.supportsUpdate) return "update";
+  if (!id && definition.supportsCreate) return "create";
+  if (!id && resource === "schedule" && definition.supportsUpdate) return "update";
+  return "";
 }
 
 function renderAdminSurface() {
@@ -930,20 +1023,24 @@ function renderAdminSurface() {
     return;
   }
   const mutationBusy = view.mutationState === "saving";
+  const resourceDefinition = adminResourceConfig(view.resource);
+  const editorMode = adminEditorMode(view.resource, view.selectedId);
   const rows = view.items.map((item) => {
-    const entries = Object.entries(item || {}).filter(([, value]) => value !== null && typeof value !== "object").slice(0, 6);
     const id = adminRecordId(item);
-    const cells = entries.map(([key, value]) => '<div><dt>' + escapeHtml(adminFieldLabel(key)) + '</dt><dd>' + escapeHtml(adminDisplayValue(key, value)) + "</dd></div>").join("");
-    const edit = view.resource === "schedule" ? "" : '<button type="button" class="link-action" data-admin-edit="' + escapeHtml(String(id)) + '"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.update")) + "</button>";
+    const presented = presentAdminRecord(view.resource, item, { i18n, presentation });
+    const cells = presented.fields.map((field) => '<div><dt>' + escapeHtml(field.label) + '</dt><dd>' + escapeHtml(field.value) + "</dd></div>").join("");
+    const edit = resourceDefinition?.supportsUpdate && view.resource !== "schedule" && id ? '<button type="button" class="link-action" data-admin-edit="' + escapeHtml(String(id)) + '"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.update")) + "</button>" : "";
     const deviceDisabled = mutationBusy ? " disabled" : "";
     const deviceActions = view.resource === "devices" && id ? '<div class="admin-device-actions"><button type="button" class="link-action" data-admin-device-action="block" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.block")) + '</button><button type="button" class="link-action" data-admin-device-action="unblock" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.unblock")) + '</button><button type="button" class="link-action" data-admin-device-action="rotate-token" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.rotateToken")) + "</button></div>" : "";
-    return '<article class="admin-record"><dl class="detail-grid">' + cells + '</dl>' + edit + deviceActions + '<details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(item, null, 2)) + "</pre></details></article>";
+    return '<article class="admin-record"><dl class="detail-grid">' + cells + '</dl>' + edit + deviceActions + '<details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(presented.technical, null, 2)) + "</pre></details></article>";
   }).join("");
-  const payloadLabel = view.resource === "devices" && !view.selectedId ? i18n.t("admin.registerDevice") : view.selectedId ? i18n.t("admin.update") : i18n.t("admin.create");
+  const payloadLabel = editorMode === "register" ? i18n.t("admin.registerDevice") : editorMode === "update" ? i18n.t("admin.update") : i18n.t("admin.create");
   const message = view.message ? '<p class="surface-state' + (view.mutationState === "error" ? " error" : "") + '" role="status">' + escapeHtml(i18n.t(view.message)) + "</p>" : "";
   const impactControl = ["policies", "contracts", "lines"].includes(view.resource) ? '<button type="button" class="secondary-action" data-admin-impact' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.impactPreview")) + '</button>' : "";
   const agentControl = ["agent-versions", "devices"].includes(view.resource) ? '<button type="button" class="secondary-action" data-admin-agent-update' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.agentUpdate")) + '</button>' : "";
-  root.innerHTML = '<div class="secondary-shell">' + header + '<div class="admin-toolbar"><label>' + escapeHtml(i18n.t("admin.resource")) + '<select data-admin-resource>' + options + "</select></label></div>" + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("admin.empty")) + '</p>') + '<form class="admin-editor" data-admin-editor><h2>' + escapeHtml(payloadLabel) + '</h2><label>' + escapeHtml(i18n.t("admin.recordId")) + '<input name="recordId" value="' + escapeHtml(view.selectedId) + '" placeholder="' + escapeHtml(i18n.t("empty.value")) + '"></label><label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="payload" required spellcheck="false">' + escapeHtml(view.payload) + '</textarea></label><p class="form-hint">' + escapeHtml(i18n.t("admin.payloadHint")) + '</p><button type="submit" class="primary-action"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(payloadLabel) + '</button>' + impactControl + agentControl + '</form>' + message + (view.preview ? '<div class="admin-preview"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><p>' + escapeHtml(i18n.t("admin.previewReady")) + '</p><pre>' + escapeHtml(JSON.stringify(view.preview, null, 2)) + '</pre></div>' : "") + '</div>';
+  const editor = editorMode ? '<form class="admin-editor" data-admin-editor><h2>' + escapeHtml(payloadLabel) + '</h2><label>' + escapeHtml(i18n.t("admin.recordId")) + '<input name="recordId" value="' + escapeHtml(view.selectedId) + '" placeholder="' + escapeHtml(i18n.t("empty.value")) + '"' + (editorMode === "update" ? " readonly" : "") + '></label><label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="payload" required spellcheck="false">' + escapeHtml(view.payload) + '</textarea></label><p class="form-hint">' + escapeHtml(i18n.t("admin.payloadHint")) + '</p><button type="submit" class="primary-action"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(payloadLabel) + '</button>' + impactControl + agentControl + '</form>' : '<div class="admin-editor"><p class="surface-state">' + escapeHtml(i18n.t("admin.resourceCapability")) + '</p>' + impactControl + agentControl + '</div>';
+  const preview = view.preview ? '<div class="admin-preview"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><p>' + escapeHtml(i18n.t("admin.previewReady")) + '</p><details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(view.preview, null, 2)) + '</pre></details></div>' : "";
+  root.innerHTML = '<div class="secondary-shell">' + header + '<div class="admin-toolbar"><label>' + escapeHtml(i18n.t("admin.resource")) + '<select data-admin-resource' + (mutationBusy ? " disabled" : "") + '>' + options + "</select></label></div>" + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("admin.empty")) + '</p>') + editor + message + preview + '</div>';
   bindAdminSurfaceEvents(root);
 }
 
@@ -959,8 +1056,11 @@ function bindAdminSurfaceEvents(root) {
   root.querySelectorAll("[data-admin-edit]").forEach((button) => button.addEventListener("click", () => {
     const item = state.admin.items.find((candidate) => String(adminRecordId(candidate)) === String(button.dataset.adminEdit));
     if (!item) return;
-    state.admin.selectedId = String(adminRecordId(item));
-    state.admin.payload = JSON.stringify(item, null, 2);
+    const id = String(adminRecordId(item));
+    const definition = adminResourceDefinition(state.admin.resource);
+    if (!definition.supportsUpdate) return;
+    state.admin.selectedId = id;
+    state.admin.payload = JSON.stringify(writableAdminPayload(state.admin.resource, item, { id, operation: "update" }), null, 2);
     state.admin.message = "";
     renderAdminSurface();
     root.querySelector("[name=payload]")?.focus();
@@ -1009,18 +1109,30 @@ async function submitAdminMutation(event) {
   if (!parsed) return;
   const { id, payload } = parsed;
   const resource = state.admin.resource;
-  if (isDestructiveAdminPayload(resource, payload) && !globalThis.confirm?.(i18n.t("admin.confirmDestructive"))) return;
+  const mode = adminEditorMode(resource, id);
+  if (!mode) return;
+  let normalizedPayload;
+  try {
+    normalizedPayload = mode === "register" ? payload : writableAdminPayload(resource, payload, { id, operation: mode });
+  } catch (error) {
+    state.admin.mutationState = "error";
+    state.admin.message = "admin.actionFailed";
+    renderAdminSurface();
+    return;
+  }
+  if (isDestructiveAdminPayload(resource, normalizedPayload) && !globalThis.confirm?.(i18n.t("admin.confirmDestructive"))) return;
   if (!isDestructiveAdminPayload(resource, payload) && !globalThis.confirm?.(i18n.t("admin.confirmSave"))) return;
   state.admin.mutationState = "saving";
   state.admin.message = "";
   renderAdminSurface();
   try {
-    const result = resource === "devices" && !id ? await boundaries.admin.registerDevice(payload) : await boundaries.admin.save(resource, id, payload);
+    const result = mode === "register" ? await boundaries.admin.registerDevice(payload) : await boundaries.admin.save(resource, id, normalizedPayload);
     state.admin.selectedId = String(adminRecordId(result) || id || "");
     state.admin.payload = JSON.stringify(result || payload, null, 2);
     state.admin.mutationState = "success";
     state.admin.message = "admin.mutationSucceeded";
     await loadAdminResource({ force: true });
+    if (state.admin.state === "ready") { state.admin.mutationState = "success"; state.admin.message = "admin.mutationSucceeded"; renderAdminSurface(); }
   } catch (error) {
     state.admin.mutationState = "error";
     state.admin.message = "admin.mutationFailed";
@@ -1035,11 +1147,12 @@ async function adminDeviceAction(id, action) {
   state.admin.message = "";
   renderAdminSurface();
   try {
-    const result = await boundaries.admin.deviceAction(id, action);
+    const result = objectPayload(await boundaries.admin.deviceAction(id, action));
     state.admin.payload = JSON.stringify(result || {}, null, 2);
     state.admin.mutationState = "success";
     state.admin.message = "admin.mutationSucceeded";
     await loadAdminResource({ force: true });
+    if (state.admin.state === "ready") { state.admin.mutationState = "success"; state.admin.message = "admin.mutationSucceeded"; renderAdminSurface(); }
   } catch (error) {
     state.admin.mutationState = "error";
     state.admin.message = "admin.actionFailed";
@@ -1051,9 +1164,14 @@ async function runAdminImpactPreview() {
   if (state.admin.mutationState === "saving") return;
   const parsed = parseAdminPayload($("#adminSurface"));
   if (!parsed) return;
+  state.admin.mutationState = "saving";
+  state.admin.preview = null;
+  state.admin.message = "";
+  renderAdminSurface();
   try {
-    state.admin.preview = await boundaries.admin.impactPreview(parsed.payload);
-    state.admin.message = "";
+    state.admin.preview = objectPayload(await boundaries.admin.impactPreview(parsed.payload));
+    state.admin.message = "admin.previewReady";
+    state.admin.mutationState = "success";
   } catch (error) {
     state.admin.preview = null;
     state.admin.message = "admin.actionFailed";
@@ -1070,9 +1188,11 @@ async function runAdminAgentUpdate() {
   state.admin.message = "";
   renderAdminSurface();
   try {
-    state.admin.payload = JSON.stringify(await boundaries.admin.agentUpdate(parsed.payload), null, 2);
+    state.admin.payload = JSON.stringify(objectPayload(await boundaries.admin.agentUpdate(parsed.payload)), null, 2);
     state.admin.message = "admin.mutationSucceeded";
     state.admin.mutationState = "success";
+    await loadAdminResource({ force: true });
+    if (state.admin.state === "ready") { state.admin.mutationState = "success"; state.admin.message = "admin.mutationSucceeded"; renderAdminSurface(); }
   } catch (error) {
     state.admin.message = "admin.actionFailed";
     state.admin.mutationState = "error";
@@ -1156,6 +1276,30 @@ async function loadVersionDevices(version) {
   renderAuditSurface();
 }
 
+function renderIncidentActionControls(detail) {
+  const view = incidentSurfaceState();
+  const available = incidentActions(detail, state.capabilities, "idle");
+  const actions = incidentActions(detail, state.capabilities, view.actionState);
+  const disabled = actions.isPending ? " disabled" : "";
+  const controls = [];
+  if (available.canMarkProviderFixed) {
+    controls.push('<form class="incident-action-form" data-incident-action-form data-incident-action="provider_fixed"><button class="secondary-action" type="submit"' + disabled + '>' + escapeHtml(actionCopy("incidentProviderFixed")) + "</button></form>");
+  }
+  if (available.canSendToProvider) {
+    controls.push('<form class="incident-action-form" data-incident-action-form data-incident-action="send_to_provider"><button class="secondary-action" type="submit"' + disabled + '>' + escapeHtml(actionCopy("incidentSendToProvider")) + "</button></form>");
+  }
+  if (available.canAssign) {
+    controls.push('<form class="incident-action-form" data-incident-action-form data-incident-action="assign"><label>' + escapeHtml(i18n.t("field.assignee")) + '<input name="note" required maxlength="255" value="' + escapeHtml(detail?.assignee || "") + '"' + disabled + '></label><button class="secondary-action" type="submit"' + disabled + '>' + escapeHtml(actionCopy("incidentAssign")) + "</button></form>");
+  }
+  if (available.canChangeStatus) {
+    const options = INCIDENT_STATUS_OPTIONS.map((status) => '<option value="' + escapeHtml(status) + '"' + (status === String(detail?.status || "").toUpperCase() ? " selected" : "") + ">" + escapeHtml(presentation.incidentStatus(status)) + "</option>").join("");
+    controls.push('<form class="incident-action-form" data-incident-action-form data-incident-action="status"><label>' + escapeHtml(i18n.t("field.status")) + '<select name="status" required' + disabled + '>' + options + '</select></label><button class="secondary-action" type="submit"' + disabled + '>' + escapeHtml(actionCopy("incidentStatus")) + "</button></form>");
+  }
+  if (!controls.length && !view.actionError) return "";
+  const error = view.actionError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.actionError)) + "</p>" : "";
+  return '<section class="incident-actions"><h3>' + escapeHtml(i18n.t("incidents.workflow")) + "</h3>" + controls.join("") + error + "</section>";
+}
+
 function renderIncidentDetail() {
   const view = incidentSurfaceState();
   if (!view.selectedId) return '<p class="surface-state">' + escapeHtml(i18n.t("incidents.select")) + "</p>";
@@ -1176,7 +1320,7 @@ function renderIncidentDetail() {
   const lineAvailable = Boolean(map.getLine(detail.line_id));
   const canComment = state.capabilities.has("incident.update");
   const commentForm = canComment ? '<form class="incident-comment-form" data-incident-comment><label for="incidentComment">' + escapeHtml(i18n.t("incidents.comment")) + '</label><textarea id="incidentComment" required maxlength="4000" placeholder="' + escapeHtml(i18n.t("incidents.commentPlaceholder")) + '"></textarea><button class="secondary-action" type="submit">' + escapeHtml(i18n.t("incidents.sendComment")) + "</button></form>" : "";
-  return '<header class="incident-detail-head"><span class="severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.severityLabel) + "</span><h2>" + escapeHtml(incident.number) + "</h2><p>" + escapeHtml(incident.statusLabel) + "</p></header><section><h3>" + escapeHtml(i18n.t("incidents.what")) + "</h3><p>" + escapeHtml(incident.typeLabel) + '</p></section><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("incidents.where")) + "</dt><dd>" + escapeHtml(incident.school) + " · " + escapeHtml(incident.line) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.when")) + "</dt><dd>" + escapeHtml(incident.startedLabel) + " · " + escapeHtml(incident.durationLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.confirmed")) + "</dt><dd>" + escapeHtml(confirmed) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.recovery")) + "</dt><dd>" + escapeHtml(recovery.label) + "</dd></div>" + (detail.assignee ? "<div><dt>" + escapeHtml(i18n.t("field.assignee")) + "</dt><dd>" + escapeHtml(detail.assignee) + "</dd></div>" : "") + "</dl>" + (lineAvailable ? '<button class="secondary-action" type="button" data-incident-open-line="' + escapeHtml(detail.line_id) + '">' + escapeHtml(i18n.t("incidents.openLine")) + "</button>" : "") + '<section><h3>' + escapeHtml(i18n.t("incidents.workflow")) + "</h3><ol class=\"incident-timeline\">" + timeline + "</ol>" + commentForm + "</section>" + renderProviderCaseContext(detail) + renderSituationContext(detail.id);
+  return '<header class="incident-detail-head"><span class="severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.severityLabel) + "</span><h2>" + escapeHtml(incident.number) + "</h2><p>" + escapeHtml(incident.statusLabel) + "</p></header><section><h3>" + escapeHtml(i18n.t("incidents.what")) + "</h3><p>" + escapeHtml(incident.typeLabel) + '</p></section><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("incidents.where")) + "</dt><dd>" + escapeHtml(incident.school) + " · " + escapeHtml(incident.line) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.when")) + "</dt><dd>" + escapeHtml(incident.startedLabel) + " · " + escapeHtml(incident.durationLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.confirmed")) + "</dt><dd>" + escapeHtml(confirmed) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.recovery")) + "</dt><dd>" + escapeHtml(recovery.label) + "</dd></div>" + (detail.assignee ? "<div><dt>" + escapeHtml(i18n.t("field.assignee")) + "</dt><dd>" + escapeHtml(detail.assignee) + "</dd></div>" : "") + "</dl>" + (lineAvailable ? '<button class="secondary-action" type="button" data-incident-open-line="' + escapeHtml(detail.line_id) + '">' + escapeHtml(i18n.t("incidents.openLine")) + "</button>" : "") + '<section><h3>' + escapeHtml(i18n.t("incidents.workflow")) + "</h3><ol class=\"incident-timeline\">" + timeline + "</ol>" + commentForm + "</section>" + renderIncidentActionControls(detail) + renderProviderCaseContext(detail) + renderSituationContext(detail.id);
 }
 
 function renderProviderCaseContext(incident) {
@@ -1218,10 +1362,34 @@ function renderSituationContext(incidentId) {
   if (view.situationsState === "error") return '<section><h3>' + escapeHtml(i18n.t("situation.contextTitle")) + "</h3><p class=\"detail-muted\">" + escapeHtml(i18n.t("situation.unavailable")) + "</p></section>";
   const situations = relatedSituations(view.situations, incidentId);
   const rows = situations.length ? situations.map((item) => {
-    const situation = presentSituation(item, { i18n, presentation });
+    const situation = presentSituation(item, { i18n, presentation, capabilities: state.capabilities, actionState: view.situationActionState });
     return '<li><button class="link-action" type="button" data-situation-id="' + escapeHtml(situation.id) + '"><strong>' + escapeHtml(situation.title) + "</strong><span>" + escapeHtml(i18n.t("situation.members", { count: situation.affectedCount })) + " · " + escapeHtml(situation.typeLabel) + "</span></button></li>";
   }).join("") : '<p class="detail-muted">' + escapeHtml(i18n.t("situation.empty")) + "</p>";
   return '<section class="situation-context"><h3>' + escapeHtml(i18n.t("situation.contextTitle")) + "</h3><p class=\"detail-muted\">" + escapeHtml(i18n.t("situation.contextHint")) + "</p><ul>" + rows + "</ul></section>";
+}
+
+function renderSituationActionControls(situation, members) {
+  const view = incidentSurfaceState();
+  const available = situationActions(situation, state.capabilities, "idle");
+  const actions = situationActions(situation, state.capabilities, view.situationActionState);
+  if (!available.hasMutation) return "";
+  const disabled = actions.isPending ? " disabled" : "";
+  const controls = [];
+  if (actions.canLiveVerify) {
+    controls.push('<form class="situation-action-form" data-situation-action-form data-situation-action="live-verify"><button class="secondary-action" type="submit"' + disabled + '>' + escapeHtml(actionCopy("situationLiveVerify")) + "</button></form>");
+  }
+  const mergeTargets = view.situations.filter((item) => String(item?.id) !== String(situation?.id) && String(item?.status || "OPEN").toUpperCase() === "OPEN");
+  if (actions.canMerge && mergeTargets.length) {
+    const options = mergeTargets.map((item) => '<option value="' + escapeHtml(item.id) + '">' + escapeHtml(i18n.t("situation.untitled") + " #" + item.id) + "</option>").join("");
+    controls.push('<form class="situation-action-form" data-situation-action-form data-situation-action="merge"><label>' + escapeHtml(actionCopy("situationMergeTargets")) + '<select name="situation_ids" multiple size="' + Math.min(4, mergeTargets.length) + '"' + disabled + '>' + options + '</select></label><label>' + escapeHtml(actionCopy("situationReason")) + '<input name="reason" required maxlength="1000"' + disabled + '></label><button class="secondary-action" type="submit"' + disabled + '>' + escapeHtml(i18n.t("action.situation.merge")) + "</button></form>");
+  }
+  if (actions.canSplit && members.length > 1) {
+    const checkboxes = members.map((item) => '<label><input type="checkbox" name="incident_ids" value="' + escapeHtml(item.id) + '"' + disabled + ' /> ' + escapeHtml(item.incident_no || item.number || item.id) + " · " + escapeHtml(item.school_name || item.organization_name || i18n.t("school.noOfficialName")) + "</label>").join("");
+    controls.push('<form class="situation-action-form" data-situation-action-form data-situation-action="split"><fieldset><legend>' + escapeHtml(actionCopy("situationSplitMembers")) + "</legend>" + checkboxes + '</fieldset><label>' + escapeHtml(actionCopy("situationReason")) + '<input name="reason" required maxlength="1000"' + disabled + '></label><button class="secondary-action" type="submit"' + disabled + '>' + escapeHtml(i18n.t("action.situation.split")) + "</button></form>");
+  }
+  if (!controls.length && !view.situationActionError) return "";
+  const error = view.situationActionError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.situationActionError)) + "</p>" : "";
+  return '<section class="situation-actions"><h3>' + escapeHtml(i18n.t("situation.contextTitle")) + "</h3>" + controls.join("") + error + "</section>";
 }
 
 function renderSituationDetail() {
@@ -1232,7 +1400,113 @@ function renderSituationDetail() {
   const factors = situation.factors || {};
   const members = Array.isArray(situation.incidents) ? situation.incidents : [];
   const evidence = situation.evidence?.state || "UNKNOWN";
-  return '<button class="link-action back-action" type="button" data-situation-back>' + escapeHtml(i18n.t("situation.backToIncident")) + '</button><header class="incident-detail-head"><h2>' + escapeHtml(i18n.t("situation.detailTitle")) + " #" + escapeHtml(situation.id) + "</h2><p>" + escapeHtml(i18n.t("situation.readOnly")) + '</p></header><section><h3>' + escapeHtml(i18n.t("situation.factors")) + "</h3><dl class=\"detail-grid\"><div><dt>" + escapeHtml(i18n.t("field.district")) + "</dt><dd>" + escapeHtml(factors.district || i18n.t("empty.noData")) + "</dd></div><div><dt>" + escapeHtml(i18n.t("field.type")) + "</dt><dd>" + escapeHtml(i18n.has("incidentType." + String(factors.violation_type || "").toUpperCase()) ? i18n.t("incidentType." + String(factors.violation_type).toUpperCase()) : i18n.t("incidentType.UNKNOWN")) + "</dd></div></dl></section><section><h3>" + escapeHtml(i18n.t("situation.evidence")) + "</h3><p>" + escapeHtml(i18n.has("situation.evidence." + evidence) ? i18n.t("situation.evidence." + evidence) : i18n.t("situation.evidence.UNKNOWN")) + "</p></section><section><h3>" + escapeHtml(i18n.t("situation.memberIncidents")) + "</h3><ul class=\"situation-members\">" + members.map((item) => '<li><button class="link-action" type="button" data-incident-id="' + escapeHtml(item.id) + '">' + escapeHtml(item.incident_no || item.number || item.id) + " · " + escapeHtml(item.school_name || item.organization_name || i18n.t("school.noOfficialName")) + "</button></li>").join("") + "</ul></section>";
+  return '<button class="link-action back-action" type="button" data-situation-back>' + escapeHtml(i18n.t("situation.backToIncident")) + '</button><header class="incident-detail-head"><h2>' + escapeHtml(i18n.t("situation.detailTitle")) + " #" + escapeHtml(situation.id) + "</h2><p>" + escapeHtml(i18n.t("situation.readOnly")) + '</p></header><section><h3>' + escapeHtml(i18n.t("situation.factors")) + "</h3><dl class=\"detail-grid\"><div><dt>" + escapeHtml(i18n.t("field.district")) + "</dt><dd>" + escapeHtml(factors.district || i18n.t("empty.noData")) + "</dd></div><div><dt>" + escapeHtml(i18n.t("field.type")) + "</dt><dd>" + escapeHtml(i18n.has("incidentType." + String(factors.violation_type || "").toUpperCase()) ? i18n.t("incidentType." + String(factors.violation_type).toUpperCase()) : i18n.t("incidentType.UNKNOWN")) + "</dd></div></dl></section><section><h3>" + escapeHtml(i18n.t("situation.evidence")) + "</h3><p>" + escapeHtml(i18n.has("situation.evidence." + evidence) ? i18n.t("situation.evidence." + evidence) : i18n.t("situation.evidence.UNKNOWN")) + "</p></section><section><h3>" + escapeHtml(i18n.t("situation.memberIncidents")) + "</h3><ul class=\"situation-members\">" + members.map((item) => '<li><button class="link-action" type="button" data-incident-id="' + escapeHtml(item.id) + '">' + escapeHtml(item.incident_no || item.number || item.id) + " · " + escapeHtml(item.school_name || item.organization_name || i18n.t("school.noOfficialName")) + "</button></li>").join("") + "</ul></section>" + renderSituationActionControls(situation, members);
+}
+
+function incidentActionAllowed(actions, action) {
+  return {
+    provider_fixed: actions.canMarkProviderFixed,
+    send_to_provider: actions.canSendToProvider,
+    assign: actions.canAssign,
+    status: actions.canChangeStatus,
+  }[action] === true;
+}
+
+async function submitIncidentAction(event) {
+  event.preventDefault();
+  const view = incidentSurfaceState();
+  const detail = view.detail;
+  const action = event.currentTarget.dataset.incidentAction;
+  const actions = incidentActions(detail, state.capabilities, view.actionState);
+  if (!detail || !view.selectedId || !incidentActionAllowed(actions, action)) return;
+  const note = event.currentTarget.elements.note?.value.trim() || "";
+  const status = event.currentTarget.elements.status?.value || "";
+  if (action === "assign" && !note) { showToast("error.422", "warn"); return; }
+  if (action === "status" && !INCIDENT_STATUS_OPTIONS.includes(status)) { showToast("error.422", "warn"); return; }
+  const confirmationKey = {
+    provider_fixed: "confirmIncidentProviderFixed",
+    send_to_provider: "confirmIncidentSendToProvider",
+    assign: "confirmIncidentAssign",
+    status: "confirmIncidentStatus",
+  }[action];
+  if (!confirmAction(confirmationKey)) return;
+  const incidentID = view.selectedId;
+  view.actionState = action;
+  view.actionError = "";
+  renderIncidentsSurface();
+  try {
+    const response = objectPayload(await boundaries.incidents.addEvent(incidentID, { event_type: action, note, status }));
+    const readback = objectPayload(await boundaries.incidents.get(incidentID));
+    if (String(view.selectedId) !== String(incidentID)) return;
+    const next = readback && typeof readback === "object" ? readback : response;
+    if (!next || typeof next !== "object") throw new Error("incident readback unavailable");
+    view.detail = next;
+    const index = view.items.findIndex((item) => String(item.id) === String(incidentID));
+    if (index >= 0) view.items[index] = next;
+    view.detailState = "ready";
+    view.actionState = "idle";
+  } catch (error) {
+    if (String(view.selectedId) !== String(incidentID)) return;
+    view.actionState = "idle";
+    view.actionError = errorMessageKey(error);
+  }
+  renderIncidentsSurface();
+}
+
+function createdSituationID(result) {
+  const ids = result?.created_ids || result?.CreatedIDs || result?.createdIDs;
+  return Array.isArray(ids) && ids.length ? ids[0] : "";
+}
+
+function situationActionAllowed(actions, action) {
+  return {
+    "live-verify": actions.canLiveVerify,
+    merge: actions.canMerge,
+    split: actions.canSplit,
+  }[action] === true;
+}
+
+async function submitSituationAction(event) {
+  event.preventDefault();
+  const view = incidentSurfaceState();
+  const situation = view.situation;
+  const action = event.currentTarget.dataset.situationAction;
+  const actions = situationActions(situation, state.capabilities, view.situationActionState);
+  if (!situation || !view.selectedSituationId || !situationActionAllowed(actions, action)) return;
+  const form = event.currentTarget;
+  const reason = form.elements.reason?.value.trim() || "";
+  const situationIDs = [...(form.elements.situation_ids ? form.elements.situation_ids.selectedOptions : [])].map((option) => option.value);
+  const incidentIDs = [...form.querySelectorAll('input[name="incident_ids"]:checked')].map((input) => input.value);
+  if (action !== "live-verify" && !reason) { showToast("error.422", "warn"); return; }
+  if (action === "merge" && !situationIDs.length) { showToast("error.422", "warn"); return; }
+  const members = Array.isArray(situation.incidents) ? situation.incidents : [];
+  if (action === "split" && (!incidentIDs.length || incidentIDs.length >= members.length)) { showToast("error.422", "warn"); return; }
+  const confirmationKey = action === "live-verify" ? "confirmSituationLiveVerify" : action === "merge" ? "confirmSituationMerge" : "confirmSituationSplit";
+  if (!confirmAction(confirmationKey)) return;
+  const situationID = view.selectedSituationId;
+  view.situationActionState = action === "live-verify" ? "live-verifying" : action === "merge" ? "merging" : "splitting";
+  view.situationActionError = "";
+  renderIncidentsSurface();
+  try {
+    const result = action === "live-verify"
+      ? objectPayload(await boundaries.incidents.liveVerify(situationID))
+      : objectPayload(await boundaries.incidents.manageSituation(situationID, action, { reason, situation_ids: situationIDs, incident_ids: incidentIDs }));
+    const readbackID = createdSituationID(result) || situationID;
+    const readback = objectPayload(await boundaries.incidents.situation(readbackID));
+    const freshSituations = await boundaries.incidents.situations();
+    if (String(view.selectedSituationId) !== String(situationID)) return;
+    if (!readback || typeof readback !== "object") throw new Error("situation readback unavailable");
+    view.situations = Array.isArray(freshSituations) ? freshSituations : view.situations;
+    view.selectedSituationId = readbackID;
+    view.situation = readback;
+    view.situationState = "ready";
+    view.situationActionState = "idle";
+  } catch (error) {
+    if (String(view.selectedSituationId) !== String(situationID)) return;
+    view.situationActionState = "idle";
+    view.situationActionError = errorMessageKey(error);
+  }
+  renderIncidentsSurface();
 }
 
 function bindIncidentSurfaceEvents(root) {
@@ -1244,6 +1518,7 @@ function bindIncidentSurfaceEvents(root) {
   root.querySelectorAll("[data-incident-id]").forEach((control) => control.addEventListener("click", () => selectIncident(control.dataset.incidentId)));
   root.querySelectorAll("[data-situation-id]").forEach((control) => control.addEventListener("click", () => selectSituation(control.dataset.situationId)));
   root.querySelectorAll("[data-provider-case-id]").forEach((control) => control.addEventListener("click", () => selectProviderCase(control.dataset.providerCaseId)));
+  root.querySelectorAll("[data-incident-action-form]").forEach((form) => form.addEventListener("submit", submitIncidentAction));
   root.querySelector("[data-provider-case-prepare]")?.addEventListener("click", createIncidentProviderCase);
   root.querySelector("[data-provider-case-generate]")?.addEventListener("click", generateProviderCaseDraft);
   root.querySelector("[data-provider-case-reviewed]")?.addEventListener("change", (event) => {
@@ -1251,7 +1526,8 @@ function bindIncidentSurfaceEvents(root) {
     if (submit) submit.disabled = !event.currentTarget.checked;
   });
   root.querySelector("[data-provider-case-send]")?.addEventListener("submit", sendProviderCase);
-  root.querySelector("[data-situation-back]")?.addEventListener("click", () => { incidentSurfaceState().selectedSituationId = null; incidentSurfaceState().situation = null; incidentSurfaceState().situationState = "idle"; renderIncidentsSurface(); });
+  root.querySelectorAll("[data-situation-action-form]").forEach((form) => form.addEventListener("submit", submitSituationAction));
+  root.querySelector("[data-situation-back]")?.addEventListener("click", () => { const view = incidentSurfaceState(); view.selectedSituationId = null; view.situation = null; view.situationState = "idle"; view.situationActionState = "idle"; view.situationActionError = ""; renderIncidentsSurface(); });
   root.querySelector("[data-incident-open-line]")?.addEventListener("click", () => openIncidentLine(root.querySelector("[data-incident-open-line]").dataset.incidentOpenLine));
   root.querySelector("[data-incident-comment]")?.addEventListener("submit", submitIncidentComment);
 }
@@ -1290,9 +1566,13 @@ async function selectIncident(id) {
   view.selectedId = id;
   view.detail = null;
   view.detailState = "loading";
+  view.actionState = "idle";
+  view.actionError = "";
   view.selectedSituationId = null;
   view.situation = null;
   view.situationState = "idle";
+  view.situationActionState = "idle";
+  view.situationActionError = "";
   view.providerCase = { selectedId: null, state: "idle", detail: null, actionState: "idle", actionError: "", generated: null };
   renderIncidentsSurface();
   await loadIncidentDetail(id);
@@ -1383,11 +1663,15 @@ async function sendProviderCase(event) {
   const reviewed = event.currentTarget.querySelector("[data-provider-case-reviewed]")?.checked === true;
   if (!detail || view.providerCase.actionState !== "idle" || !reviewed || !finalText || !providerCaseActions(detail, state.capabilities).canSend) return;
   if (!globalThis.confirm?.(i18n.t("providerCase.confirmSend"))) return;
-  view.providerCase.actionState = "sending";
+  const request = providerCaseDeliveryRequest(detail, { finalText, incidentId: view.selectedId, reviewed: true });
+  view.providerCase.actionState = request.operation === "retry" ? "retrying" : "sending";
   view.providerCase.actionError = "";
   renderIncidentsSurface();
   try {
-    const sent = objectPayload(await boundaries.providerCases.send(detail.id, { incident_id: view.selectedId, final_text: finalText, reviewed: true }));
+    const delivered = request.operation === "retry"
+      ? await boundaries.providerCases.retry(detail.id, request.payload)
+      : await boundaries.providerCases.send(detail.id, request.payload);
+    const sent = objectPayload(delivered);
     if (String(view.providerCase.selectedId) !== String(detail.id)) return;
     view.providerCase.detail = { ...detail, ...sent };
     view.providerCase.actionState = "idle";
@@ -1415,6 +1699,8 @@ async function selectSituation(id) {
   view.selectedSituationId = id;
   view.situation = null;
   view.situationState = "loading";
+  view.situationActionState = "idle";
+  view.situationActionError = "";
   renderIncidentsSurface();
   try {
     const response = objectPayload(await boundaries.incidents.situation(id));
@@ -1444,9 +1730,12 @@ async function submitIncidentComment(event) {
   if (submit) submit.disabled = true;
   try {
     const response = objectPayload(await boundaries.incidents.addEvent(view.selectedId, { event_type: "comment", note }));
-    view.detail = response;
+    const readback = objectPayload(await boundaries.incidents.get(view.selectedId));
+    const next = readback && typeof readback === "object" ? readback : response;
+    if (!next || typeof next !== "object") throw new Error("incident readback unavailable");
+    view.detail = next;
     const index = view.items.findIndex((item) => String(item.id) === String(view.selectedId));
-    if (index >= 0) view.items[index] = response;
+    if (index >= 0) view.items[index] = next;
     view.detailState = "ready";
     renderIncidentsSurface();
   } catch (error) {

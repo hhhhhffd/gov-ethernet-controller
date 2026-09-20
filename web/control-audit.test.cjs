@@ -39,3 +39,35 @@ test("UI-003 mutations require permissions, confirmation and awaited server succ
   assert.match(app, /providerCase\.actionState !== "idle"/);
   assert.match(app, /state\.admin\.mutationState === "saving"/);
 });
+
+test("UI-004 capability-gated workflow controls use real helpers and pending states", () => {
+  const app = fs.readFileSync("web/app.js", "utf8");
+  for (const action of ["provider_fixed", "send_to_provider", "assign", "status"]) {
+    assert.match(app, new RegExp(`data-incident-action=\\"${action}\\"`));
+  }
+  for (const action of ["live-verify", "merge", "split"]) {
+    assert.match(app, new RegExp(`data-situation-action=\\"${action}\\"`));
+  }
+  assert.match(app, /incidentActions\(detail, state\.capabilities/);
+  assert.match(app, /situationActions\(situation, state\.capabilities/);
+  assert.match(app, /data-notification-dispatch/);
+  assert.match(app, /root\.querySelectorAll\("\[data-notification-dispatch\]"\)/);
+  assert.match(app, /providerCaseDeliveryRequest\(detail/);
+  assert.match(app, /boundaries\.providerCases\.retry/);
+  assert.match(app, /boundaries\.incidents\.manageSituation/);
+  assert.match(app, /await boundaries\.incidents\.get\(incidentID\)/);
+  assert.match(app, /await boundaries\.notifications\.list\(\{ limit: "50" \}\)/);
+  assert.match(app, /availableNotification\.actions\?\.canDispatch/);
+});
+
+test("UI-005 admin and notification diagnostics stay out of primary human copy", () => {
+  const app = fs.readFileSync("web/app.js", "utf8");
+  assert.match(app, /presentAdminRecord\(view\.resource, item/);
+  assert.match(app, /<details><summary>.*admin\.details/);
+  assert.match(app, /JSON\.stringify\(presented\.technical/);
+  assert.match(app, /JSON\.stringify\(view\.preview/);
+  assert.doesNotMatch(app, /function adminFieldLabel\(/);
+  assert.doesNotMatch(app, /function adminDisplayValue\(/);
+  assert.doesNotMatch(app, /<p>\" \+ escapeHtml\(item\.message\)/);
+  assert.match(app, /state\.admin\.mutationState = "saving";\s*state\.admin\.preview = null;\s*state\.admin\.message = "";\s*renderAdminSurface\(\);\s*try/s);
+});
