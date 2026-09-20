@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -208,18 +209,21 @@ func (s *Server) serveStatic(w http.ResponseWriter, name string) {
 		writeError(w, http.StatusNotFound, "asset not found")
 		return
 	}
-	contentType := "application/octet-stream"
-	if strings.HasSuffix(name, ".html") {
-		contentType = "text/html; charset=utf-8"
-	}
-	if strings.HasSuffix(name, ".css") {
-		contentType = "text/css; charset=utf-8"
-	}
-	if strings.HasSuffix(name, ".js") {
-		contentType = "text/javascript; charset=utf-8"
-	}
-	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Type", staticContentType(name))
 	_, _ = w.Write(data)
+}
+
+func staticContentType(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".html":
+		return "text/html; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".js", ".mjs":
+		return "text/javascript; charset=utf-8"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, value interface{}) {
