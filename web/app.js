@@ -23,7 +23,7 @@ import { adminResourceDefinitions, presentAgentVersion, presentAuditItem, presen
 const $ = (selector, root = document) => root.querySelector(selector);
 const state = {
   capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, selectedSchool: null,
-  mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null,
+  mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null, drawerTrigger: null, drawerFocusSet: false,
   incidents: createIncidentSurfaceState(),
   reports: createReportsSurfaceState(),
   notifications: createNotificationsSurfaceState(),
@@ -432,16 +432,17 @@ function renderPopup(context) {
 
 function openMapPopup(context, trigger = null) {
   state.mapPopupContext = context;
-  state.mapPopupTrigger = trigger;
+  state.mapPopupTrigger = trigger || (document.activeElement !== document.body ? document.activeElement : null);
   state.selectedSchool = context.kind === "registry-cluster" ? null : createSelectedSchool(context);
   renderPopup(context);
+  $("#mapPopup")?.focus();
 }
 function closeMapPopup(restoreFocus = true) {
   const popup = $("#mapPopup");
   if (!popup) return;
   popup.hidden = true;
   popup.classList.add("hidden");
-  if (restoreFocus) state.mapPopupTrigger?.getElement?.()?.focus?.();
+  if (restoreFocus) (state.mapPopupTrigger?.getElement?.() || state.mapPopupTrigger)?.focus?.();
   state.mapPopupContext = null;
   state.mapPopupTrigger = null;
   if (!$("#detailDrawer")?.hidden) return;
@@ -495,6 +496,7 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
   $("#detailDrawer").hidden = false;
   $("#detailDrawer").classList.add("open");
   $("#detailDrawer").setAttribute("aria-hidden", "false");
+  if (state.drawerTrigger && !state.drawerFocusSet) { $("#detailDrawer")?.focus(); state.drawerFocusSet = true; }
   $("#detailDrawer").querySelectorAll("[data-popup-line-id]").forEach((button) => button.addEventListener("click", async () => {
     state.selectedSchool = selectSchoolLine(state.selectedSchool, button.dataset.popupLineId);
     renderSchoolDrawer();
@@ -507,6 +509,7 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
 async function openSelectedSchoolDetail() {
   let selection = state.selectedSchool;
   if (!selection) return;
+  if (!state.drawerTrigger) state.drawerTrigger = document.activeElement !== document.body ? document.activeElement : state.mapPopupTrigger;
   const line = selectedLine(selection);
   if (!line) { renderSchoolDrawer(selection); return; }
   selection = { ...selection, detailState: "loading", detail: null };
@@ -767,8 +770,11 @@ async function loadNotifications({ force = false } = {}) {
 function toggleNotifications() {
   if (!state.capabilities.has("notification.read")) return;
   state.notifications.open = !state.notifications.open;
-  if (state.notifications.open) loadNotifications();
-  else renderNotificationsSurface();
+  if (state.notifications.open) {
+    renderNotificationsSurface();
+    $("#notificationsSurface")?.focus();
+    loadNotifications();
+  } else renderNotificationsSurface();
 }
 
 function adminResourceLabel(resource) { return i18n.t("admin.resources." + resource); }
@@ -812,6 +818,11 @@ function renderAdminSurface() {
   const header = '<header class="surface-header"><div><h1>' + escapeHtml(i18n.t("admin.title")) + '</h1><p>' + escapeHtml(i18n.t("admin.subtitle")) + '</p></div><button type="button" class="secondary-action" data-admin-refresh>' + escapeHtml(i18n.t("admin.refresh")) + "</button></header>";
   if (view.state === "loading" || view.state === "idle") {
     root.innerHTML = '<div class="secondary-shell">' + header + '<p class="surface-state" role="status">' + escapeHtml(i18n.t("admin.loading")) + "</p></div>";
+    root.querySelector("[data-admin-refresh]")?.addEventListener("click", () => loadAdminResource({ force: true }));
+    return;
+  }
+  if (view.state === "error") {
+    root.innerHTML = '<div class="secondary-shell">' + header + '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t("admin.unavailable")) + '</p><button type="button" class="secondary-action" data-admin-refresh>' + escapeHtml(i18n.t("admin.refresh")) + "</button></div>";
     root.querySelector("[data-admin-refresh]")?.addEventListener("click", () => loadAdminResource({ force: true }));
     return;
   }
@@ -1342,12 +1353,28 @@ function closeDrawer() {
   if ($("#detailDrawer")) $("#detailDrawer").hidden = true;
   if ($("#drawerBackdrop")) $("#drawerBackdrop").hidden = true;
   if ($("#detailDrawer")) $("#detailDrawer").setAttribute("aria-hidden", "true");
+  const trigger = state.drawerTrigger;
+  state.drawerTrigger = null;
+  state.drawerFocusSet = false;
+  trigger?.focus?.();
 }
 async function refreshMap() {
   if (!session.authenticated) return;
   state.mapLoaded = false;
   state.mapLoadPromise = null;
   await loadAuthenticatedMap();
+}
+
+function trapOverlayFocus(event) {
+  if (event.key !== "Tab") return;
+  const overlay = !$("#authBackdrop")?.hidden ? $("#loginForm") : !$("#detailDrawer")?.hidden ? $("#detailDrawer") : state.notifications.open ? $("#notificationsSurface") : !$("#mapPopup")?.hidden ? $("#mapPopup") : null;
+  if (!overlay) return;
+  const focusable = [...overlay.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [href], [tabindex]:not([tabindex='-1'])")].filter((element) => !element.hidden && element.offsetParent !== null);
+  if (!focusable.length) { event.preventDefault(); overlay.focus?.(); return; }
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
 }
 
 function bindEvents() {
@@ -1392,7 +1419,7 @@ function bindEvents() {
   $("#mapZoomIn")?.addEventListener("click", () => mapApiAction("zoomIn"));
   $("#mapZoomOut")?.addEventListener("click", () => mapApiAction("zoomOut"));
   $("#mapReset")?.addEventListener("click", () => globalThis.LinkwatchMap?.resetView());
-  document.addEventListener("keydown", (event) => { if (event.key === "Escape") { if (state.notifications.open) closeNotifications(); else if (!$("#mapPopup")?.hidden) closeMapPopup(); else if (!$("#detailDrawer")?.hidden) closeDrawer(); } });
+  document.addEventListener("keydown", (event) => { trapOverlayFocus(event); if (event.key === "Escape") { if (state.notifications.open) closeNotifications(); else if (!$("#mapPopup")?.hidden) closeMapPopup(); else if (!$("#detailDrawer")?.hidden) closeDrawer(); } });
   globalThis.LinkwatchMap?.setMarkerClickHandler((context, marker) => openMapPopup(context, marker));
 }
 

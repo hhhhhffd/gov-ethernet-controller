@@ -26,7 +26,7 @@
             </nav>
           </div>
           <div class="shell-top-right" data-i18n-aria-label="app.tools">
-            <button id="themeToggle" class="reference-icon-button" type="button"></button>
+            <button id="themeToggle" class="reference-icon-button" type="button" data-i18n-aria-label="theme.switchToLight" data-i18n-title="theme.switchToLight">☼</button>
             <button id="refreshButton" class="reference-icon-button" type="button" data-i18n-aria-label="action.refreshMap" data-i18n-title="action.refreshMap">↻</button>
             <button id="notificationsButton" class="reference-icon-button" type="button" data-capability="notification.read" data-i18n-aria-label="notification.open" data-i18n-title="notification.open" aria-expanded="false">♢</button>
             <details id="accountControl" class="account-control">
@@ -70,9 +70,9 @@
         <span id="registryDataStatus" class="visually-hidden" role="status"></span>
         <section id="incidentsSurface" class="incidents-surface" aria-live="polite" hidden></section>
         <section id="reportsSurface" class="reports-surface" aria-live="polite" hidden></section>
-        <section id="notificationsSurface" class="notification-surface" role="dialog" aria-modal="false" aria-labelledby="notificationsTitle" hidden></section>
-        <section id="adminSurface" class="secondary-surface" aria-live="polite" hidden></section>
-        <section id="auditSurface" class="secondary-surface" aria-live="polite" hidden></section>
+        <section id="notificationsSurface" class="notification-surface" role="dialog" aria-modal="false" aria-labelledby="notificationsTitle" tabindex="-1" hidden></section>
+        <section id="adminSurface" class="secondary-surface" aria-live="polite" tabindex="-1" hidden></section>
+        <section id="auditSurface" class="secondary-surface" aria-live="polite" tabindex="-1" hidden></section>
       </section>
       <div id="authBackdrop" class="auth-backdrop" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <form id="loginForm" class="auth-form">
@@ -83,7 +83,7 @@
         </form>
       </div>
       <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
-      <aside id="detailDrawer" class="detail-drawer" aria-hidden="true" hidden aria-labelledby="drawerTitle">
+      <aside id="detailDrawer" class="detail-drawer" role="dialog" aria-modal="true" aria-hidden="true" hidden aria-labelledby="drawerTitle" tabindex="-1">
         <div class="drawer-head"><div><h2 id="drawerTitle">—</h2><p id="drawerSubtitle">—</p></div><button id="drawerClose" type="button" data-i18n-aria-label="action.closeLineCard">×</button></div>
         <div id="drawerState" class="selection-state" role="status"></div><div id="drawerStatus" class="drawer-section"></div><dl id="drawerContext" class="drawer-grid"></dl><dl id="drawerLine" class="drawer-grid"></dl><dl id="drawerMetrics" class="drawer-grid"></dl><dl id="drawerIncident" class="drawer-grid"></dl>
       </aside>
