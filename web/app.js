@@ -1198,16 +1198,20 @@ async function downloadReportExport(event) {
 
 async function triggerDownload(response, filename) {
   const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
+  const urlAPI = globalThis.URL;
+  if (!urlAPI || typeof urlAPI.createObjectURL !== "function") throw new Error("Browser does not support file downloads");
+  const url = urlAPI.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
   anchor.download = filename;
-  anchor.hidden = true;
-  document.body.appendChild(anchor);
+  anchor.setAttribute("aria-hidden", "true");
+  anchor.style.position = "fixed";
+  anchor.style.left = "-10000px";
+  (document.body || document.documentElement).appendChild(anchor);
   anchor.click();
   globalThis.setTimeout(() => {
     anchor.remove();
-    URL.revokeObjectURL(url);
+    urlAPI.revokeObjectURL?.(url);
   }, 1_000);
 }
 
