@@ -48,6 +48,8 @@ const map = {
   },
   getZoom() { return this.zoom; },
   getSize() { return { x: 800, y: 600 }; },
+  getContainer() { return container; },
+  latLngToContainerPoint([latitude, longitude]) { return { x: longitude * 10, y: latitude * 10 }; },
   project([latitude, longitude], zoom) { const scale = 256 * 2 ** zoom / 360; return { x: longitude * scale, y: latitude * scale }; },
   unproject([x, y], zoom) { const scale = 256 * 2 ** zoom / 360; return { lat: y / scale, lng: x / scale }; },
   fitBounds(bounds, options) { this.bounds = { bounds, options }; return this; },
@@ -57,12 +59,18 @@ const map = {
   on(name, callback) { (this.handlers[name] ||= []).push(callback); return this; },
   invalidateSize() {},
 };
-const container = { id: "leafletMap" };
-const tileLayer = {
-  handlers: {},
-  on(name, callback) { this.handlers[name] = callback; return this; },
-  addTo() { return this; },
-};
+const container = { id: "leafletMap", getBoundingClientRect() { return { left: 100, top: 50, width: 800, height: 600 }; } };
+const tileLayers = [];
+function createTileLayer(url) {
+  const layer = {
+    url,
+    handlers: {},
+    on(name, callback) { this.handlers[name] = callback; return this; },
+    addTo() { return this; },
+  };
+  tileLayers.push(layer);
+  return layer;
+}
 const tileStatus = { hidden: true, textContent: "" };
 const popupListeners = {};
 let popupObserverCallback = null;
@@ -83,13 +91,13 @@ const mapWrap = { scrollTop: 138, getBoundingClientRect() { return { bottom: 600
 const window = {
   L: {
     map() { return map; },
-    tileLayer() { return tileLayer; },
+    tileLayer(url) { return createTileLayer(url); },
     layerGroup: createLayer,
     marker: createMarker,
     divIcon(options) { return options; },
   },
   CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init.detail; } },
-  dispatchEvent() {},
+  dispatchEvent(event) { dispatchedEvents.push(event); },
   setTimeout(callback) { callback(); },
   MutationObserver: class MutationObserver {
     constructor(callback) { popupObserverCallback = callback; }
@@ -97,6 +105,7 @@ const window = {
     disconnect() {}
   },
 };
+const dispatchedEvents = [];
 const document = {
   activeElement: null,
   getElementById(id) {
@@ -141,10 +150,13 @@ function setPopupOpen(open) {
 assert.equal(mapApi.setMapPresentation({ theme: "light", locale: "kk", style: "alidade-smooth-dark", fallback: "preserve-canonical-dark-basemap", labels: "application-presentation" }), true);
 assert.equal(JSON.stringify(mapApi.getMapPresentation()), JSON.stringify({ theme: "light", locale: "kk", style: "alidade-smooth-dark", fallback: "preserve-canonical-dark-basemap", labels: "application-presentation" }));
 assert.equal(mapApi.getConfig().tileUrl, mapApi.DEFAULT_CONFIG.tileUrl, "light presentation must retain the canonical map URL");
-tileLayer.handlers.tileerror();
+assert.equal(tileLayers.length, 2, "switching to light presentation must replace the tile layer once");
+assert.equal(tileLayers[0].url, mapApi.DEFAULT_CONFIG.tileUrl, "dark theme must use the dark Alidade Smooth tiles");
+assert.equal(tileLayers[1].url, mapApi.DEFAULT_CONFIG.lightTileUrl, "light theme must use the light Alidade Smooth tiles");
+tileLayers[1].handlers.tileerror();
 assert.equal(tileStatus.hidden, false, "tile failure must be visible without disabling the map");
 assert.equal(tileStatus.textContent, "Подложка карты временно недоступна");
-tileLayer.handlers.tileload();
+tileLayers[1].handlers.tileload();
 assert.equal(tileStatus.hidden, true, "tile status must clear after recovery");
 assert.equal(mapApi.render({ mode: "current", registry, lines }), true);
 const current = mapApi.getLastRender();
@@ -162,8 +174,16 @@ assert.equal(clusterContext.lines.length, 0, "registry cluster must not expose o
 assert.ok(clusterContext.members.some((member) => member.registryId === "18383"), "school 32 must remain a cluster member");
 assert.ok(map.bounds, "render must fit the map to actual registry/monitoring coordinates");
 assert.ok(map.bounds.bounds.some(([latitude, longitude]) => latitude === 50.30 && longitude === 83.40));
+const clusterPosition = mapApi.getMarkerScreenPosition(registryCluster);
+assert.equal(clusterPosition.coordinate.latitude, registryCluster.latLng[0], "marker position must use the real marker latitude");
+assert.equal(clusterPosition.coordinate.longitude, registryCluster.latLng[1], "marker position must use the real marker longitude");
+assert.equal(clusterPosition.viewportX, registryCluster.latLng[1] * 10 + 100, "marker position must expose viewport x for anchored UI");
+assert.equal(clusterPosition.viewportY, registryCluster.latLng[0] * 10 + 50, "marker position must expose viewport y for anchored UI");
 mapApi.setMarkerClickHandler(() => setPopupOpen(true));
 registryCluster.trigger("click");
+assert.ok(dispatchedEvents.some((event) => event.type === mapApi.MARKER_POSITION_EVENT && event.detail.reason === "activate"), "marker activation must publish an anchored-position event");
+for (const eventName of ["move", "zoom", "resize"]) (map.handlers[eventName] || []).forEach((callback) => callback());
+assert.ok(["move", "zoom", "resize"].every((reason) => dispatchedEvents.some((event) => event.type === mapApi.MARKER_POSITION_EVENT && event.detail.reason === reason)), "active marker position must follow map move, zoom, and resize events");
 assert.ok(map.zoom > 7, "cluster click must advance the viewport zoom");
 assert.equal(popup.style.boxSizing, "border-box", "open map popup must use viewport-safe sizing");
 assert.equal(popup.style.maxHeight, "430px", "open map popup must reserve a bottom viewport margin");
@@ -235,6 +255,18 @@ assert.ok(mapApi.getLastRender().registryClusterCount > largeRender.registryClus
 assert.ok(mapApi.getLayers().registryClusters.items.some((marker) => !oldVisibleMarkers.includes(marker)), "cluster expansion must rebuild marker instances for the new viewport");
 assert.equal(new Set(representedRegistryIds()).size, 370, "cluster rebuild must preserve every real registry identity");
 assert.ok(largeClusterContexts().every((context) => context.members.length <= mapApi.getConfig().clusterMaxMembers), "rebuilt member lists must remain bounded");
+assert.ok(map.zoom >= mapApi.getConfig().clusterDisableZoom, "cluster expansion must reach the configured unclustered zoom");
+assert.equal(visibleRegistryContexts().filter((context) => context.kind === "registry").length, 370, "unclustered zoom must expose individual school markers");
+
+const selectedMarker = mapApi.getLayers().registryClusters.items.find((marker) => mapApi.getMarkerContext(marker)?.registryId === "18383");
+const selectedCenter = map.center;
+const selectedZoom = map.zoom;
+assert.ok(selectedMarker, "school 32 must remain a selectable individual marker after cluster expansion");
+assert.equal(mapApi.setMapPresentation({ theme: "dark", locale: "kk", style: "alidade-smooth-dark", fallback: null, labels: "application-presentation" }), true);
+assert.equal(tileLayers.at(-1).url, mapApi.DEFAULT_CONFIG.tileUrl, "dark presentation must restore the dark Alidade Smooth tiles");
+assert.deepEqual(map.center, selectedCenter, "basemap changes must preserve the map center");
+assert.equal(map.zoom, selectedZoom, "basemap changes must preserve the map zoom");
+assert.equal(mapApi.getLayers().registryClusters.items.find((marker) => mapApi.getMarkerContext(marker)?.registryId === "18383"), selectedMarker, "basemap changes must preserve marker selection objects");
 
 const appSource = fs.readFileSync("web/app.js", "utf8");
 const indexSource = fs.readFileSync("web/index.html", "utf8");

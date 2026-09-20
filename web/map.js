@@ -5,15 +5,19 @@
   const MAP_FIT_PADDING_PIXELS = 24;
   const POPUP_VIEWPORT_MARGIN_PIXELS = 16;
   const DEFAULT_CLUSTER_MAX_MEMBERS = 12;
+  const DEFAULT_CLUSTER_DISABLE_ZOOM = 14;
+  const LIGHT_TILE_URL = "https://tiles.stadiamaps.com/tiles/alidade_smooth/{z}/{x}/{y}{r}.png";
+  const MARKER_POSITION_EVENT = "linkwatch:map-marker-position";
   const DEFAULT_MAP_CONFIG = Object.freeze({
     tileUrl: "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
+    lightTileUrl: LIGHT_TILE_URL,
     attribution: '&copy; <a href="https://stadiamaps.com/attribution/" target="_blank" rel="noopener">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
-    center: [49.95, 82.62], zoom: 7, minZoom: 3, maxZoom: 18, fitMaxZoom: 13, clusterRadiusPixels: 44, clusterMaxMembers: DEFAULT_CLUSTER_MAX_MEMBERS,
+    center: [49.95, 82.62], zoom: 7, minZoom: 3, maxZoom: 18, fitMaxZoom: 13, clusterRadiusPixels: 44, clusterMaxMembers: DEFAULT_CLUSTER_MAX_MEMBERS, clusterDisableZoom: DEFAULT_CLUSTER_DISABLE_ZOOM,
   });
   const STATUS_PRIORITY = Object.freeze(["NO_INTERNET", "DEGRADED", "NO_DATA", "OK", "UNKNOWN"]);
   const STATUS_SET = new Set(STATUS_PRIORITY);
   const state = {
-    map: null, tileLayer: null, config: null, layers: null, lastRender: null, resizeObserver: null, onMarkerClick: null, tileError: false,
+    map: null, tileLayer: null, tileUrl: null, config: null, layers: null, lastRender: null, resizeObserver: null, onMarkerClick: null, onMarkerPosition: null, tileError: false,
     presentation: { t: () => "", schoolName: (school) => school?.officialName ?? school?.name ?? "" },
     mapPresentation: { theme: "dark", locale: "ru", style: "alidade-smooth-dark", fallback: null, labels: "application-presentation" },
     activeMarker: null, activeDescriptor: null, popupFocusDescriptor: null, pendingFocusMarker: null,
@@ -21,6 +25,57 @@
   };
   function mapText(key, values) { return state.presentation?.t?.(key, values) || ""; }
   function schoolName(school, fallback) { return state.presentation?.schoolName?.(school, fallback) || fallback || ""; }
+
+  function markerCoordinate(marker) {
+    const raw = marker?.getLatLng?.() || marker?.latLng || marker?._latlng;
+    return validCoordinate(raw);
+  }
+
+  function pointCoordinates(point) {
+    const x = Number(point?.x ?? point?.[0]);
+    const y = Number(point?.y ?? point?.[1]);
+    return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+  }
+
+  function markerScreenPosition(marker) {
+    const coordinate = markerCoordinate(marker);
+    const map = state.map;
+    if (!coordinate || !map) return null;
+    const containerPoint = pointCoordinates(map.latLngToContainerPoint?.([coordinate.latitude, coordinate.longitude]) || map.latLngToLayerPoint?.([coordinate.latitude, coordinate.longitude]));
+    if (!containerPoint) return null;
+    const container = map.getContainer?.() || document.getElementById?.("leafletMap");
+    const rect = container?.getBoundingClientRect?.();
+    const left = Number(rect?.left);
+    const top = Number(rect?.top);
+    const hasViewportRect = Number.isFinite(left) && Number.isFinite(top);
+    const viewportX = containerPoint.x + (hasViewportRect ? left : 0);
+    const viewportY = containerPoint.y + (hasViewportRect ? top : 0);
+    const width = Number(rect?.width);
+    const height = Number(rect?.height);
+    return {
+      x: viewportX,
+      y: viewportY,
+      viewportX,
+      viewportY,
+      containerX: containerPoint.x,
+      containerY: containerPoint.y,
+      visible: !Number.isFinite(width) || !Number.isFinite(height) || (containerPoint.x >= 0 && containerPoint.y >= 0 && containerPoint.x <= width && containerPoint.y <= height),
+      coordinate: { ...coordinate },
+    };
+  }
+
+  function notifyMarkerPosition(marker = state.activeMarker, reason = "viewport") {
+    const position = markerScreenPosition(marker);
+    if (!marker || !position) return null;
+    const detail = { marker, context: markerContext(marker), position, reason };
+    if (typeof state.onMarkerPosition === "function") state.onMarkerPosition(detail);
+    if (typeof window.CustomEvent === "function" && typeof window.dispatchEvent === "function") window.dispatchEvent(new window.CustomEvent(MARKER_POSITION_EVENT, { detail }));
+    return position;
+  }
+
+  function notifyActiveMarkerPosition(reason) {
+    return state.activeMarker ? notifyMarkerPosition(state.activeMarker, reason) : null;
+  }
 
   function markerElement(marker) {
     return marker?.getElement?.() || marker?._icon || null;
@@ -130,6 +185,7 @@
     state.popupFocusDescriptor = state.activeDescriptor;
     state.pendingFocusMarker = marker || null;
     setMarkerExpanded(marker, true);
+    notifyMarkerPosition(marker, "activate");
   }
   function syncOpenPopupMarker() {
     if (!state.popupOpen) return;
@@ -140,6 +196,7 @@
     if (state.activeMarker && state.activeMarker !== marker) setMarkerExpanded(state.activeMarker, false);
     state.activeMarker = marker;
     setMarkerExpanded(marker, true);
+    notifyMarkerPosition(marker, "sync");
   }
   function closeKnownMarkerStates() {
     allKnownMarkers().forEach((marker) => setMarkerExpanded(marker, false));
@@ -225,7 +282,12 @@
 
   function mapConfig() {
     const overrides = window.LINKWATCH_MAP_CONFIG || {};
-    return { ...DEFAULT_MAP_CONFIG, ...overrides, tileUrl: overrides.tileUrl || overrides.tileTemplate || DEFAULT_MAP_CONFIG.tileUrl };
+    return {
+      ...DEFAULT_MAP_CONFIG,
+      ...overrides,
+      tileUrl: overrides.tileUrl || overrides.tileTemplate || DEFAULT_MAP_CONFIG.tileUrl,
+      lightTileUrl: overrides.lightTileUrl || overrides.lightTileTemplate || DEFAULT_MAP_CONFIG.lightTileUrl,
+    };
   }
   function setTileAvailability(unavailable) {
     state.tileError = unavailable;
@@ -234,8 +296,37 @@
     status.hidden = !unavailable;
     status.textContent = unavailable ? mapText("map.tileUnavailable") : "";
   }
+  function tileUrlForTheme(theme) {
+    const config = state.config || mapConfig();
+    return theme === "light" ? config.lightTileUrl : config.tileUrl;
+  }
+
+  function bindTileAvailability(tileLayer) {
+    if (typeof tileLayer?.on !== "function") return;
+    tileLayer.on("tileerror", () => {
+      if (state.tileLayer === tileLayer) setTileAvailability(true);
+    });
+    tileLayer.on("tileload", () => {
+      if (state.tileLayer === tileLayer) setTileAvailability(false);
+    });
+  }
+
+  function replaceTileLayer() {
+    if (!state.map || !state.config || typeof window.L?.tileLayer !== "function") return;
+    const nextUrl = tileUrlForTheme(state.mapPresentation.theme);
+    if (state.tileLayer && state.tileUrl === nextUrl) return;
+    if (state.tileLayer && typeof state.map.removeLayer === "function") state.map.removeLayer(state.tileLayer);
+    state.tileLayer = window.L.tileLayer(nextUrl, { attribution: state.config.attribution, maxZoom: state.config.maxZoom });
+    state.tileUrl = nextUrl;
+    state.tileError = false;
+    setTileAvailability(false);
+    bindTileAvailability(state.tileLayer);
+    state.tileLayer.addTo?.(state.map);
+  }
+
   function applyMapPresentation(nextPresentation) {
-    if (!nextPresentation || nextPresentation.style !== "alidade-smooth-dark") return false;
+    const requestedStyle = nextPresentation?.style || "alidade-smooth-dark";
+    if (!nextPresentation || !["alidade-smooth-dark", "alidade-smooth"].includes(requestedStyle)) return false;
     state.mapPresentation = {
       theme: nextPresentation.theme === "light" ? "light" : "dark",
       locale: nextPresentation.locale === "kk" ? "kk" : "ru",
@@ -247,8 +338,10 @@
     if (container?.setAttribute) {
       container.setAttribute("data-map-theme", state.mapPresentation.theme);
       container.setAttribute("data-map-style", state.mapPresentation.style);
+      container.setAttribute("data-map-basemap", state.mapPresentation.theme === "light" ? "alidade-smooth" : "alidade-smooth-dark");
       container.setAttribute("data-map-locale", state.mapPresentation.locale);
     }
+    replaceTileLayer();
     return true;
   }
 
@@ -287,6 +380,20 @@
     if (typeof window.L.divIcon !== "function") return undefined;
     return window.L.divIcon({ className, html, iconSize: size, iconAnchor: [size[0] / 2, size[1] / 2] });
   }
+
+  function registryMarkerMarkup() {
+    return '<span aria-hidden="true" style="display:block;width:10px;height:10px;border:2px solid rgba(245,248,252,.95);border-radius:50%;background:#63758b;box-shadow:0 1px 4px rgba(9,14,22,.55)"></span>';
+  }
+
+  function monitoringMarkerMarkup(status) {
+    const colors = { NO_INTERNET: "#b96d6b", DEGRADED: "#ae8b58", NO_DATA: "#76879c", OK: "#609176", UNKNOWN: "#6e7d8d" };
+    const color = colors[status] || colors.UNKNOWN;
+    return `<span aria-hidden="true" style="display:grid;place-items:center;width:18px;height:18px;border:2px solid rgba(248,250,252,.96);border-radius:50%;background:${color};box-shadow:0 1px 5px rgba(9,14,22,.62)"><span style="display:block;width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.92)"></span></span>`;
+  }
+
+  function clusterMarkup(count) {
+    return `<span aria-hidden="true" style="display:grid;place-items:center;width:34px;height:34px;border:2px solid rgba(229,236,245,.96);border-radius:50%;background:rgba(30,42,57,.95);color:#f7fafc;box-shadow:0 2px 8px rgba(8,13,20,.48),0 0 0 3px rgba(120,145,170,.22);font:700 13px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:-.01em">${count}</span>`;
+  }
   function bindMarker(marker, context) {
     marker.__linkwatchContext = context;
     marker.__linkwatchExpanded = false;
@@ -320,7 +427,7 @@
     registryRows(registry).forEach((school) => {
       const coordinate = coordinateForSchool(school); if (!coordinate) return;
       const context = { kind: "registry", registryId: school.registryId ?? school.registry_id ?? school.id ?? null, school, lines: [], status: "UNKNOWN", mode: "registry", label: schoolName(school, mapText("school.registry")) };
-      markers.push(createMarker(coordinate, { icon: icon("linkwatch-registry-marker", '<span aria-hidden="true"></span>', [12, 12]), keyboard: true, title: context.label }, context));
+      markers.push(createMarker(coordinate, { icon: icon("linkwatch-registry-marker", registryMarkerMarkup(), [16, 16]), keyboard: true, title: context.label }, context));
     });
     return markers;
   }
@@ -341,7 +448,7 @@
     });
   }
   function createMonitoringMarkers(groups) {
-    return groups.map((group) => createMarker(group.coordinate, { icon: icon(`linkwatch-monitoring-marker linkwatch-status-${group.status.toLowerCase()}${group.mode === "historical" ? " linkwatch-historical-marker" : ""}`, '<span aria-hidden="true"></span>', [22, 22]), keyboard: true, title: group.label, pane: "linkwatch-monitoring-pane", zIndexOffset: 1000 }, { kind: "monitoring", registryId: group.registryId, school: group.school, lines: group.lines, status: group.status, mode: group.mode, evidence: group.evidence, label: group.label }));
+    return groups.map((group) => createMarker(group.coordinate, { icon: icon(`linkwatch-monitoring-marker linkwatch-status-${group.status.toLowerCase()}${group.mode === "historical" ? " linkwatch-historical-marker" : ""}`, monitoringMarkerMarkup(group.status), [26, 26]), keyboard: true, title: group.label, pane: "linkwatch-monitoring-pane", zIndexOffset: 1000 }, { kind: "monitoring", registryId: group.registryId, school: group.school, lines: group.lines, status: group.status, mode: group.mode, evidence: group.evidence, label: group.label }));
   }
   function projectedPoint(coordinate, zoom) {
     const point = state.map?.project?.([coordinate.latitude, coordinate.longitude], zoom);
@@ -429,7 +536,10 @@
       if (width + padding > viewport.width || height + padding > viewport.height) break;
       targetZoom = zoom;
     }
-    return Math.max(Math.min(targetZoom, maxZoom), Math.min(maxZoom, Math.ceil(currentZoom) + 1));
+    const configuredUnclusteredZoom = Number(state.config.clusterDisableZoom);
+    const unclusteredZoom = Number.isFinite(configuredUnclusteredZoom) ? configuredUnclusteredZoom : DEFAULT_CLUSTER_DISABLE_ZOOM;
+    const minimumExpansionZoom = Math.max(Math.ceil(currentZoom) + 1, Math.min(maxZoom, unclusteredZoom));
+    return Math.min(maxZoom, Math.max(Math.min(targetZoom, maxZoom), minimumExpansionZoom));
   }
   function expandRegistryCluster(group) {
     const coordinates = group.markers.map((marker) => coordinateForSchool(marker.__linkwatchContext?.school)).filter(Boolean);
@@ -448,12 +558,15 @@
   }
   function rebuildRegistryClusters() {
     if (!state.layers?.registryClusters) return;
-    state.layers.registryClusters.clearLayers(); const groups = clusterGroups(state.layers.registryMarkers);
+    state.layers.registryClusters.clearLayers();
+    const zoom = Number(state.map?.getZoom?.() ?? state.config.zoom);
+    const disableClustering = Number.isFinite(zoom) && zoom >= Number(state.config.clusterDisableZoom);
+    const groups = disableClustering ? state.layers.registryMarkers.map((marker) => ({ markers: [marker] })) : clusterGroups(state.layers.registryMarkers);
     groups.forEach((group) => {
       if (group.markers.length === 1) { state.layers.registryClusters.addLayer(group.markers[0]); return; }
       const displayCoordinate = clusterDisplayCoordinate(group);
       const label = mapText("map.clusterTitle", { count: group.markers.length }) || `${group.markers.length} schools`;
-      const marker = createMarker(displayCoordinate, { icon: icon("linkwatch-registry-cluster", '<span aria-hidden="true">' + group.markers.length + "</span>", [28, 28]), keyboard: true, title: label }, { kind: "registry-cluster", count: group.markers.length, members: group.markers.map((item) => item.__linkwatchContext), lines: [], mode: "registry", label });
+      const marker = createMarker(displayCoordinate, { icon: icon("linkwatch-registry-cluster", clusterMarkup(group.markers.length), [40, 40]), keyboard: true, title: label }, { kind: "registry-cluster", count: group.markers.length, members: group.markers.map((item) => item.__linkwatchContext), lines: [], mode: "registry", label });
       if (typeof marker.on === "function") marker.on("click", () => expandRegistryCluster(group));
       state.layers.registryClusters.addLayer(marker);
     });
@@ -513,21 +626,19 @@
       const monitoringPane = state.map.createPane("linkwatch-monitoring-pane");
       monitoringPane.style.zIndex = "620";
     }
-    state.tileLayer = window.L.tileLayer(state.config.tileUrl, { attribution: state.config.attribution, maxZoom: state.config.maxZoom });
-    if (typeof state.tileLayer.on === "function") {
-      state.tileLayer.on("tileerror", () => setTileAvailability(true));
-      state.tileLayer.on("tileload", () => setTileAvailability(false));
-    }
-    state.tileLayer.addTo(state.map);
+    replaceTileLayer();
     state.layers = { registryMarkers: [], registryClusters: layerGroup(), monitoringMarkers: [], monitoring: layerGroup() };
     observePopup();
-    window.addEventListener?.("resize", constrainPopupToViewport);
-    if (typeof state.map.on === "function") state.map.on("zoomend", rebuildRegistryClusters);
+    window.addEventListener?.("resize", () => { constrainPopupToViewport(); notifyActiveMarkerPosition("resize"); });
+    if (typeof state.map.on === "function") {
+      state.map.on("zoomend", rebuildRegistryClusters);
+      ["move", "moveend", "zoom", "resize", "viewreset"].forEach((eventName) => state.map.on(eventName, () => notifyActiveMarkerPosition(eventName)));
+    }
     if (typeof window.ResizeObserver === "function") { state.resizeObserver = new window.ResizeObserver(refreshSize); state.resizeObserver.observe(container); }
     return state.map;
   }
   function refreshSize() {
-    if (!state.map) return; const refresh = () => { state.map.invalidateSize({ pan: false }); constrainPopupToViewport(); };
+    if (!state.map) return; const refresh = () => { state.map.invalidateSize({ pan: false }); constrainPopupToViewport(); notifyActiveMarkerPosition("resize"); };
     if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(refresh); else window.setTimeout(refresh, 0);
   }
   function render(context = {}) {
@@ -547,6 +658,9 @@
     getMap: () => state.map, getConfig: () => state.config || mapConfig(), getLastRender: () => state.lastRender, getLayers: () => state.layers,
     getMarkerContext: (marker) => marker?.__linkwatchContext ?? null,
     setMarkerClickHandler: (handler) => { state.onMarkerClick = typeof handler === "function" ? handler : null; },
+    setMarkerPositionHandler: (handler) => { state.onMarkerPosition = typeof handler === "function" ? handler : null; },
+    getMarkerScreenPosition: (marker) => markerScreenPosition(marker),
+    MARKER_POSITION_EVENT,
     setPresentation: (presentation) => {
       state.presentation = presentation && typeof presentation.t === "function" ? presentation : state.presentation;
       const container = document.getElementById("leafletMap");
