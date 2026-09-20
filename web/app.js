@@ -14,7 +14,7 @@ import { createLinesBoundary } from "./features/lines.mjs";
 import { createNotificationsBoundary } from "./features/notifications.mjs";
 import { createProviderCaseBoundary } from "./features/provider-case.mjs";
 import { createReportsBoundary } from "./features/reports.mjs";
-import { defaultReportFilters, reportAvailability, reportContextFilters, reportEvidenceSummary, reportFilterOptions, reportQuery, reportState } from "./features/reports-presentation.mjs";
+import { defaultReportFilters, reportAvailability as formatReportAvailability, reportContextFilters, reportEvidenceSummary, reportFilterOptions, reportQuery, reportState } from "./features/reports-presentation.mjs";
 import { filterIncidents, incidentActions, incidentSeverityValues, incidentStatusValues, presentIncident, presentRecovery, presentSituation, presentTimeline, relatedSituations, situationActions } from "./features/incidents-presentation.mjs";
 import { presentProviderCase, providerCaseActions, providerCaseDeliveryRequest } from "./features/provider-case-presentation.mjs";
 import { activeIncident, availableMetrics, createSelectedSchool, mergeLineDetail, selectedLine, selectSchoolLine } from "./features/school-detail.mjs";
@@ -723,10 +723,33 @@ function renderIncidentsSurface() {
 
 function reportSurfaceState() { return state.reports; }
 
-function reportNumber(value, suffix = "") {
-  if (value === null || value === undefined || value === "") return i18n.t("reports.valueUnavailable");
+function reportAvailability(value, locale, diagnostics = null, field = "") {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return i18n.t("reports.valueUnavailable");
   const number = Number(value);
-  return Number.isFinite(number) ? presentation.formatNumber(number, suffix) : String(value);
+  if (!Number.isFinite(number)) {
+    (diagnostics || state.reportDiagnostics)?.push({ field, value });
+    return i18n.t("reports.valueUnavailable");
+  }
+  return formatReportAvailability(number, locale);
+}
+
+function reportNumber(value, suffix = "", diagnostics = null, field = "") {
+  if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) return i18n.t("reports.valueUnavailable");
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    (diagnostics || state.reportDiagnostics)?.push({ field, value });
+    return i18n.t("reports.valueUnavailable");
+  }
+  return presentation.formatNumber(number, suffix);
+}
+
+function reportPercentage(value, diagnostics, field) {
+  return reportAvailability(value, i18n, diagnostics, field);
+}
+
+function reportTechnicalDetails(diagnostics) {
+  if (!diagnostics.length) return "";
+  return '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(diagnostics, null, 2)) + "</pre></details>";
 }
 
 function reportOptions(items, selected, label, value = (item) => item) {
@@ -758,10 +781,11 @@ function renderReportsSurface() {
   const aggregate = view.aggregate;
   const analytics = view.analytics;
   const passport = view.passport;
+  const reportDiagnostics = state.reportDiagnostics = [];
   const aggregateMessage = view.aggregateState === "error" ? i18n.t("reports.unavailable") : reportState(aggregate, i18n);
   const aggregatePanel = aggregateMessage ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.measurements")) + '</h2><p class="surface-state' + (view.aggregateState === "error" ? " error" : "") + '">' + escapeHtml(aggregateMessage) + "</p></section>" : '<section class="report-panel report-measures"><h2>' + escapeHtml(i18n.t("reports.measurements")) + '</h2><dl class="report-grid"><div><dt>' + escapeHtml(i18n.t("reports.measurements")) + "</dt><dd>" + escapeHtml(reportNumber(aggregate.measurement_count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.availability")) + "</dt><dd>" + escapeHtml(reportAvailability(aggregate.availability_pct, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.completeness")) + "</dt><dd>" + escapeHtml(reportAvailability(aggregate.data_completeness_pct, i18n)) + "</dd></div></dl><p class=\"report-note\">" + escapeHtml(i18n.t("reports.historicalOnly")) + "</p></section>";
-  const trendRows = Array.isArray(analytics?.trend) ? analytics.trend.map((item) => [item.key, reportNumber(item.measurements), reportNumber(item.valid_evidence), reportAvailability(item.average_availability, i18n)]) : [];
-  const rankingRows = Array.isArray(analytics?.ranking) ? analytics.ranking.map((item) => [item.line_id || i18n.t("empty.value"), reportNumber(item.measurements), reportNumber(item.valid_evidence), reportAvailability(item.contract_compliance, i18n)]) : [];
+  const trendRows = Array.isArray(analytics?.trend) ? analytics.trend.map((item) => [item.key, reportNumber(item.measurements, "", reportDiagnostics, "analytics.trend.measurements"), reportNumber(item.valid_evidence, "", reportDiagnostics, "analytics.trend.valid_evidence"), reportPercentage(item.average_availability, reportDiagnostics, "analytics.trend.average_availability")]) : [];
+  const rankingRows = Array.isArray(analytics?.ranking) ? analytics.ranking.map((item) => [item.line_id || i18n.t("empty.value"), reportNumber(item.measurements, "", reportDiagnostics, "analytics.ranking.measurements"), reportNumber(item.valid_evidence, "", reportDiagnostics, "analytics.ranking.valid_evidence"), reportPercentage(item.contract_compliance, reportDiagnostics, "analytics.ranking.contract_compliance")]) : [];
   const analyticsPanel = view.analyticsState === "error" ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.analytics")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<div class="report-tables">' + renderReportTable(i18n.t("reports.trend"), [i18n.t("reports.to"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.availability")], trendRows) + renderReportTable(i18n.t("reports.ranking"), [i18n.t("field.line"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.contract")], rankingRows) + "</div>";
   const evidence = reportEvidenceSummary(passport, { i18n, presentation });
   const qualityPanel = view.passportState === "error" ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2><dl class="report-grid"><div><dt>' + escapeHtml(i18n.t("reports.baseline")) + "</dt><dd>" + escapeHtml(reportAvailability(passport?.baseline_compliance, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.contract")) + "</dt><dd>" + escapeHtml(reportAvailability(passport?.contract_compliance, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.incidents")) + "</dt><dd>" + escapeHtml(reportNumber(passport?.incidents?.count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.evidenceCount")) + "</dt><dd>" + escapeHtml(reportNumber(evidence.count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.evidenceProvenance")) + "</dt><dd>" + escapeHtml(evidence.provenance) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.lastVerified")) + "</dt><dd>" + escapeHtml(evidence.lastVerified) + "</dd></div></dl>" + (passport?.sufficient_data === false ? '<p class="report-note">' + escapeHtml(i18n.t("reports.insufficient")) + "</p>" : "") + '<div class="report-evidence-action"><button class="secondary-action" type="button" data-evidence-preview>' + escapeHtml(i18n.t("reports.evidencePreview")) + '</button><p class="report-note">' + escapeHtml(i18n.t("reports.evidenceHtmlOnly")) + "</p></div></section>";
@@ -770,6 +794,8 @@ function renderReportsSurface() {
   const previewText = view.previewState === "error" ? i18n.t("reports.previewUnavailable") : preview ? i18n.t(preview.limited ? "reports.previewLimited" : "reports.previewRows", { count: preview.count }) : "";
   const exportPanel = '<section class="report-panel report-export"><h2>' + escapeHtml(i18n.t("reports.export")) + (canExport ? "</h2><form data-report-export><label>" + escapeHtml(i18n.t("reports.exportKind")) + '<select name="kind"><option value="raw">' + escapeHtml(i18n.t("reports.exportRaw")) + '</option><option value="aggregate">' + escapeHtml(i18n.t("reports.exportAggregate")) + '</option></select></label><label>' + escapeHtml(i18n.t("reports.exportFormat")) + '<select name="format"><option value="csv">CSV</option><option value="xlsx">XLSX</option><option value="json">JSON</option></select></label><button class="secondary-action" type="button" data-export-preview>' + escapeHtml(i18n.t("reports.preview")) + '</button><button class="primary-action" type="submit">' + escapeHtml(i18n.t("reports.download")) + "</button></form>" + (previewText ? '<p class="surface-state' + (view.previewState === "error" ? " error" : "") + '">' + escapeHtml(previewText) + (preview?.columns?.length ? " " + escapeHtml(i18n.t("reports.previewColumns")) + ": " + escapeHtml(preview.columns.join(", ")) : "") + "</p>" : "") : '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.exportUnavailable")) + "</p>") + "</section>";
   root.innerHTML = '<div class="reports-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("reports.title")) + "</h1><p>" + escapeHtml(i18n.t("reports.subtitle")) + "</p></div></header>" + form + '<div class="report-overview">' + aggregatePanel + qualityPanel + "</div>" + analyticsPanel + exportPanel + "</div>";
+  const reportDetails = reportTechnicalDetails(reportDiagnostics);
+  if (reportDetails) root.querySelector(".reports-shell")?.insertAdjacentHTML("beforeend", reportDetails);
   bindReportSurfaceEvents(root);
 }
 
@@ -899,7 +925,8 @@ function renderNotificationsSurface() {
       const next = notification.nextAttemptLabel ? '<small>' + escapeHtml(i18n.t("notification.nextAttempt")) + ": " + escapeHtml(notification.nextAttemptLabel) + "</small>" : "";
       const dispatch = availableNotification.actions?.canDispatch && notification.id != null ? '<button type="button" class="secondary-action" data-notification-dispatch="' + escapeHtml(notification.id) + '"' + (pending ? " disabled" : "") + '>' + escapeHtml(notificationDispatchLabel()) + "</button>" : "";
       const actionError = String(view.actionErrorId) === String(item?.id) && view.actionError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.actionError)) + "</p>" : "";
-      return '<article class="notification-item"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p><small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + dispatch + actionError + '</article>';
+      const technical = notification.technical ? '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(notification.technical, null, 2)) + "</pre></details>" : "";
+      return '<article class="notification-item"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p><small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + dispatch + actionError + technical + '</article>';
     }).join("");
     root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div><button type="button" class="secondary-action utility-refresh" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + '</button><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">×</button></div></header>' + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("notification.empty")) + "</p>");
   }
@@ -1200,15 +1227,6 @@ async function runAdminAgentUpdate() {
   renderAdminSurface();
 }
 
-function auditObjectLabel(value) {
-  const key = String(value || "").toLowerCase();
-  if (key.includes("incident")) return i18n.t("nav.incidents");
-  if (key.includes("notification")) return i18n.t("notification.title");
-  if (key.includes("line")) return i18n.t("field.line");
-  if (key.includes("user")) return i18n.t("admin.resources.users");
-  return value || i18n.t("empty.noData");
-}
-
 function renderAuditSurface() {
   const root = $("#auditSurface");
   if (!root) return;
@@ -1222,8 +1240,8 @@ function renderAuditSurface() {
     root.innerHTML = '<div class="secondary-shell">' + header + tabs + content + "</div>";
   } else {
     const actionOptions = [...new Set(view.items.map((item) => item?.action || item?.event_type).filter(Boolean))].map((value) => '<option value="' + escapeHtml(value) + '"' + (view.filters.action === value ? " selected" : "") + '>' + escapeHtml(presentation.action(value)) + "</option>").join("");
-    const objectOptions = [...new Set(view.items.map((item) => item?.object_type).filter(Boolean))].map((value) => '<option value="' + escapeHtml(value) + '"' + (view.filters.object_type === value ? " selected" : "") + '>' + escapeHtml(auditObjectLabel(value)) + "</option>").join("");
-    const rows = view.items.map((item) => { const entry = presentAuditItem(item, { i18n, presentation }); return '<article class="audit-record"><div class="audit-record-head"><strong>' + escapeHtml(entry.actionLabel) + '</strong><span>' + escapeHtml(entry.atLabel) + '</span></div><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("audit.object")) + '</dt><dd>' + escapeHtml(auditObjectLabel(entry.objectLabel)) + '</dd></div><div><dt>' + escapeHtml(i18n.t("audit.actor")) + '</dt><dd>' + escapeHtml(entry.actorLabel) + '</dd></div></dl>' + (entry.rawAction || entry.payload ? '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify({ action: entry.rawAction, object_id: entry.rawObject, payload: entry.payload }, null, 2)) + '</pre></details>' : "") + '</article>'; }).join("");
+    const objectOptions = [...new Set(view.items.map((item) => item?.object_type).filter(Boolean))].map((value) => { const object = presentAuditItem({ object_type: value }, { i18n, presentation }); return '<option value="' + escapeHtml(value) + '"' + (view.filters.object_type === value ? " selected" : "") + '>' + escapeHtml(object.objectLabel) + "</option>"; }).join("");
+    const rows = view.items.map((item) => { const entry = presentAuditItem(item, { i18n, presentation }); const technical = { action: entry.rawAction, object_type: entry.rawObjectType, object_id: entry.rawObject, actor_type: entry.rawActorType, actor_id: entry.rawActor, payload: entry.payload }; return '<article class="audit-record"><div class="audit-record-head"><strong>' + escapeHtml(entry.actionLabel) + '</strong><span>' + escapeHtml(entry.atLabel) + '</span></div><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("audit.object")) + '</dt><dd>' + escapeHtml(entry.objectLabel) + '</dd></div><div><dt>' + escapeHtml(i18n.t("audit.actor")) + '</dt><dd>' + escapeHtml(entry.actorLabel) + '</dd></div></dl>' + (entry.rawAction || entry.rawObjectType || entry.rawObject || entry.rawActorType || entry.rawActor || entry.payload ? '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(technical, null, 2)) + '</pre></details>' : "") + '</article>'; }).join("");
     const content = view.state === "loading" ? '<p class="surface-state" role="status">' + escapeHtml(i18n.t("audit.loading")) + '</p>' : view.state === "error" ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t("audit.unavailable")) + '</p>' : rows || '<p class="surface-state">' + escapeHtml(i18n.t("audit.empty")) + '</p>';
     root.innerHTML = '<div class="secondary-shell">' + header + tabs + '<form class="audit-filters" data-audit-filters><label>' + escapeHtml(i18n.t("audit.action")) + '<select name="action"><option value="">' + escapeHtml(i18n.t("audit.anyAction")) + '</option>' + actionOptions + '</select></label><label>' + escapeHtml(i18n.t("audit.object")) + '<select name="object_type"><option value="">' + escapeHtml(i18n.t("audit.anyObject")) + '</option>' + objectOptions + '</select></label><button type="submit" class="secondary-action">' + escapeHtml(i18n.t("admin.refresh")) + '</button></form><div class="audit-records">' + content + '</div></div>';
   }

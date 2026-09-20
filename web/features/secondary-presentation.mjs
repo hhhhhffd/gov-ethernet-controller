@@ -72,6 +72,17 @@ const ADMIN_FIELD_LABEL_KEYS = Object.freeze({
   release_at: "audit.at",
 });
 
+const SCOPE_LABEL_KEYS = Object.freeze({
+  ADMIN: "app.workspace",
+  GLOBAL: "app.workspace",
+  OBLAST: "app.regionMap",
+  DISTRICT: "field.district",
+  PROVIDER: "field.provider",
+  SCHOOL: "field.school",
+  ORGANIZATION: "field.school",
+  LINE: "field.line",
+});
+
 function code(value) {
   return String(value ?? "").trim().toUpperCase().replace(/[.\s-]+/g, "_");
 }
@@ -97,6 +108,11 @@ function humanNotificationSource(value, i18n) {
   return key ? i18n.t(key) : i18n.t("notification.source");
 }
 
+function humanScopeLabel(value, i18n) {
+  const key = SCOPE_LABEL_KEYS[code(value)];
+  return key ? i18n.t(key) : i18n.t("empty.noData");
+}
+
 function localizedMessage(item, { i18n }) {
   const localized = item?.message_by_locale || item?.messageByLocale;
   if (localized && typeof localized === "object") {
@@ -105,11 +121,6 @@ function localizedMessage(item, { i18n }) {
   }
   const messageKey = typeof item?.message_key === "string" ? item.message_key.trim() : "";
   if (messageKey && i18n.has(messageKey)) return { value: i18n.t(messageKey), localized: true };
-  const raw = typeof item?.message === "string" ? item.message.trim() : "";
-  const declaredLocale = String(item?.message_locale || item?.messageLocale || "").trim().toLowerCase().slice(0, 2);
-  if (raw && (!declaredLocale ? i18n.locale === "ru" : declaredLocale === i18n.locale)) {
-    return { value: raw, localized: true };
-  }
   const source = code(item?.source_type || item?.event_type || item?.type);
   const fallbackKey = source === "INCIDENT" ? "incidentType.UNKNOWN" : source === "PROVIDER_CASE" ? "field.providerCase" : "notification.messageUnavailable";
   return { value: i18n.t(fallbackKey), localized: true };
@@ -122,6 +133,8 @@ function adminFieldLabel(key, i18n) {
 function adminFieldValue(key, value, { i18n, presentation }) {
   if (value === null || value === undefined || value === "") return i18n.t("empty.noData");
   if (typeof value === "boolean") return value ? i18n.t("status.ATTENTION") : i18n.t("status.OK");
+  if (key === "technology") return presentation.connectionType(value);
+  if (key === "scope_type") return humanScopeLabel(value, i18n);
   if (/status|state|active|blocked|recommended|supported|disabled|primary/i.test(key)) return presentation.status(value).label;
   if (key === "role") return presentation.role(value);
   if (/created_at|updated_at|last_seen|release_at|valid_from|valid_to|contract_date/i.test(key)) return presentation.formatDate(value, true);
@@ -144,6 +157,7 @@ export function presentAdminRecord(resource, item, { i18n, presentation }) {
 export function presentNotification(item, { i18n, presentation, capabilities, pending = false }) {
   const source = item?.source_type || item?.event_type || item?.type;
   const message = localizedMessage(item, { i18n });
+  const rawMessage = typeof item?.message === "string" ? item.message : "";
   return {
     id: item?.id,
     status: code(item?.status),
@@ -157,7 +171,8 @@ export function presentNotification(item, { i18n, presentation, capabilities, pe
     scopeAvailable: Boolean(item?.line_id || item?.organization_id || item?.school_id || item?.incident_id),
     actions: capabilities ? notificationActions(item, capabilities, pending) : null,
     rawSource: source || "",
-    rawMessage: typeof item?.message === "string" ? item.message : "",
+    rawMessage,
+    technical: rawMessage ? { source_type: source || "", message: rawMessage } : null,
   };
 }
 
@@ -173,7 +188,9 @@ export function presentAuditItem(item, { i18n, presentation }) {
     actorLabel: actorName?.trim() || (actorType === "SYSTEM" ? i18n.t("event.unknown") : i18n.t("empty.noData")),
     atLabel: presentation.formatDate(item?.created_at || item?.at, true),
     rawAction: item?.action || item?.event_type || "",
+    rawObjectType: item?.object_type || "",
     rawObject: item?.object_id || "",
+    rawActorType: item?.actor_type || "",
     rawActor: item?.actor_id || "",
     payload: item?.metadata || item?.after || item?.before || null,
   };

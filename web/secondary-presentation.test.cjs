@@ -7,8 +7,10 @@ test("NOTIFICATION-001 presents delivery and omits unread semantics", async () =
   const { createPresentation } = await import("./core/presentation.mjs");
   const { presentNotification } = await import("./features/secondary-presentation.mjs");
   const i18n = createI18n({ locale: "ru", storage: null, root: null });
-  const item = presentNotification({ source_type: "PROVIDER_CASE", message: "Проверка", status: "PENDING", generated_at: "2026-09-20T10:00:00Z", delivery_attempts: 2 }, { i18n, presentation: createPresentation(i18n) });
+  const item = presentNotification({ source_type: "PROVIDER_CASE", message: "evaluator_code=PROVIDER_CASE_PENDING", message_by_locale: { ru: "Проверка" }, status: "PENDING", generated_at: "2026-09-20T10:00:00Z", delivery_attempts: 2 }, { i18n, presentation: createPresentation(i18n) });
   assert.equal(item.message, "Проверка");
+  assert.equal(item.rawMessage, "evaluator_code=PROVIDER_CASE_PENDING");
+  assert.doesNotMatch(item.message, /evaluator_code|PROVIDER_CASE_PENDING/);
   assert.equal(item.deliveryLabel, "Ожидает отправки");
   assert.equal(item.attempts, 2);
   assert.equal(item.scopeAvailable, false);
@@ -44,6 +46,19 @@ test("Notification messages do not cross the locale boundary as untranslated raw
   assert.equal(item.message, "Желідегі бұзушылық расталды");
   assert.doesNotMatch(item.message, /Russian|backend message/);
   assert.equal(item.sourceLabel, "Оқиғалар");
+  assert.equal(item.rawMessage, "Russian backend message");
+});
+
+test("NOTIFICATION-003 raw evaluator messages stay in technical disclosure", async () => {
+  const { createI18n } = await import("./core/i18n.mjs");
+  const { createPresentation } = await import("./core/presentation.mjs");
+  const { presentNotification } = await import("./features/secondary-presentation.mjs");
+  const i18n = createI18n({ locale: "ru", storage: null, root: null });
+  const item = presentNotification({ source_type: "INCIDENT", message: "evaluator failure: rule_id=42" }, { i18n, presentation: createPresentation(i18n) });
+
+  assert.equal(item.message, "Подтверждённое нарушение линии");
+  assert.doesNotMatch(item.message, /evaluator|rule_id|42/);
+  assert.deepEqual(item.technical, { source_type: "INCIDENT", message: "evaluator failure: rule_id=42" });
 });
 
 test("NOTIFICATION-002 utility is capability-gated and has real loading/error/empty paths", () => {
@@ -64,6 +79,19 @@ test("ADMIN-001 and AUDIT-001 keep secondary routes capability-gated", () => {
   assert.match(app, /boundaries\.audit\.agentVersions/);
   assert.match(app, /presentAuditItem/);
   assert.match(app, /<details><summary.*audit\.technical/);
+  assert.match(app, /object\.objectLabel/);
+  assert.doesNotMatch(app, /function auditObjectLabel\(/);
+  assert.match(app, /object_type: entry\.rawObjectType/);
+  assert.match(app, /actor_id: entry\.rawActor/);
+  assert.match(app, /notification\.technical/);
+});
+
+test("REPORT-003 invalid numeric values use human fallback and retain technical diagnostics", () => {
+  const app = fs.readFileSync("web/app.js", "utf8");
+  assert.match(app, /Number\.isFinite\(number\)/);
+  assert.match(app, /return i18n\.t\("reports\.valueUnavailable"\);/);
+  assert.match(app, /reportTechnicalDetails\(reportDiagnostics\)/);
+  assert.doesNotMatch(app, /Number\.isFinite\(number\) \? presentation\.formatNumber\(number, suffix\) : String\(value\)/);
 });
 
 test("ADMIN-002 resource inventory covers real admin API families", async () => {
@@ -118,17 +146,49 @@ test("Admin presentation exposes a localized display subset and keeps technical 
   assert.equal(item.technical.private_value, "technical-only");
 });
 
+test("ADMIN-003 enum fields use human dictionaries and keep raw values technical", async () => {
+  const { createI18n } = await import("./core/i18n.mjs");
+  const { createPresentation } = await import("./core/presentation.mjs");
+  const { presentAdminRecord } = await import("./features/secondary-presentation.mjs");
+  const i18n = createI18n({ locale: "ru", storage: null, root: null });
+  const presentation = createPresentation(i18n);
+  const line = presentAdminRecord("lines", {
+    id: "line-raw-1",
+    organization_name: "Школа 32",
+    provider_name: "Провайдер",
+    role: "PRIMARY",
+    technology: "FIBER",
+    status: "ACTIVE",
+  }, { i18n, presentation });
+  const policy = presentAdminRecord("policies", {
+    id: "policy-raw-1",
+    scope_type: "LINE",
+    version: 3,
+  }, { i18n, presentation });
+
+  assert.equal(line.fields.find((field) => field.key === "technology").value, "Оптоволокно");
+  assert.equal(line.fields.find((field) => field.key === "role").value, "Основная");
+  assert.doesNotMatch(JSON.stringify(line.fields), /FIBER|PRIMARY|ACTIVE/);
+  assert.equal(line.technical.technology, "FIBER");
+  assert.equal(policy.fields.find((field) => field.key === "scope_type").value, "Линия");
+  assert.doesNotMatch(JSON.stringify(policy.fields), /LINE/);
+  assert.equal(policy.technical.scope_type, "LINE");
+});
+
 test("AUDIT-002 raw audit values are only available in technical details", async () => {
   const { createI18n } = await import("./core/i18n.mjs");
   const { createPresentation } = await import("./core/presentation.mjs");
   const { presentAuditItem } = await import("./features/secondary-presentation.mjs");
   const i18n = createI18n({ locale: "kk", storage: null, root: null });
-  const item = presentAuditItem({ id: 1, action: "incident.status.changed", object_type: "incident", object_id: "i-1", actor_username: "operator", created_at: "2026-09-20T10:00:00Z" }, { i18n, presentation: createPresentation(i18n) });
+  const item = presentAuditItem({ id: 1, action: "incident.status.changed", object_type: "incident", object_id: "i-1", actor_type: "USER", actor_id: "user-1", actor_username: "operator", created_at: "2026-09-20T10:00:00Z" }, { i18n, presentation: createPresentation(i18n) });
   assert.equal(item.actionLabel, "Оқиға күйі өзгертілді");
   assert.equal(item.objectLabel, "Оқиғалар");
   assert.equal(item.actorLabel, "operator");
   assert.equal(item.rawAction, "incident.status.changed");
+  assert.equal(item.rawObjectType, "incident");
   assert.equal(item.rawObject, "i-1");
+  assert.equal(item.rawActorType, "USER");
+  assert.equal(item.rawActor, "user-1");
 });
 
 test("AUDIT-003 does not present raw object or actor identifiers as human copy", async () => {
@@ -140,6 +200,9 @@ test("AUDIT-003 does not present raw object or actor identifiers as human copy",
 
   assert.equal(item.objectLabel, "Нет данных");
   assert.equal(item.actorLabel, "Нет данных");
+  assert.doesNotMatch(`${item.objectLabel} ${item.actorLabel}`, /unknown_object|secret-object|secret-actor/);
+  assert.equal(item.rawObjectType, "unknown_object");
   assert.equal(item.rawObject, "secret-object");
+  assert.equal(item.rawActorType, "");
   assert.equal(item.rawActor, "secret-actor");
 });
