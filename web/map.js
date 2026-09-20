@@ -2,10 +2,12 @@
 (function (window) {
   "use strict";
 
+  const MAP_FIT_PADDING_PIXELS = 24;
+  const DEFAULT_CLUSTER_MAX_MEMBERS = 12;
   const DEFAULT_MAP_CONFIG = Object.freeze({
     tileUrl: "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
     attribution: '&copy; <a href="https://stadiamaps.com/attribution/" target="_blank" rel="noopener">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors',
-    center: [49.95, 82.62], zoom: 7, minZoom: 3, maxZoom: 18, fitMaxZoom: 13, clusterRadiusPixels: 44,
+    center: [49.95, 82.62], zoom: 7, minZoom: 3, maxZoom: 18, fitMaxZoom: 13, clusterRadiusPixels: 44, clusterMaxMembers: DEFAULT_CLUSTER_MAX_MEMBERS,
   });
   const STATUS_PRIORITY = Object.freeze(["NO_INTERNET", "DEGRADED", "NO_DATA", "OK", "UNKNOWN"]);
   const STATUS_SET = new Set(STATUS_PRIORITY);
@@ -139,26 +141,31 @@
     const scale = 256 * 2 ** zoom / 360;
     return { x: coordinate.longitude * scale, y: coordinate.latitude * scale };
   }
+  function registryMarkerId(marker) { return String(marker.__linkwatchContext?.registryId ?? ""); }
   function clusterGroups(markers) {
     const zoom = state.map?.getZoom?.() ?? state.config.zoom;
     const radius = Number(state.config.clusterRadiusPixels) > 0 ? Number(state.config.clusterRadiusPixels) : 44;
+    const maxMembers = Number.isInteger(Number(state.config.clusterMaxMembers)) && Number(state.config.clusterMaxMembers) > 1 ? Number(state.config.clusterMaxMembers) : DEFAULT_CLUSTER_MAX_MEMBERS;
     const points = markers.map((marker) => {
       const context = marker.__linkwatchContext; const coordinate = coordinateForSchool(context.school); if (!coordinate) return;
       return { marker, coordinate, point: projectedPoint(coordinate, zoom) };
     }).filter(Boolean);
-    const parent = points.map((_, index) => index);
-    const find = (index) => { while (parent[index] !== index) { parent[index] = parent[parent[index]]; index = parent[index]; } return index; };
-    const join = (left, right) => { const leftRoot = find(left); const rightRoot = find(right); if (leftRoot !== rightRoot) parent[rightRoot] = leftRoot; };
-    points.forEach((left, leftIndex) => points.slice(leftIndex + 1).forEach((right, offset) => {
-      const rightIndex = leftIndex + offset + 1;
-      if (Math.hypot(left.point.x - right.point.x, left.point.y - right.point.y) <= radius) join(leftIndex, rightIndex);
-    }));
-    const groups = new Map();
-    points.forEach((item, index) => {
-      const key = find(index); if (!groups.has(key)) groups.set(key, { markers: [], latitude: 0, longitude: 0 });
-      const group = groups.get(key); group.markers.push(item.marker); group.latitude += item.coordinate.latitude; group.longitude += item.coordinate.longitude;
+    points.sort((left, right) => left.point.y - right.point.y || left.point.x - right.point.x || registryMarkerId(left.marker).localeCompare(registryMarkerId(right.marker)));
+    const groups = [];
+    points.forEach((item) => {
+      let selected = null; let selectedDistance = Number.POSITIVE_INFINITY;
+      groups.forEach((group) => {
+        if (group.markers.length >= maxMembers) return;
+        const distance = Math.hypot(item.point.x - group.anchor.x, item.point.y - group.anchor.y);
+        if (distance <= radius && distance < selectedDistance) { selected = group; selectedDistance = distance; }
+      });
+      if (!selected) {
+        groups.push({ markers: [item.marker], anchor: item.point, latitude: item.coordinate.latitude, longitude: item.coordinate.longitude });
+        return;
+      }
+      selected.markers.push(item.marker); selected.latitude += item.coordinate.latitude; selected.longitude += item.coordinate.longitude;
     });
-    return [...groups.values()].map((group) => ({ ...group, latitude: group.latitude / group.markers.length, longitude: group.longitude / group.markers.length }));
+    return groups.map((group) => ({ ...group, latitude: group.latitude / group.markers.length, longitude: group.longitude / group.markers.length }));
   }
   function clusterDisplayCoordinate(group) {
     const center = { latitude: group.latitude, longitude: group.longitude };
@@ -185,6 +192,52 @@
     const separated = state.map.unproject([nearestMonitoringPoint.x + directionX * 42, nearestMonitoringPoint.y + directionY * 42], state.map?.getZoom?.() ?? state.config.zoom);
     return validCoordinate(separated) || selected;
   }
+  function mapViewportSize() {
+    const size = state.map?.getSize?.();
+    const width = Number(Array.isArray(size) ? size[0] : size?.x);
+    const height = Number(Array.isArray(size) ? size[1] : size?.y);
+    return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 ? { width, height } : null;
+  }
+  function coordinateBounds(coordinates) {
+    return coordinates.reduce((bounds, coordinate) => ({
+      minLatitude: Math.min(bounds.minLatitude, coordinate.latitude),
+      maxLatitude: Math.max(bounds.maxLatitude, coordinate.latitude),
+      minLongitude: Math.min(bounds.minLongitude, coordinate.longitude),
+      maxLongitude: Math.max(bounds.maxLongitude, coordinate.longitude),
+    }), { minLatitude: Number.POSITIVE_INFINITY, maxLatitude: Number.NEGATIVE_INFINITY, minLongitude: Number.POSITIVE_INFINITY, maxLongitude: Number.NEGATIVE_INFINITY });
+  }
+  function clusterExpansionZoom(coordinates) {
+    const currentZoom = Number(state.map?.getZoom?.() ?? state.config.zoom);
+    const maxZoom = Number(state.config.maxZoom);
+    if (!Number.isFinite(currentZoom) || !Number.isFinite(maxZoom) || currentZoom >= maxZoom) return maxZoom;
+    const viewport = mapViewportSize();
+    if (!viewport) return Math.min(maxZoom, currentZoom + 1);
+    const padding = MAP_FIT_PADDING_PIXELS * 2;
+    let targetZoom = currentZoom;
+    for (let zoom = Math.ceil(currentZoom) + 1; zoom <= maxZoom; zoom += 1) {
+      const points = coordinates.map((coordinate) => projectedPoint(coordinate, zoom));
+      const width = Math.max(...points.map((point) => point.x)) - Math.min(...points.map((point) => point.x));
+      const height = Math.max(...points.map((point) => point.y)) - Math.min(...points.map((point) => point.y));
+      if (width + padding > viewport.width || height + padding > viewport.height) break;
+      targetZoom = zoom;
+    }
+    return Math.max(Math.min(targetZoom, maxZoom), Math.min(maxZoom, Math.ceil(currentZoom) + 1));
+  }
+  function expandRegistryCluster(group) {
+    const coordinates = group.markers.map((marker) => coordinateForSchool(marker.__linkwatchContext?.school)).filter(Boolean);
+    if (!state.map || !coordinates.length) return false;
+    const currentZoom = Number(state.map.getZoom?.() ?? state.config.zoom);
+    const targetZoom = clusterExpansionZoom(coordinates);
+    const points = coordinates.map((coordinate) => [coordinate.latitude, coordinate.longitude]);
+    const bounds = coordinateBounds(coordinates);
+    const center = [(bounds.minLatitude + bounds.maxLatitude) / 2, (bounds.minLongitude + bounds.maxLongitude) / 2];
+    state.map.stop?.();
+    if (typeof state.map.fitBounds === "function") state.map.fitBounds(points, { padding: [MAP_FIT_PADDING_PIXELS, MAP_FIT_PADDING_PIXELS], maxZoom: targetZoom, animate: false });
+    const fittedZoom = Number(state.map.getZoom?.());
+    if (typeof state.map.setView === "function" && (!Number.isFinite(fittedZoom) || fittedZoom < targetZoom || fittedZoom <= currentZoom)) state.map.setView(center, targetZoom, { animate: false });
+    rebuildRegistryClusters();
+    return true;
+  }
   function rebuildRegistryClusters() {
     if (!state.layers?.registryClusters) return;
     state.layers.registryClusters.clearLayers(); const groups = clusterGroups(state.layers.registryMarkers);
@@ -193,7 +246,7 @@
       const displayCoordinate = clusterDisplayCoordinate(group);
       const label = mapText("map.clusterTitle", { count: group.markers.length });
       const marker = createMarker(displayCoordinate, { icon: icon("linkwatch-registry-cluster", '<span aria-label="' + label + '">' + group.markers.length + "</span>", [28, 28]), keyboard: true, title: label }, { kind: "registry-cluster", count: group.markers.length, members: group.markers.map((item) => item.__linkwatchContext), lines: [], mode: "registry", label });
-      if (typeof marker.on === "function") marker.on("click", () => fitToCoordinates(group.markers.map((item) => coordinateForSchool(item.__linkwatchContext?.school)), { maxZoom: state.config.maxZoom, singleZoom: state.config.maxZoom }));
+      if (typeof marker.on === "function") marker.on("click", () => expandRegistryCluster(group));
       state.layers.registryClusters.addLayer(marker);
     });
     state.lastRender = state.lastRender ? { ...state.lastRender, registryClusterCount: groups.length, registryVisibleMarkerCount: groups.length } : state.lastRender;
@@ -225,7 +278,8 @@
       return true;
     }
     if (typeof state.map.fitBounds !== "function") return false;
-    state.map.fitBounds(points, { padding: [24, 24], maxZoom: options.maxZoom ?? state.config.fitMaxZoom }); return true;
+    state.map.stop?.();
+    state.map.fitBounds(points, { padding: [MAP_FIT_PADDING_PIXELS, MAP_FIT_PADDING_PIXELS], maxZoom: options.maxZoom ?? state.config.fitMaxZoom }); return true;
   }
   function clearLayers() {
     if (!state.layers) return;
@@ -271,7 +325,7 @@
     rebuildRegistryClusters();
     updateRegistryHitTargets(monitoringGroups); refreshSize(); return true;
   }
-  function resetView() { if (state.map && state.config) state.map.setView(state.config.center, state.config.zoom); }
+  function resetView() { if (state.map && state.config) { state.map.stop?.(); state.map.setView(state.config.center, state.config.zoom); } }
   window.LinkwatchMap = {
     DEFAULT_CONFIG: DEFAULT_MAP_CONFIG, STATUS_PRIORITY, init, render, refreshSize, resetView, fitToCoordinates,
     getMap: () => state.map, getConfig: () => state.config || mapConfig(), getLastRender: () => state.lastRender, getLayers: () => state.layers,

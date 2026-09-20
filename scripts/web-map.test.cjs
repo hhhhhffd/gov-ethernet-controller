@@ -27,14 +27,22 @@ const map = {
   zoom: 7,
   layers: [],
   bounds: null,
-  setView(center, zoom) { this.center = center; this.zoom = zoom; return this; },
+  handlers: {},
+  setView(center, zoom) {
+    const previousZoom = this.zoom;
+    this.center = center; this.zoom = zoom;
+    if (previousZoom !== zoom) (this.handlers.zoomend || []).forEach((callback) => callback());
+    return this;
+  },
   getZoom() { return this.zoom; },
+  getSize() { return { x: 800, y: 600 }; },
   project([latitude, longitude], zoom) { const scale = 256 * 2 ** zoom / 360; return { x: longitude * scale, y: latitude * scale }; },
   unproject([x, y], zoom) { const scale = 256 * 2 ** zoom / 360; return { lat: y / scale, lng: x / scale }; },
   fitBounds(bounds, options) { this.bounds = { bounds, options }; return this; },
+  stop() { this.stopped = true; return this; },
   addLayer(layer) { this.layers.push(layer); return this; },
   removeLayer(layer) { this.layers = this.layers.filter((candidate) => candidate !== layer); return this; },
-  on() { return this; },
+  on(name, callback) { (this.handlers[name] ||= []).push(callback); return this; },
   invalidateSize() {},
 };
 const container = { id: "leafletMap" };
@@ -105,7 +113,10 @@ assert.ok(clusterContext.members.some((member) => member.registryId === "18383")
 assert.ok(map.bounds, "render must fit the map to actual registry/monitoring coordinates");
 assert.ok(map.bounds.bounds.some(([latitude, longitude]) => latitude === 50.30 && longitude === 83.40));
 registryCluster.trigger("click");
-assert.equal(map.bounds.options.maxZoom, 18, "cluster click must fit members through the configured maximum zoom");
+assert.ok(map.zoom > 7, "cluster click must advance the viewport zoom");
+assert.equal(map.bounds.bounds.length, clusterContext.members.length, "cluster click must fit exactly the member coordinates");
+assert.deepEqual(Array.from(map.bounds.options.padding), [24, 24], "cluster click must retain bounded viewport padding");
+assert.ok(map.bounds.options.maxZoom <= mapApi.getConfig().maxZoom, "cluster click must respect the configured maximum zoom");
 
 const monitoringLayer = mapApi.getLayers().monitoring;
 assert.equal(monitoringLayer.items.length, 1);
@@ -117,6 +128,43 @@ mapApi.render({ mode: "historical", registry, lines: lines.slice(0, 1), historic
 const historicalContext = mapApi.getMarkerContext(mapApi.getLayers().monitoring.items[0]);
 assert.equal(historicalContext.status, "UNKNOWN", "historical mode must not reuse current state");
 assert.equal(historicalContext.evidence[0].status, "UNKNOWN", "historical marker evidence must come from the historical summary");
+
+const realRegistry = JSON.parse(fs.readFileSync("web/data/vko-schools.json", "utf8"));
+const realSchools = realRegistry.schools;
+assert.equal(realSchools.length, 370, "large-registry coverage must use the authoritative 370-school artifact");
+map.setView([49.95, 82.62], 7);
+assert.equal(mapApi.render({ mode: "current", registry: realRegistry, lines: [] }), true);
+const largeRender = mapApi.getLastRender();
+assert.equal(largeRender.registryMarkerCount, 370, "all valid real registry rows must enter map-core clustering");
+assert.ok(largeRender.registryClusterCount > 1, "real registry must not collapse into one transitive cluster");
+const visibleRegistryContexts = () => mapApi.getLayers().registryClusters.items.map((marker) => mapApi.getMarkerContext(marker)).filter((context) => context?.kind === "registry" || context?.kind === "registry-cluster");
+const representedRegistryIds = () => {
+  const ids = [];
+  visibleRegistryContexts().forEach((context) => {
+    if (context.kind === "registry-cluster") context.members.forEach((member) => ids.push(member.registryId));
+    else ids.push(context.registryId);
+  });
+  return ids;
+};
+const largeClusterContexts = () => visibleRegistryContexts().filter((context) => context.kind === "registry-cluster");
+assert.ok(largeClusterContexts().length > 0, "large real registry must retain neutral member clusters");
+assert.ok(largeClusterContexts().every((context) => context.members.length <= mapApi.getConfig().clusterMaxMembers), "cluster member lists must remain bounded for the popup surface");
+assert.equal(new Set(representedRegistryIds()).size, 370, "every real registry identity must remain represented exactly once");
+assert.equal(representedRegistryIds().length, 370, "cluster rebuild must not duplicate or drop registry identities");
+assert.ok(representedRegistryIds().includes("18383"), "school 32 must remain in the real registry cluster/member model");
+
+const largestRealCluster = largeClusterContexts().sort((left, right) => right.members.length - left.members.length)[0];
+const largestRealClusterMarker = mapApi.getLayers().registryClusters.items.find((marker) => mapApi.getMarkerContext(marker) === largestRealCluster);
+const realZoomBeforeExpansion = map.zoom;
+const oldVisibleMarkers = mapApi.getLayers().registryClusters.items.slice();
+largestRealClusterMarker.trigger("click");
+assert.ok(map.zoom > realZoomBeforeExpansion, "real cluster click must move to a deeper viewport zoom");
+assert.equal(map.bounds.bounds.length, largestRealCluster.members.length, "real cluster expansion must use only that cluster's members");
+assert.ok(map.bounds.options.maxZoom <= mapApi.getConfig().maxZoom, "real cluster expansion must stay within max zoom");
+assert.ok(mapApi.getLastRender().registryClusterCount > largeRender.registryClusterCount, "deeper zoom must rebuild the real registry into a finer grouping");
+assert.ok(mapApi.getLayers().registryClusters.items.some((marker) => !oldVisibleMarkers.includes(marker)), "cluster expansion must rebuild marker instances for the new viewport");
+assert.equal(new Set(representedRegistryIds()).size, 370, "cluster rebuild must preserve every real registry identity");
+assert.ok(largeClusterContexts().every((context) => context.members.length <= mapApi.getConfig().clusterMaxMembers), "rebuilt member lists must remain bounded");
 
 const appSource = fs.readFileSync("web/app.js", "utf8");
 const indexSource = fs.readFileSync("web/index.html", "utf8");
