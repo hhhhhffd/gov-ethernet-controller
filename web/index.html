@@ -28,6 +28,7 @@
           <div class="shell-top-right" data-i18n-aria-label="app.tools">
             <button id="themeToggle" class="reference-icon-button" type="button"></button>
             <button id="refreshButton" class="reference-icon-button" type="button" data-i18n-aria-label="action.refreshMap" data-i18n-title="action.refreshMap">↻</button>
+            <button id="notificationsButton" class="reference-icon-button" type="button" data-capability="notification.read" data-i18n-aria-label="notification.open" data-i18n-title="notification.open" aria-expanded="false">♢</button>
             <details id="accountControl" class="account-control">
               <summary id="accountButton" class="account-button" data-i18n-aria-label="app.account"><span id="sessionUser">—</span></summary>
               <div class="account-menu">
@@ -69,6 +70,9 @@
         <span id="registryDataStatus" class="visually-hidden" role="status"></span>
         <section id="incidentsSurface" class="incidents-surface" aria-live="polite" hidden></section>
         <section id="reportsSurface" class="reports-surface" aria-live="polite" hidden></section>
+        <section id="notificationsSurface" class="notification-surface" role="dialog" aria-modal="false" aria-labelledby="notificationsTitle" hidden></section>
+        <section id="adminSurface" class="secondary-surface" aria-live="polite" hidden></section>
+        <section id="auditSurface" class="secondary-surface" aria-live="polite" hidden></section>
       </section>
       <div id="authBackdrop" class="auth-backdrop" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <form id="loginForm" class="auth-form">

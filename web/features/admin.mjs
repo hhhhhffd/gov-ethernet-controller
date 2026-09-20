@@ -8,6 +8,10 @@ export function createAdminBoundary(api) {
     async list(resource, query = "") { const suffix = query ? `?${query}` : ""; const response = await api.tryRequest(apiAliases(`/admin/${pathFor(resource)}${suffix}`)); return resource === "schedule" ? [response] : unwrapCollection(response); },
     async create(resource, payload) { return api.tryRequest(apiAliases(`/admin/${pathFor(resource)}`), { method: "POST", body: JSON.stringify(payload) }); },
     async update(resource, id, payload) { return api.tryRequest(apiAliases(`/admin/${pathFor(resource)}/${encodeURIComponent(id)}`), { method: "PUT", body: JSON.stringify(payload) }); },
+    async save(resource, id, payload) {
+      if (resource === "schedule") return api.tryRequest(apiAliases("/admin/schedules"), { method: "PUT", body: JSON.stringify(payload) });
+      return id ? this.update(resource, id, payload) : this.create(resource, payload);
+    },
     async registerDevice(payload) { return api.tryRequest(apiAliases("/admin/devices/register"), { method: "POST", body: JSON.stringify(payload) }); },
     async deviceAction(id, action, payload) { return api.tryRequest(apiAliases(`/admin/devices/${encodeURIComponent(id)}/${action}`), { method: "POST", body: payload ? JSON.stringify(payload) : undefined }); },
     async impactPreview(payload) { return api.tryRequest(apiAliases("/admin/impact-preview"), { method: "POST", body: JSON.stringify(payload) }); },

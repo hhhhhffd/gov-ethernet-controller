@@ -18,6 +18,7 @@ import { defaultReportFilters, reportAvailability, reportContextFilters, reportE
 import { filterIncidents, incidentSeverityValues, incidentStatusValues, presentIncident, presentRecovery, presentSituation, presentTimeline, relatedSituations } from "./features/incidents-presentation.mjs";
 import { presentProviderCase, providerCaseActions } from "./features/provider-case-presentation.mjs";
 import { activeIncident, availableMetrics, createSelectedSchool, mergeLineDetail, selectedLine, selectSchoolLine } from "./features/school-detail.mjs";
+import { adminResourceDefinitions, presentAgentVersion, presentAuditItem, presentNotification } from "./features/secondary-presentation.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const state = {
@@ -25,6 +26,9 @@ const state = {
   mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null,
   incidents: createIncidentSurfaceState(),
   reports: createReportsSurfaceState(),
+  notifications: createNotificationsSurfaceState(),
+  admin: createAdminSurfaceState(),
+  audit: createAuditSurfaceState(),
 };
 
 let session;
@@ -71,6 +75,18 @@ function createReportsSurfaceState() {
     state: "idle", filters: defaultReportFilters(), aggregate: null, analytics: null, passport: null,
     aggregateState: "idle", analyticsState: "idle", passportState: "idle", preview: null, previewState: "idle", loadPromise: null,
   };
+}
+
+function createNotificationsSurfaceState() {
+  return { open: false, state: "idle", items: [], loadPromise: null };
+}
+
+function createAdminSurfaceState() {
+  return { state: "idle", resource: "organizations", items: [], selectedId: "", payload: "{}", mutationState: "idle", message: "", loadPromise: null, preview: null };
+}
+
+function createAuditSurfaceState() {
+  return { state: "idle", tab: "log", items: [], filters: { action: "", object_type: "" }, nextBeforeId: "", versionsState: "idle", versions: [], selectedVersion: "", devicesState: "idle", devices: [], loadPromise: null };
 }
 
 function localizeStaticContent() {
@@ -140,8 +156,13 @@ function renderRoute(snapshot = router.getState()) {
   if (globalThis.location && globalThis.location.hash !== hash) globalThis.history?.replaceState?.({}, "", globalThis.location.pathname + hash);
   if (snapshot.view === "incidents") loadIncidents();
   if (snapshot.view === "reports") loadReports();
+  if (snapshot.view === "admin") loadAdminResource();
+  if (snapshot.view === "audit") loadAuditLog();
   renderIncidentsSurface();
   renderReportsSurface();
+  renderNotificationsSurface();
+  renderAdminSurface();
+  renderAuditSurface();
 }
 
 function renderPrimaryNav() {
@@ -177,6 +198,9 @@ function handleSessionChange(snapshot) {
     state.selectedSchool = null;
     state.incidents = createIncidentSurfaceState();
     state.reports = createReportsSurfaceState();
+    state.notifications = createNotificationsSurfaceState();
+    state.admin = createAdminSurfaceState();
+    state.audit = createAuditSurfaceState();
   }
   renderSession(snapshot);
   renderPrimaryNav();
@@ -688,6 +712,326 @@ function bindReportSurfaceEvents(root) {
   root.querySelector("[data-evidence-preview]")?.addEventListener("click", previewEvidenceReport);
 }
 
+function renderNotificationsSurface() {
+  const root = $("#notificationsSurface");
+  const button = $("#notificationsButton");
+  const view = state.notifications;
+  const allowed = state.capabilities.has("notification.read");
+  if (button) {
+    button.hidden = !allowed;
+    button.setAttribute("aria-expanded", String(Boolean(allowed && view.open)));
+  }
+  if (!root) return;
+  root.hidden = !allowed || !view.open;
+  if (!allowed || !view.open) return;
+  if (view.state === "loading" || view.state === "idle") {
+    root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(i18n.t("action.closeMapCard")) + '">×</button></header><p class="surface-state" role="status">' + escapeHtml(i18n.t("notification.loading")) + "</p>";
+  } else if (view.state === "error") {
+    root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(i18n.t("action.closeMapCard")) + '">×</button></header><p class="surface-state error" role="alert">' + escapeHtml(i18n.t("notification.unavailable")) + '</p><button type="button" class="secondary-action" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + "</button>";
+  } else {
+    const rows = view.items.map((item) => {
+      const notification = presentNotification(item, { i18n, presentation });
+      const scope = notification.scopeAvailable ? "" : '<p class="notification-scope">' + escapeHtml(i18n.t("notification.scopeUnavailable")) + "</p>";
+      const attempts = notification.attempts == null ? "" : '<small>' + escapeHtml(i18n.t("notification.attempts", { count: notification.attempts })) + "</small>";
+      const next = notification.nextAttemptLabel ? '<small>' + escapeHtml(i18n.t("notification.nextAttempt")) + ": " + escapeHtml(notification.nextAttemptLabel) + "</small>" : "";
+      return '<article class="notification-item"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p><small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + '</article>';
+    }).join("");
+    root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div><button type="button" class="secondary-action utility-refresh" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + '</button><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(i18n.t("action.closeMapCard")) + '">×</button></div></header>' + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("notification.empty")) + "</p>");
+  }
+  root.querySelector("[data-notifications-close]")?.addEventListener("click", closeNotifications);
+  root.querySelector("[data-notifications-refresh]")?.addEventListener("click", () => loadNotifications({ force: true }));
+}
+
+function closeNotifications() {
+  state.notifications.open = false;
+  renderNotificationsSurface();
+}
+
+async function loadNotifications({ force = false } = {}) {
+  const view = state.notifications;
+  if (!session.authenticated || !state.capabilities.has("notification.read")) return;
+  if (view.state === "loading") return view.loadPromise;
+  if (view.state === "ready" && !force) { renderNotificationsSurface(); return; }
+  view.state = "loading";
+  renderNotificationsSurface();
+  view.loadPromise = boundaries.notifications.list({ limit: "50" }).then((items) => {
+    view.items = Array.isArray(items) ? items : [];
+    view.state = "ready";
+  }).catch(() => {
+    view.items = [];
+    view.state = "error";
+  }).finally(() => { view.loadPromise = null; renderNotificationsSurface(); });
+  return view.loadPromise;
+}
+
+function toggleNotifications() {
+  if (!state.capabilities.has("notification.read")) return;
+  state.notifications.open = !state.notifications.open;
+  if (state.notifications.open) loadNotifications();
+  else renderNotificationsSurface();
+}
+
+function adminResourceLabel(resource) { return i18n.t("admin.resources." + resource); }
+
+function adminFieldLabel(key) {
+  const labels = {
+    id: "field.registryNumber", line_id: "field.line", school_id: "field.school", organization_id: "field.school", provider_id: "field.provider",
+    name: "field.officialIdentity", username: "field.username", role: "field.lineRole", status: "field.status", technology: "field.connectionType",
+    active: "admin.status", disabled: "admin.status", blocked: "admin.status", last_seen: "audit.lastSeen", version: "audit.version",
+  };
+  return i18n.t(labels[key] || "admin.identity", undefined, key.replaceAll("_", " "));
+}
+
+function adminDisplayValue(key, value) {
+  if (value === null || value === undefined || value === "") return i18n.t("empty.noData");
+  if (typeof value === "boolean") return value ? i18n.t("status.ATTENTION") : i18n.t("status.OK");
+  if (/status|state/i.test(key)) return presentation.status(value).label;
+  if (key === "role") return presentation.role(value);
+  if (/technology|type/i.test(key)) return presentation.connectionType(value);
+  if (/created_at|updated_at|last_seen|release_at/i.test(key)) return presentation.formatDate(value, true);
+  if (typeof value === "object") return i18n.t("admin.details");
+  return String(value);
+}
+
+function adminRecordId(item) { return item?.id ?? item?.version ?? item?.line_id ?? item?.device_id ?? ""; }
+
+function adminResourceOptions() {
+  return adminResourceDefinitions().filter((resource) => state.capabilities.has(resource.capability));
+}
+
+function renderAdminSurface() {
+  const root = $("#adminSurface");
+  if (!root) return;
+  const view = state.admin;
+  const allowedResources = adminResourceOptions();
+  const allowed = state.capabilities.has("admin.manage");
+  root.hidden = router.getState().view !== "admin" || !allowed;
+  if (root.hidden) return;
+  if (!allowedResources.some((resource) => resource.key === view.resource)) view.resource = allowedResources[0]?.key || "organizations";
+  const options = allowedResources.map((resource) => '<option value="' + escapeHtml(resource.key) + '"' + (resource.key === view.resource ? " selected" : "") + ">' + escapeHtml(adminResourceLabel(resource.key)) + "</option>").join("");
+  const header = '<header class="surface-header"><div><h1>' + escapeHtml(i18n.t("admin.title")) + '</h1><p>' + escapeHtml(i18n.t("admin.subtitle")) + '</p></div><button type="button" class="secondary-action" data-admin-refresh>' + escapeHtml(i18n.t("admin.refresh")) + "</button></header>";
+  if (view.state === "loading" || view.state === "idle") {
+    root.innerHTML = '<div class="secondary-shell">' + header + '<p class="surface-state" role="status">' + escapeHtml(i18n.t("admin.loading")) + "</p></div>";
+    root.querySelector("[data-admin-refresh]")?.addEventListener("click", () => loadAdminResource({ force: true }));
+    return;
+  }
+  const rows = view.items.map((item) => {
+    const entries = Object.entries(item || {}).filter(([, value]) => value !== null && typeof value !== "object").slice(0, 6);
+    const id = adminRecordId(item);
+    const cells = entries.map(([key, value]) => '<div><dt>' + escapeHtml(adminFieldLabel(key)) + '</dt><dd>' + escapeHtml(adminDisplayValue(key, value)) + "</dd></div>").join("");
+    const edit = view.resource === "schedule" ? "" : '<button type="button" class="link-action" data-admin-edit="' + escapeHtml(String(id)) + '">' + escapeHtml(i18n.t("admin.update")) + "</button>";
+    const deviceActions = view.resource === "devices" && id ? '<div class="admin-device-actions"><button type="button" class="link-action" data-admin-device-action="block" data-admin-device-id="' + escapeHtml(String(id)) + '">' + escapeHtml(i18n.t("admin.block")) + '</button><button type="button" class="link-action" data-admin-device-action="unblock" data-admin-device-id="' + escapeHtml(String(id)) + '">' + escapeHtml(i18n.t("admin.unblock")) + '</button><button type="button" class="link-action" data-admin-device-action="rotate-token" data-admin-device-id="' + escapeHtml(String(id)) + '">' + escapeHtml(i18n.t("admin.rotateToken")) + "</button></div>" : "";
+    return '<article class="admin-record"><dl class="detail-grid">' + cells + '</dl>' + edit + deviceActions + '<details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(item, null, 2)) + "</pre></details></article>";
+  }).join("");
+  const payloadLabel = view.resource === "devices" && !view.selectedId ? i18n.t("admin.registerDevice") : view.selectedId ? i18n.t("admin.update") : i18n.t("admin.create");
+  const message = view.message ? '<p class="surface-state' + (view.mutationState === "error" ? " error" : "") + '" role="status">' + escapeHtml(i18n.t(view.message)) + "</p>" : "";
+  root.innerHTML = '<div class="secondary-shell">' + header + '<div class="admin-toolbar"><label>' + escapeHtml(i18n.t("admin.resource")) + '<select data-admin-resource>' + options + '</select></label><span>' + escapeHtml(i18n.t("admin.resourceCapability")) + "</span></div>" + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("admin.empty")) + '</p>') + '<form class="admin-editor" data-admin-editor><h2>' + escapeHtml(payloadLabel) + '</h2><label>' + escapeHtml(i18n.t("admin.recordId")) + '<input name="recordId" value="' + escapeHtml(view.selectedId) + '" placeholder="' + escapeHtml(i18n.t("empty.value")) + '"></label><label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="payload" required spellcheck="false">' + escapeHtml(view.payload) + '</textarea></label><p class="form-hint">' + escapeHtml(i18n.t("admin.payloadHint")) + '</p><button type="submit" class="primary-action"' + (view.mutationState === "saving" ? " disabled" : "") + '>' + escapeHtml(payloadLabel) + '</button><button type="button" class="secondary-action" data-admin-impact>' + escapeHtml(i18n.t("admin.impactPreview")) + '</button><button type="button" class="secondary-action" data-admin-agent-update>' + escapeHtml(i18n.t("admin.agentUpdate")) + '</button></form>' + message + (view.preview ? '<div class="admin-preview"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><p>' + escapeHtml(i18n.t("admin.previewReady")) + '</p><pre>' + escapeHtml(JSON.stringify(view.preview, null, 2)) + '</pre></div>' : "") + '</div>';
+  bindAdminSurfaceEvents(root);
+}
+
+function bindAdminSurfaceEvents(root) {
+  root.querySelector("[data-admin-resource]")?.addEventListener("change", (event) => {
+    state.admin.resource = event.target.value;
+    state.admin.selectedId = "";
+    state.admin.payload = "{}";
+    state.admin.message = "";
+    loadAdminResource({ force: true });
+  });
+  root.querySelector("[data-admin-refresh]")?.addEventListener("click", () => loadAdminResource({ force: true }));
+  root.querySelectorAll("[data-admin-edit]").forEach((button) => button.addEventListener("click", () => {
+    const item = state.admin.items.find((candidate) => String(adminRecordId(candidate)) === String(button.dataset.adminEdit));
+    if (!item) return;
+    state.admin.selectedId = String(adminRecordId(item));
+    state.admin.payload = JSON.stringify(item, null, 2);
+    state.admin.message = "";
+    renderAdminSurface();
+    root.querySelector("[name=payload]")?.focus();
+  }));
+  root.querySelector("[data-admin-editor]")?.addEventListener("submit", submitAdminMutation);
+  root.querySelectorAll("[data-admin-device-action]").forEach((button) => button.addEventListener("click", () => adminDeviceAction(button.dataset.adminDeviceId, button.dataset.adminDeviceAction)));
+  root.querySelector("[data-admin-impact]")?.addEventListener("click", runAdminImpactPreview);
+  root.querySelector("[data-admin-agent-update]")?.addEventListener("click", runAdminAgentUpdate);
+}
+
+async function loadAdminResource({ force = false } = {}) {
+  const view = state.admin;
+  if (!session.authenticated || !state.capabilities.has("admin.manage") || router.getState().view !== "admin") return;
+  const allowed = adminResourceOptions();
+  if (!allowed.some((resource) => resource.key === view.resource)) view.resource = allowed[0]?.key || "organizations";
+  if (view.state === "loading") return view.loadPromise;
+  if (view.state === "ready" && !force) { renderAdminSurface(); return; }
+  view.state = "loading";
+  view.message = "";
+  renderAdminSurface();
+  view.loadPromise = boundaries.admin.list(view.resource).then((items) => { view.items = Array.isArray(items) ? items : []; view.state = "ready"; }).catch(() => { view.items = []; view.state = "error"; view.message = "admin.unavailable"; }).finally(() => { view.loadPromise = null; renderAdminSurface(); });
+  return view.loadPromise;
+}
+
+function parseAdminPayload(root) {
+  try {
+    const payload = JSON.parse(root.querySelector("[name=payload]")?.value || "{}");
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("object expected");
+    return { id: root.querySelector("[name=recordId]")?.value.trim() || "", payload };
+  } catch (error) {
+    state.admin.mutationState = "error";
+    state.admin.message = "admin.payloadInvalid";
+    renderAdminSurface();
+    return null;
+  }
+}
+
+function isDestructiveAdminPayload(resource, payload, action = "save") {
+  return action !== "save" || payload?.disabled === true || payload?.active === false || payload?.blocked === true || payload?.status === "DELETED" || (resource === "users" && payload?.password);
+}
+
+async function submitAdminMutation(event) {
+  event.preventDefault();
+  const parsed = parseAdminPayload(event.currentTarget);
+  if (!parsed) return;
+  const { id, payload } = parsed;
+  const resource = state.admin.resource;
+  if (isDestructiveAdminPayload(resource, payload) && !globalThis.confirm?.(i18n.t("admin.confirmDestructive"))) return;
+  if (!isDestructiveAdminPayload(resource, payload) && !globalThis.confirm?.(i18n.t("admin.confirmSave"))) return;
+  state.admin.mutationState = "saving";
+  state.admin.message = "";
+  renderAdminSurface();
+  try {
+    const result = resource === "devices" && !id ? await boundaries.admin.registerDevice(payload) : await boundaries.admin.save(resource, id, payload);
+    state.admin.selectedId = String(adminRecordId(result) || id || "");
+    state.admin.payload = JSON.stringify(result || payload, null, 2);
+    state.admin.mutationState = "success";
+    state.admin.message = "admin.mutationSucceeded";
+    await loadAdminResource({ force: true });
+  } catch (error) {
+    state.admin.mutationState = "error";
+    state.admin.message = "admin.mutationFailed";
+    renderAdminSurface();
+  }
+}
+
+async function adminDeviceAction(id, action) {
+  if (!id || !state.capabilities.has("admin.devices")) return;
+  if (!globalThis.confirm?.(i18n.t("admin.confirmDestructive"))) return;
+  state.admin.mutationState = "saving";
+  state.admin.message = "";
+  renderAdminSurface();
+  try {
+    const result = await boundaries.admin.deviceAction(id, action);
+    state.admin.payload = JSON.stringify(result || {}, null, 2);
+    state.admin.mutationState = "success";
+    state.admin.message = "admin.mutationSucceeded";
+    await loadAdminResource({ force: true });
+  } catch (error) {
+    state.admin.mutationState = "error";
+    state.admin.message = "admin.actionFailed";
+    renderAdminSurface();
+  }
+}
+
+async function runAdminImpactPreview() {
+  const parsed = parseAdminPayload($("#adminSurface"));
+  if (!parsed) return;
+  try {
+    state.admin.preview = await boundaries.admin.impactPreview(parsed.payload);
+    state.admin.message = "";
+  } catch (error) {
+    state.admin.preview = null;
+    state.admin.message = "admin.actionFailed";
+    state.admin.mutationState = "error";
+  }
+  renderAdminSurface();
+}
+
+async function runAdminAgentUpdate() {
+  const parsed = parseAdminPayload($("#adminSurface"));
+  if (!parsed || !globalThis.confirm?.(i18n.t("admin.confirmDestructive"))) return;
+  try {
+    state.admin.payload = JSON.stringify(await boundaries.admin.agentUpdate(parsed.payload), null, 2);
+    state.admin.message = "admin.mutationSucceeded";
+    state.admin.mutationState = "success";
+  } catch (error) {
+    state.admin.message = "admin.actionFailed";
+    state.admin.mutationState = "error";
+  }
+  renderAdminSurface();
+}
+
+function auditObjectLabel(value) {
+  const key = String(value || "").toLowerCase();
+  if (key.includes("incident")) return i18n.t("nav.incidents");
+  if (key.includes("notification")) return i18n.t("notification.title");
+  if (key.includes("line")) return i18n.t("field.line");
+  if (key.includes("user")) return i18n.t("admin.resources.users");
+  return value || i18n.t("empty.noData");
+}
+
+function renderAuditSurface() {
+  const root = $("#auditSurface");
+  if (!root) return;
+  const view = state.audit;
+  root.hidden = router.getState().view !== "audit" || !state.capabilities.has("audit.read");
+  if (root.hidden) return;
+  const header = '<header class="surface-header"><div><h1>' + escapeHtml(i18n.t("audit.title")) + '</h1><p>' + escapeHtml(i18n.t("audit.subtitle")) + '</p></div><button type="button" class="secondary-action" data-audit-refresh>' + escapeHtml(i18n.t("audit.refresh")) + "</button></header>";
+  const tabs = '<div class="secondary-tabs"><button type="button" class="secondary-action" data-audit-tab="log"' + (view.tab === "log" ? ' aria-current="page"' : "") + '>' + escapeHtml(i18n.t("audit.title")) + '</button><button type="button" class="secondary-action" data-audit-tab="versions"' + (view.tab === "versions" ? ' aria-current="page"' : "") + '>' + escapeHtml(i18n.t("audit.agentVersions")) + "</button></div>";
+  if (view.tab === "versions") {
+    const content = view.versionsState === "loading" ? '<p class="surface-state" role="status">' + escapeHtml(i18n.t("audit.versionsLoading")) + '</p>' : view.versionsState === "error" ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t("audit.versionsUnavailable")) + '</p>' : view.versions.length ? '<div class="audit-records">' + view.versions.map((item) => { const version = presentAgentVersion(item, { i18n, presentation }); return '<article class="audit-record"><div class="audit-record-head"><strong>' + escapeHtml(version.version) + '</strong><span>' + escapeHtml(version.sourceLabel) + '</span></div><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("audit.devices")) + '</dt><dd>' + escapeHtml(String(version.deviceCount)) + '</dd></div><div><dt>' + escapeHtml(i18n.t("audit.lastSeen")) + '</dt><dd>' + escapeHtml(version.lastSeenLabel) + '</dd></div></dl><button type="button" class="link-action" data-audit-version="' + escapeHtml(version.version) + '">' + escapeHtml(i18n.t("audit.openDevices")) + '</button>' + (view.selectedVersion === version.version ? renderAuditDevices() : "") + '</article>'; }).join("") + '</div>' : '<p class="surface-state">' + escapeHtml(i18n.t("audit.versionsEmpty")) + '</p>';
+    root.innerHTML = '<div class="secondary-shell">' + header + tabs + content + "</div>";
+  } else {
+    const actionOptions = [...new Set(view.items.map((item) => item?.action || item?.event_type).filter(Boolean))].map((value) => '<option value="' + escapeHtml(value) + '"' + (view.filters.action === value ? " selected" : "") + '>' + escapeHtml(presentation.action(value)) + "</option>").join("");
+    const objectOptions = [...new Set(view.items.map((item) => item?.object_type).filter(Boolean))].map((value) => '<option value="' + escapeHtml(value) + '"' + (view.filters.object_type === value ? " selected" : "") + '>' + escapeHtml(auditObjectLabel(value)) + "</option>").join("");
+    const rows = view.items.map((item) => { const entry = presentAuditItem(item, { i18n, presentation }); return '<article class="audit-record"><div class="audit-record-head"><strong>' + escapeHtml(entry.actionLabel) + '</strong><span>' + escapeHtml(entry.atLabel) + '</span></div><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("audit.object")) + '</dt><dd>' + escapeHtml(auditObjectLabel(entry.objectLabel)) + '</dd></div><div><dt>' + escapeHtml(i18n.t("audit.actor")) + '</dt><dd>' + escapeHtml(entry.actorLabel) + '</dd></div></dl>' + (entry.rawAction || entry.payload ? '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify({ action: entry.rawAction, object_id: entry.rawObject, payload: entry.payload }, null, 2)) + '</pre></details>' : "") + '</article>'; }).join("");
+    const content = view.state === "loading" ? '<p class="surface-state" role="status">' + escapeHtml(i18n.t("audit.loading")) + '</p>' : view.state === "error" ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t("audit.unavailable")) + '</p>' : rows || '<p class="surface-state">' + escapeHtml(i18n.t("audit.empty")) + '</p>';
+    root.innerHTML = '<div class="secondary-shell">' + header + tabs + '<form class="audit-filters" data-audit-filters><label>' + escapeHtml(i18n.t("audit.action")) + '<select name="action"><option value="">' + escapeHtml(i18n.t("audit.anyAction")) + '</option>' + actionOptions + '</select></label><label>' + escapeHtml(i18n.t("audit.object")) + '<select name="object_type"><option value="">' + escapeHtml(i18n.t("audit.anyObject")) + '</option>' + objectOptions + '</select></label><button type="submit" class="secondary-action">' + escapeHtml(i18n.t("admin.refresh")) + '</button></form><div class="audit-records">' + content + '</div></div>';
+  }
+  bindAuditSurfaceEvents(root);
+}
+
+function renderAuditDevices() {
+  const view = state.audit;
+  if (view.devicesState === "loading") return '<p class="surface-state" role="status">' + escapeHtml(i18n.t("audit.versionsLoading")) + '</p>';
+  if (view.devicesState === "error") return '<p class="surface-state error">' + escapeHtml(i18n.t("audit.devicesUnavailable")) + '</p>';
+  if (!view.devices.length) return '<p class="surface-state">' + escapeHtml(i18n.t("audit.devicesEmpty")) + '</p>';
+  return '<ul class="audit-device-list">' + view.devices.map((device) => '<li><strong>' + escapeHtml(device.display_name || device.hostname || device.device_id || i18n.t("empty.noData")) + '</strong><span>' + escapeHtml(device.school_name || device.organization_name || i18n.t("empty.noData")) + '</span><time>' + escapeHtml(presentation.formatDate(device.last_seen, true)) + '</time></li>').join("") + '</ul>';
+}
+
+function bindAuditSurfaceEvents(root) {
+  root.querySelector("[data-audit-refresh]")?.addEventListener("click", () => state.audit.tab === "versions" ? loadAgentVersions({ force: true }) : loadAuditLog({ force: true }));
+  root.querySelectorAll("[data-audit-tab]").forEach((button) => button.addEventListener("click", () => { state.audit.tab = button.dataset.auditTab; if (state.audit.tab === "versions") loadAgentVersions(); else loadAuditLog(); }));
+  root.querySelector("[data-audit-filters]")?.addEventListener("submit", (event) => { event.preventDefault(); state.audit.filters = Object.fromEntries(new FormData(event.currentTarget)); loadAuditLog({ force: true }); });
+  root.querySelectorAll("[data-audit-version]").forEach((button) => button.addEventListener("click", () => loadVersionDevices(button.dataset.auditVersion)));
+}
+
+async function loadAuditLog({ force = false } = {}) {
+  const view = state.audit;
+  if (!session.authenticated || !state.capabilities.has("audit.read") || router.getState().view !== "audit") return;
+  if (view.state === "loading") return view.loadPromise;
+  if (view.state === "ready" && !force) { renderAuditSurface(); return; }
+  view.state = "loading";
+  renderAuditSurface();
+  view.loadPromise = boundaries.audit.list({ limit: "50", ...view.filters }).then((response) => { view.items = Array.isArray(response) ? response : (Array.isArray(response?.items) ? response.items : []); view.nextBeforeId = response?.next_before_id || ""; view.state = "ready"; }).catch(() => { view.items = []; view.state = "error"; }).finally(() => { view.loadPromise = null; renderAuditSurface(); });
+  return view.loadPromise;
+}
+
+async function loadAgentVersions({ force = false } = {}) {
+  const view = state.audit;
+  if (!session.authenticated || !state.capabilities.has("audit.read") || router.getState().view !== "audit") return;
+  if (view.versionsState === "loading") return;
+  if (view.versionsState === "ready" && !force) { renderAuditSurface(); return; }
+  view.versionsState = "loading";
+  renderAuditSurface();
+  try { view.versions = await boundaries.audit.agentVersions("limit=50"); view.versionsState = "ready"; } catch (error) { view.versions = []; view.versionsState = "error"; }
+  renderAuditSurface();
+}
+
+async function loadVersionDevices(version) {
+  const view = state.audit;
+  view.selectedVersion = version;
+  view.devicesState = "loading";
+  renderAuditSurface();
+  try { view.devices = await boundaries.audit.versionDevices(version); view.devicesState = "ready"; } catch (error) { view.devices = []; view.devicesState = "error"; }
+  renderAuditSurface();
+}
+
 function renderIncidentDetail() {
   const view = incidentSurfaceState();
   if (!view.selectedId) return '<p class="surface-state">' + escapeHtml(i18n.t("incidents.select")) + "</p>";
@@ -1018,6 +1362,7 @@ function bindEvents() {
   });
   $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (error) { showToast("error.unknown", "warn"); } });
   $("#themeToggle")?.addEventListener("click", () => theme.toggle());
+  $("#notificationsButton")?.addEventListener("click", toggleNotifications);
   $("#refreshButton")?.addEventListener("click", refreshMap);
   $("#mapFilter")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -1047,7 +1392,7 @@ function bindEvents() {
   $("#mapZoomIn")?.addEventListener("click", () => mapApiAction("zoomIn"));
   $("#mapZoomOut")?.addEventListener("click", () => mapApiAction("zoomOut"));
   $("#mapReset")?.addEventListener("click", () => globalThis.LinkwatchMap?.resetView());
-  document.addEventListener("keydown", (event) => { if (event.key === "Escape") { if (!$("#mapPopup")?.hidden) closeMapPopup(); else if (!$("#detailDrawer")?.hidden) closeDrawer(); } });
+  document.addEventListener("keydown", (event) => { if (event.key === "Escape") { if (state.notifications.open) closeNotifications(); else if (!$("#mapPopup")?.hidden) closeMapPopup(); else if (!$("#detailDrawer")?.hidden) closeDrawer(); } });
   globalThis.LinkwatchMap?.setMarkerClickHandler((context, marker) => openMapPopup(context, marker));
 }
 
@@ -1062,6 +1407,9 @@ function refreshLocale() {
   if (state.mapPopupContext) renderPopup(state.mapPopupContext);
   if (state.selectedSchool && !$("#detailDrawer")?.hidden) renderSchoolDrawer(state.selectedSchool);
   renderIncidentsSurface();
+  renderNotificationsSurface();
+  renderAdminSurface();
+  renderAuditSurface();
 }
 
 async function boot() {
