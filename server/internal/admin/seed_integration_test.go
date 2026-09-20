@@ -37,6 +37,17 @@ func TestResetDemoClearsDraftGenerationsBeforeProviderCases(t *testing.T) {
 		t.Fatalf("prepare demo database: %v", err)
 	}
 	assertRowCount(t, ctx, db, "demo line context versions", `SELECT COUNT(*) FROM line_context_versions`, 4)
+	var schoolID, schoolName, district, address string
+	var latitude, longitude float64
+	if err := db.Pool.QueryRow(ctx, `SELECT school_id,name,district,address,latitude,longitude FROM organizations WHERE id='org-42'`).Scan(&schoolID, &schoolName, &district, &address, &latitude, &longitude); err != nil {
+		t.Fatalf("read seeded registry school: %v", err)
+	}
+	if schoolID != demoRegistrySchoolID || schoolName != demoRegistrySchoolName || district != demoRegistrySchoolDistrict || address != demoRegistrySchoolAddress {
+		t.Fatalf("seeded organization identity = (%q, %q, %q, %q), want registry school 18383", schoolID, schoolName, district, address)
+	}
+	if latitude != demoRegistrySchoolLatitude || longitude != demoRegistrySchoolLongitude {
+		t.Fatalf("seeded organization coordinates = (%v, %v), want official registry coordinates (%v, %v)", latitude, longitude, demoRegistrySchoolLatitude, demoRegistrySchoolLongitude)
+	}
 	demoObservationAt := time.Date(2020, time.January, 2, 0, 0, 0, 0, time.UTC)
 	if _, err := measurements.ResolveContext(ctx, db.Pool, "line-42-primary", demoObservationAt); err != nil {
 		t.Fatalf("resolve seeded demo line context for historical observation: %v", err)

@@ -11,6 +11,10 @@ device_id="device-42-primary"
 device_token="${TASK018_DEVICE_TOKEN:-demo-device-42-primary-token}"
 admin_login="${TASK018_ADMIN_LOGIN:-admin}"
 admin_password="${TASK018_ADMIN_PASSWORD:-demo}"
+registry_school_id="18383"
+registry_school_name="Коммунальное государственное учреждение «Средняя школа №32» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области"
+registry_school_latitude="49.988825"
+registry_school_longitude="82.575407"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -133,8 +137,8 @@ measurement_payload() {
   local download="$3"
   local upload="$4"
   local phase="$5"
-  printf '{"measurements":[{"client_event_id":"%s","observed_at":"%s","mode":"PERFORMANCE","download":%s,"upload":%s,"ping":22,"jitter":7,"packet_loss":0.4,"availability":100,"connection_status":"OK","quality":"VALID","latency_method":"DEMO","raw":{"probe":"demo","scenario":"TASK-018","run":%s,"phase":"%s"}}]}' \
-    "$event_id" "$observed_at" "$download" "$upload" "$run_count" "$phase"
+  printf '{"measurements":[{"client_event_id":"%s","observed_at":"%s","mode":"PERFORMANCE","download":%s,"upload":%s,"ping":22,"jitter":7,"packet_loss":0.4,"availability":100,"connection_status":"OK","quality":"VALID","latency_method":"DEMO","raw":{"probe":"demo","scenario":"TASK-018","measurement_class":"DEMO_TEST_ONLY","provenance":"synthetic-development-fixture","registry_school_id":"%s","run":%s,"phase":"%s"}}]}' \
+    "$event_id" "$observed_at" "$download" "$upload" "$registry_school_id" "$run_count" "$phase"
 }
 
 send_measurement() {
@@ -154,12 +158,44 @@ send_measurement() {
 
 assert_line_and_normal() {
   api_call "lines" GET "/api/v1/lines"
-  if [[ "$call_status" != "200" ]] || ! grep -Fq "$line_id" "$call_body" || ! grep -Fq 'Школа №42' "$call_body"; then
-    fail "run $run_count dashboard School 42 / primary line" "HTTP $call_status"
+  if [[ "$call_status" != "200" ]] || ! node - "$call_body" "$line_id" "$registry_school_id" "$registry_school_name" "$registry_school_latitude" "$registry_school_longitude" <<'NODE'
+const fs = require("fs");
+const [file, lineID, registrySchoolID, schoolName, latitude, longitude] = process.argv.slice(2);
+const rows = JSON.parse(fs.readFileSync(file, "utf8"));
+const line = Array.isArray(rows) ? rows.find((item) => item && item.id === lineID) : null;
+const valid = line
+  && line.school_id === registrySchoolID
+  && line.school_name === schoolName
+  && Number(line.latitude) === Number(latitude)
+  && Number(line.longitude) === Number(longitude);
+if (!valid) {
+  console.error(JSON.stringify({ expected: { lineID, registrySchoolID, schoolName, latitude, longitude }, line }, null, 2));
+  process.exit(1);
+}
+NODE
+  then
+    fail "run $run_count registry School №32 / primary line" "HTTP $call_status or official identity mismatch"
     return 1
   fi
-  pass "run $run_count dashboard School 42 / primary line"
+  pass "run $run_count registry School №32 / primary line"
   send_measurement normal -720 105 105 normal || return 1
+  api_call "normal-measurements" GET "/api/v1/lines/$line_id/measurements"
+  if [[ "$call_status" != "200" ]] || ! node - "$call_body" "$registry_school_id" <<'NODE'
+const fs = require("fs");
+const [file, registrySchoolID] = process.argv.slice(2);
+const body = JSON.parse(fs.readFileSync(file, "utf8"));
+const rows = Array.isArray(body) ? body : body?.items;
+const valid = Array.isArray(rows) && rows.some((item) => item?.raw?.scenario === "TASK-018"
+  && item.raw.measurement_class === "DEMO_TEST_ONLY"
+  && item.raw.provenance === "synthetic-development-fixture"
+  && item.raw.registry_school_id === registrySchoolID);
+process.exit(valid ? 0 : 1);
+NODE
+  then
+    fail "run $run_count demo measurement provenance" "HTTP $call_status or DEMO_TEST_ONLY label missing"
+    return 1
+  fi
+  pass "run $run_count demo measurement provenance is explicit"
   api_call "normal-line" GET "/api/v1/lines/$line_id"
   if [[ "$call_status" != "200" ]] || [[ "$(json_path "$call_body" id)" != "$line_id" ]]; then
     fail "run $run_count normal line state" "HTTP $call_status"

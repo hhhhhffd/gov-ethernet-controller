@@ -9,6 +9,18 @@ import (
 	"linkwatch/server/internal/database"
 )
 
+const (
+	// The legacy demo organization/line IDs remain stable so existing development
+	// scripts and authenticated scopes keep exercising the same flow. Its school
+	// identity, however, is an exact join to the official registry record.
+	demoRegistrySchoolID        = "18383"
+	demoRegistrySchoolName      = "Коммунальное государственное учреждение «Средняя школа №32» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области"
+	demoRegistrySchoolDistrict  = "Усть-Каменогорск Г.А."
+	demoRegistrySchoolAddress   = "Восточно-Казахстанская область,город Усть-Каменогорск,Переулок Западный,14"
+	demoRegistrySchoolLatitude  = 49.988825
+	demoRegistrySchoolLongitude = 82.575407
+)
+
 var DemoUserTokens = map[string]string{
 	"admin": "demo-admin-token", "oblast": "demo-oblast-token", "district": "demo-district-token",
 	"provider-a": "demo-provider-a-token", "school-42": "demo-school-42-token",
@@ -28,7 +40,7 @@ func SeedDemo(ctx context.Context, db *database.DB) error {
 		id, schoolID, name, district, address string
 		lat, lon                              float64
 	}{
-		{"org-42", "school-42", "Школа №42", "Алтай", "ул. Центральная, 42", 50.35, 82.62},
+		{"org-42", demoRegistrySchoolID, demoRegistrySchoolName, demoRegistrySchoolDistrict, demoRegistrySchoolAddress, demoRegistrySchoolLatitude, demoRegistrySchoolLongitude},
 		{"org-07", "school-07", "Коммунальное государственное учреждение «Средняя школа №7» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области", "Усть-Каменогорск Г.А.", "Восточно-Казахстанская область,город Усть-Каменогорск,Бульвар Гагарина,8", 49.972508, 82.586298},
 		{"org-99", "school-99", "Школа №99", "Алтай", "ул. Школьная, 1", 50.31, 82.59},
 	}
