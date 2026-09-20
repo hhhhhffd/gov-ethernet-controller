@@ -179,13 +179,26 @@ fi
 index_body="$tmp_dir/index.html"
 app_body="$tmp_dir/app.js"
 styles_body="$tmp_dir/styles.css"
+i18n_body="$tmp_dir/i18n.mjs"
+presentation_body="$tmp_dir/presentation.mjs"
+notifications_body="$tmp_dir/notifications.mjs"
 index_status="$(curl -sS -o "$index_body" -w '%{http_code}' "$base_url/")"
 app_status="$(curl -sS -o "$app_body" -w '%{http_code}' "$base_url/static/app.js")"
 styles_status="$(curl -sS -o "$styles_body" -w '%{http_code}' "$base_url/static/styles.css")"
-if [[ "$index_status" == "200" && "$app_status" == "200" && "$styles_status" == "200" ]] && grep -Fq '/static/app.js' "$index_body" && grep -Fq 'NO_DATA' "$app_body" && grep -Fq 'notifications' "$app_body"; then
+i18n_status="$(curl -sS -o "$i18n_body" -w '%{http_code}' "$base_url/static/core/i18n.mjs")"
+presentation_status="$(curl -sS -o "$presentation_body" -w '%{http_code}' "$base_url/static/core/presentation.mjs")"
+notifications_status="$(curl -sS -o "$notifications_body" -w '%{http_code}' "$base_url/static/features/notifications.mjs")"
+if [[ "$index_status" == "200" && "$app_status" == "200" && "$styles_status" == "200" && "$i18n_status" == "200" && "$presentation_status" == "200" && "$notifications_status" == "200" ]] \
+  && grep -Fq '/static/app.js' "$index_body" \
+  && grep -Fq 'from "./core/i18n.mjs"' "$app_body" \
+  && grep -Fq 'from "./core/presentation.mjs"' "$app_body" \
+  && grep -Fq 'from "./features/notifications.mjs"' "$app_body" \
+  && grep -Fq '"status.NO_DATA"' "$i18n_body" \
+  && grep -Fq '"statusDetail.NO_DATA"' "$i18n_body" \
+  && grep -Fq 'export function createPresentation' "$presentation_body"; then
   record_pass "browser shell/static canonical contract"
 else
-  record_fail "browser shell/static canonical contract" "statuses=$index_status,$app_status,$styles_status"
+  record_fail "browser shell/static canonical contract" "statuses=$index_status,$app_status,$styles_status,$i18n_status,$presentation_status,$notifications_status"
 fi
 
 echo "P0 LOCAL SUMMARY: pass=$pass fail=$fail"

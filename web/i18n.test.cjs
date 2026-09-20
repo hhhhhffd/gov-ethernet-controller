@@ -15,6 +15,8 @@ test("LANG-001 and LANG-002 translate all shell keys in RU and KK", async () => 
     const i18n = createI18n({ locale, storage: memoryStorage(), root: { setAttribute() {} } });
     for (const key of keys) assert.equal(typeof MESSAGES[locale][key], "string", locale + " is missing " + key);
     assert.notEqual(i18n.t("status.NO_INTERNET"), "NO_INTERNET");
+    assert.notEqual(i18n.t("status.NO_DATA"), "NO_DATA");
+    assert.notEqual(i18n.t("statusDetail.NO_DATA"), "statusDetail.NO_DATA");
   }
 });
 
