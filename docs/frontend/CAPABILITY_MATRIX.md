@@ -1,6 +1,7 @@
 # Frontend capability matrix
 
-Статус: TASK-002, снимок реализации на 2026-09-20.
+Статус: `PASS` для route/capability inventory; `BOUNDED` для live-runtime
+acceptance, снимок реализации на 2026-09-20, HEAD `1362f10`.
 
 Документ описывает фактически доступные frontend-relevant capabilities, а не
 желаемый контракт. Источники: `server/internal/api/*`,
@@ -28,6 +29,14 @@ response. Исключения, где frontend сейчас вызывает т
 
 «Подтверждение» означает обязательное явное подтверждение в UI перед mutation,
 если действие изменяет данные, состояние инцидента, доступ или credentials.
+
+### Статусы доказательств
+
+- `PASS` — контракт или проверка подтверждены в указанной области.
+- `BOUNDED` — контракт/проверка подтверждены, но live data, fixture или
+  runtime boundary не позволяет сделать release-wide вывод.
+- `EXTERNAL` — требуется внешний runtime, browser, provider или реальный
+  organization export, которого нет в этом evidence-снимке.
 
 ## Capabilities, роли и scopes
 
@@ -141,8 +150,8 @@ denials and both API aliases.
 | Devices admin tab | `GET B/admin/devices` | Rows: id/hostname/display/point/line/org/school/agent/last_seen/blocked/telemetry fields. | `admin.devices`, exact ADMIN. | `200`; auth/`500`. | Read. |
 | Register device | `POST B/admin/devices/register` | `{device_id,monitoring_point_id,agent_version?,display_name}` → `201`, device record and one-time `device_token`. | exact ADMIN. | `404` point; `409` duplicate; `422`; `500`. | Mutation; token issuance needs explicit confirmation/secure handling. |
 | Edit device display name | `PUT/PATCH B/admin/devices/{id}` | `{display_name}` → updated device. | exact ADMIN. | `404`, `422`, `500`. | Mutation; ordinary save confirmation optional. |
-| Rotate device token | `POST B/admin/devices/{id}/rotate-token` | No body → `200 {device_token:...}`; old token invalidated. | exact ADMIN. | `404`; `500`. | Destructive credential mutation; confirmation required. Current UI has action but no confirmation prompt. |
-| Block / unblock device | `POST B/admin/devices/{id}/block`; `/unblock` | No body → `200 {blocked:true|false}`. | exact ADMIN. | `404`; `500`. | Mutation; block is disruptive and requires confirmation. Current UI lacks prompt. |
+| Rotate device token | `POST B/admin/devices/{id}/rotate-token` | No body → `200 {device_token:...}`; old token invalidated. | exact ADMIN. | `404`; `500`. | Destructive credential mutation; current UI requires confirmation, pending state, and server readback. |
+| Block / unblock device | `POST B/admin/devices/{id}/block`; `/unblock` | No body → `200 {blocked:true|false}`. | exact ADMIN. | `404`; `500`. | Mutation; block is disruptive and the current UI requires confirmation and awaits readback. |
 | Remote device config | `POST B/admin/devices/{id}/config` | `{config:{schedule/probe}}` → `202` desired config version/payload/hash/status `PENDING`. | exact ADMIN. | `404`, `422`, `500`. | Mutation; not exposed in current admin tabs. Apply should be confirmed. `remote_config.go:44+`. |
 | Remote device command | `POST B/admin/devices/{id}/commands` | `{command_type,payload,idempotency_key,expires_at?}` → `201` command or `200` idempotent replay. | exact ADMIN. | `404`, `422`, `500`. | Operational mutation; not exposed; explicit confirmation required. `agent_commands.go:63+`. |
 | Admin schedule | `GET/POST/PUT B/admin/schedules` | GET `{tests_per_day,performance_tests_per_day,jitter_minutes,light_checks_between}`; write same body, tests 3..5, jitter 0..240 → `200`. | exact ADMIN. | `422`; `500`. | Read/mutation; confirm schedule changes. Current admin resource is exposed. |
@@ -150,8 +159,8 @@ denials and both API aliases.
 | Contracts | `GET B/admin/contracts` (optional `line_id`); `POST B/admin/contracts` | POST `{line_id,valid_from/to,contract_no,contract_date,thresholds,reason}` → `201` immutable version. | `admin.policies`, exact ADMIN. | `409` interval conflict, `422`, `500`. | Read/mutation; contract change requires confirmation. |
 | District catalog | `GET/POST/PUT B/admin/catalogs/districts`; aliases `B/admin/districts`, `B/admin/district` | GET `{id,name,active,created_at}`; write `{id,name,active}`; immutable id. | exact ADMIN. | `404`, `405`, `409`, `422`, `500`. | Read/mutation; current admin tab uses catalog path. |
 | Technology catalog | `GET/POST/PUT B/admin/catalogs/technologies`; aliases `B/admin/technologies`, `B/admin/technology` | Same catalog shape `{id,name,active}`. | exact ADMIN. | `404`, `405`, `409`, `422`, `500`. | Read/mutation; confirm deactivation. |
-| Agent version catalog | `GET/POST B/admin/agent-versions`; `PUT B/admin/agent-versions/{version}` | `{version,recommended,minimum_supported,release_at,checksum,artifact_url,active}` → rows / `201` / `200`; version immutable. | exact ADMIN. | `404`, `409`, `422`, `500`. | Read/mutation; current frontend does not expose this admin resource. |
-| Queue agent update | `POST B/admin/agent-updates` | `{manifest,device_ids[1..100]}`; signed HTTPS manifest → `202 {release_id,version,queued,status:"REQUESTED",manifest_sha256}`. | exact ADMIN. | `409`, `422`, `500`. | Operational mutation with device impact; not exposed; explicit confirmation required. `agent_updates.go:88+`. |
+| Agent version catalog | `GET/POST B/admin/agent-versions`; `PUT B/admin/agent-versions/{version}` | `{version,recommended,minimum_supported,release_at,checksum,artifact_url,active}` → rows / `201` / `200`; version immutable. | exact ADMIN. | `404`, `409`, `422`, `500`. | Read/mutation; current admin resource selector exposes it when `admin.manage` is present. |
+| Queue agent update | `POST B/admin/agent-updates` | `{manifest,device_ids[1..100]}`; signed HTTPS manifest → `202 {release_id,version,queued,status:"REQUESTED",manifest_sha256}`. | exact ADMIN. | `409`, `422`, `500`. | Operational mutation with device impact; current admin surface exposes a confirmed, pending-aware request for devices/agent versions. `agent_updates.go:88+`. |
 | Impact preview | `POST B/admin/impact-preview` | `{line_ids[],from,to,idempotency_key,policy:{...},contract:{...}}` → preview id/status, source period, snapshots, affected lines/measurements/changed/projected/unknown, `actual_truth:"NOT_MUTATED"`, `apply.available:false`. | exact ADMIN; lines must be visible. | `403`, `404`, `409`, `413`/`422`, `500`. | Read-only simulation; no confirmation for preview, but no apply route exists. Current admin UI calls it. |
 | Demo reset | `POST B/admin/demo/reset` | No body → `{reset:true}`; non-production only. | exact ADMIN. | `404` in production; auth/`500`. | Destructive mutation; explicit confirmation. Not current admin tab. |
 | Admin audit alias | `GET B/admin/audit`, `GET B1/admin/audit` | Same audit filters and page response as public `/audit`. | `audit.read` plus admin route exact ADMIN in current admin router. | `403`, `422`, `500`. | Read; current audit view uses public route. |
@@ -203,13 +212,13 @@ request/response contracts are implemented for `agent/`, not `web/`.
 - No unread badge, mark-read action, persisted map viewport or PDF evidence
   endpoint. Logout, locale, and theme controls are present; locale/theme are
   frontend-only state.
-- The line drawer’s `История →` button is not wired to a handler; history APIs
-  exist, but this control does not invoke them.
-- Provider modal “Сохранить как черновик” closes without saving; draft creation
-  is a separate explicit backend action.
-- Admin device block/unblock and token rotation are exposed by the current UI
-  without a confirmation prompt, although they are disruptive/destructive
-  mutations and this matrix requires confirmation.
+- History APIs exist, but the current line drawer does not expose a separate
+  history action; no unsupported history control is claimed by the current UI.
+- Provider-case draft creation is an explicit backend action. There is no
+  separate “save as draft” control that silently closes without persistence.
+- Admin device block/unblock and token rotation are exposed only through the
+  capability-gated admin surface, with confirmation, pending state, and server
+  readback.
 - Frontend has a `?demo=1` explicit demo escape hatch and local demo fallback
   paths; production failure is not silently converted to demo data. The
   committed production mapping artifact cannot be generated from that fixture.
@@ -239,6 +248,19 @@ Resolved implementation boundaries:
   use the documented intended method, while backend hardening is outside
   TASK-002.
 
-No runtime code or endpoint was changed for this document. Verification for this
-docs-only change: `git diff --check` and repository status/diff review; runtime
-test suites were not run because no runtime/schema code changed.
+No runtime code or endpoint was changed for this documentation reconciliation.
+Current verification evidence is intentionally split:
+
+- `PASS`: `make web-test` reports 75/75; Docker 29.6.2 has healthy PostgreSQL
+  and server containers; `GET /health/ready` is 200; and
+  `GET /static/core/api.mjs` is 200 with `text/javascript; charset=utf-8`.
+- `BOUNDED`: fixture browser E2E reports 16/16, but intercepts API, registry,
+  mapping, and tile requests; the production mapping has zero operational
+  entries and 370 registry-only schools.
+- `EXTERNAL` / unresolved: P0 is 31/1/3, P2 is 44/1/2, cleanup apply/repeat
+  evidence is absent, and a populated real-runtime browser journey is not
+  recorded after the MIME fix.
+
+The complete ledger is in
+`docs/FRONTEND_ACCEPTANCE_EVIDENCE_2026-09-20.md`; this matrix remains a
+contract inventory, not a release-complete claim.

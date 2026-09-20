@@ -1,12 +1,18 @@
 # Map subsystem baseline
 
-Status: `BASELINE RECORDED; PROVENANCE AND MAP ACCESSIBILITY BOUNDARY UPDATED 2026-09-20`
+Status: `PASS` for frozen map/data invariants; `BOUNDED` for live-browser and
+operational-mapping acceptance (reconciled 2026-09-20, HEAD `1362f10`).
 
 This document freezes the current map subsystem before the frontend rebuild. It
 records observed behavior and boundaries; it is not a redesign proposal. The
 original freeze was documentation-only. This provenance amendment records the
 current production data boundary; it does not change map identity, coordinates,
 or frontend behavior.
+
+Evidence labels in this baseline are deliberate: `PASS` is limited to the
+named map/data check, `BOUNDED` means a fixture or empty-data boundary remains,
+and `EXTERNAL` means a real organization export, browser replay, or tile
+environment is still required.
 
 ## Runtime shape
 
@@ -261,30 +267,36 @@ Leaflet-only map assumptions, marker accessible names, expanded/collapsed
 states, cluster focus restoration, school №32 membership, and movement-stop
 guards. `web/map-popup.test.cjs` covers marker click and keyboard routing, line
 membership, historical evidence, popup close focus restoration, and cluster
-member focus recovery. The data-model
-tests cover neutral registry-only rows, line deduplication, explicit mapping
-failure, cached asset loading, and coverage modes.
+member focus recovery. The data-model tests cover neutral registry-only rows,
+line deduplication, explicit mapping failure, cached asset loading, and
+coverage modes. These are `PASS` for the frozen map/data boundary.
 
-The repository's `scripts/browser-e2e.mjs` is a separate live-browser harness.
-Its authoritative map surfaces are `MAP-001` through `MAP-013`, but its map
-fixture is synthetic and its Stadia requests are mocked; it does not validate
-the real 370-row registry artifact. This task did **not** run that harness, in
-accordance with the explicit no-browser/no-network instruction.
+The repository's `scripts/browser-e2e.mjs` is a separate browser harness. Its
+recorded result is `16 PASS, 0 FAIL, 0 BLOCKED_EXTERNAL`, but it intercepts all
+`/api/**`, registry/mapping, and Stadia tile requests. The fixture contains
+three schools and a 1×1 tile, so this is `BOUNDED` evidence: it proves map
+interaction and shell journeys, not the production 370-row browser render.
 
-Exact unavailable-browser evidence for this baseline:
+The production runtime has separate direct HTTP evidence on `18080`: Docker
+29.6.2, PostgreSQL and server are healthy, `/health/ready` is `200`, and
+`/static/core/api.mjs` is `200` with `text/javascript; charset=utf-8` after
+commit `b8a18ef`. This proves the asset boundary, not a populated browser
+journey.
+
+The production mapping remains an explicit empty boundary:
 
 ```text
-/usr/sbin/chromium        absent
-/opt/google/chrome/chrome absent
-node_modules/playwright   absent
+entries: 0
+registry schools: 370
+registry-only unmonitored: 370
+operational_mapping_status: NOT_PROVIDED
+organizations_input: not-provided
 ```
 
-The harness's launch contract is a headless Playwright Chromium process using
-`BROWSER_E2E_CHROMIUM` or `/usr/sbin/chromium`. If launch/import fails, the
-harness records every `MAP-001` … `MAP-013` surface as `BLOCKED_EXTERNAL` with
-the exact evidence template `Playwright unavailable: <load-or-launch-error>`
-and reports `demo=off`. No browser output, screenshot, or live tile evidence is
-claimed here because the harness was not run.
+No post-MIME-fix browser replay against the real API and production registry is
+recorded in this baseline. A real organization export and a live populated
+browser/tile run remain `EXTERNAL` evidence; the fixture must not be promoted
+to that status by implication.
 
 ## Frozen invariants and rebuild boundary
 
