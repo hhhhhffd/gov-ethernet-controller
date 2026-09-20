@@ -27,6 +27,7 @@
   --ref-info: #7caac9;
   --ref-selected: #85a8ca;
   --ref-notification: #d6b276;
+  --ref-notification-ink: #211b11;
   --ref-pink: #ed62c7;
 }
 
@@ -53,6 +54,7 @@
   --ref-info: #4d7182;
   --ref-selected: #4b6c8d;
   --ref-notification: #8a6638;
+  --ref-notification-ink: #fffaf1;
 }
 
 * { box-sizing: border-box; }
@@ -157,6 +159,30 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 }
 .reference-icon-button { font-size: 17px; }
 .reference-icon-button:hover, .account-button:hover, .map-tools button:hover { background: var(--ref-surface-main); }
+#notificationsButton { position: relative; overflow: visible; }
+.notification-indicator {
+  position: absolute;
+  z-index: 1;
+  top: -5px;
+  right: -5px;
+  display: inline-flex;
+  min-width: 19px;
+  height: 19px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 2px solid var(--ref-surface-secondary);
+  border-radius: 999px;
+  background: var(--ref-notification);
+  color: var(--ref-notification-ink);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 5px rgb(0 0 0 / 22%);
+}
 .account-control { position: relative; }
 .account-button { width: auto; min-width: var(--theme-hit-size); max-width: 164px; padding: 0 14px; list-style: none; font-size: 13px; font-weight: 500; }
 .account-button::-webkit-details-marker { display: none; }
