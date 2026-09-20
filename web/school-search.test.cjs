@@ -30,6 +30,48 @@ test("SEARCH finds official, localized, district, address, and school number fie
   assert.deepEqual(find("line-no-internet"), [], "line identifiers must not become unsupported school-search fields");
 });
 
+test("SEARCH ranks exact school number before address substring matches", async () => {
+  const { filterMapSchools } = await import("./features/school-search.mjs");
+  const registry = require("./data/vko-schools.json");
+  const { normalizeRegistryEntry } = require("./data-model.js");
+  const normalizedSchools = registry.schools.map(normalizeRegistryEntry);
+  const result = filterMapSchools({ schools: normalizedSchools, filters: { query: "32" } });
+
+  assert.equal(result.schools[0].registryId, "18383");
+  assert.match(result.schools[0].officialName, /№32/u);
+});
+
+test("SEARCH ranks an exact official name before a name substring", async () => {
+  const { filterMapSchools } = await import("./features/school-search.mjs");
+  const candidates = [
+    { registryId: "school-east-substring", officialName: "Школа Востокская" },
+    { registryId: "school-east-exact", officialName: "Школа Восток" },
+  ];
+
+  const result = filterMapSchools({ schools: candidates, filters: { query: "Школа Восток" } });
+  assert.deepEqual(result.schools.map((school) => school.registryId), ["school-east-exact", "school-east-substring"]);
+});
+
+test("SEARCH preserves substring matches with deterministic name ordering", async () => {
+  const { filterMapSchools } = await import("./features/school-search.mjs");
+  const candidates = [
+    { registryId: "school-zeta", officialName: "Западная Востокская школа" },
+    { registryId: "school-alpha", officialName: "Востокский лицей" },
+  ];
+
+  const result = filterMapSchools({ schools: candidates, filters: { query: "восток" } });
+  assert.deepEqual(result.schools.map((school) => school.registryId), ["school-alpha", "school-zeta"]);
+});
+
+test("SEARCH returns an honest no-result state", async () => {
+  const { filterMapSchools } = await import("./features/school-search.mjs");
+  const result = filterMapSchools({ schools, lines, filters: { query: "несуществующая школа" } });
+
+  assert.deepEqual(result.schools, []);
+  assert.deepEqual(result.lines, []);
+  assert.deepEqual(result.counts, { visibleSchoolCount: 0, monitoredSchoolCount: 0, attentionSchoolCount: 0 });
+});
+
 test("FILTER applies real district, provider, status, and coverage to map rows and counts", async () => {
   const { availableMapFilterOptions, filterMapSchools } = await import("./features/school-search.mjs");
   const options = availableMapFilterOptions({ schools, lines });

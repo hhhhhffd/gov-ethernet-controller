@@ -1,6 +1,10 @@
 const STATUS_PRIORITY = Object.freeze(["NO_INTERNET", "DEGRADED", "NO_DATA", "OK", "UNKNOWN"]);
 const ATTENTION_STATUSES = new Set(["NO_INTERNET", "DEGRADED", "NO_DATA"]);
 const EMPTY_VALUE = "—";
+const SCHOOL_NAME_FIELDS = Object.freeze(["officialName", "officialNameRu", "officialNameKk", "name", "nameRu", "nameKk"]);
+const SCHOOL_CONTEXT_FIELDS = Object.freeze(["district", "locality", "address"]);
+const SCHOOL_NUMBER_PATTERN = /(?:^|\s)(?:(?:номер|number|нөмір)\s+|(?:школа|мектеп|school|лицей|гимназия)\s+)(\d+)(?=\s|$)/gu;
+const SCHOOL_NUMBER_QUERY_PATTERN = /^(?:(?:школа|мектеп|school|лицей|гимназия)\s+)?(?:(?:номер|number|нөмір)\s+)?(\d+)$/u;
 
 function text(value) {
   return value === undefined || value === null ? "" : String(value).trim();
@@ -21,24 +25,70 @@ export function normalizeSearchText(value) {
     .trim();
 }
 
+function normalizedFields(school, fields) {
+  return fields.map((field) => normalizeSearchText(school?.[field])).filter(Boolean);
+}
+
+function schoolNameSearchFields(school) {
+  return normalizedFields(school, SCHOOL_NAME_FIELDS);
+}
+
 export function schoolSearchFields(school) {
-  return [
-    school?.officialName,
-    school?.officialNameRu,
-    school?.officialNameKk,
-    school?.name,
-    school?.nameRu,
-    school?.nameKk,
-    school?.district,
-    school?.locality,
-    school?.address,
-  ].filter(Boolean);
+  return [...SCHOOL_NAME_FIELDS, ...SCHOOL_CONTEXT_FIELDS]
+    .map((field) => school?.[field])
+    .filter(Boolean);
+}
+
+function canonicalSchoolNumber(value) {
+  return value.replace(/^0+(?=\d)/u, "");
+}
+
+function schoolNumbers(school) {
+  const numbers = new Set();
+  schoolNameSearchFields(school).forEach((field) => {
+    for (const match of field.matchAll(SCHOOL_NUMBER_PATTERN)) numbers.add(canonicalSchoolNumber(match[1]));
+  });
+  return numbers;
+}
+
+function querySchoolNumber(query) {
+  const match = normalizeSearchText(query).match(SCHOOL_NUMBER_QUERY_PATTERN);
+  return match ? canonicalSchoolNumber(match[1]) : "";
+}
+
+function searchMatchRank(school, query) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return 0;
+
+  // A standalone numeric query is an operator's school-number lookup. Restrict
+  // number extraction to name fields so an address such as "132" stays a
+  // lower-priority text match instead of stealing the exact school result.
+  const number = querySchoolNumber(normalizedQuery);
+  if (number && schoolNumbers(school).has(number)) return 0;
+
+  const nameFields = schoolNameSearchFields(school);
+  if (nameFields.some((field) => field === normalizedQuery)) return 1;
+  if (nameFields.some((field) => field.includes(normalizedQuery))) return 2;
+
+  const contextFields = normalizedFields(school, SCHOOL_CONTEXT_FIELDS);
+  if (contextFields.some((field) => field.includes(normalizedQuery))) return 3;
+  return null;
 }
 
 export function matchesSchoolSearch(school, query) {
-  const normalizedQuery = normalizeSearchText(query);
-  if (!normalizedQuery) return true;
-  return schoolSearchFields(school).some((field) => normalizeSearchText(field).includes(normalizedQuery));
+  return searchMatchRank(school, query) !== null;
+}
+
+function compareSearchRecords(left, right, query) {
+  const rankDifference = searchMatchRank(left.school, query) - searchMatchRank(right.school, query);
+  if (rankDifference !== 0) return rankDifference;
+
+  const nameDifference = normalizeSearchText(left.school?.officialName ?? left.school?.name)
+    .localeCompare(normalizeSearchText(right.school?.officialName ?? right.school?.name), "ru");
+  if (nameDifference !== 0) return nameDifference;
+
+  const idDifference = text(left.school?.registryId).localeCompare(text(right.school?.registryId), "en", { numeric: true });
+  return idDifference || left.sourceIndex - right.sourceIndex;
 }
 
 function aggregateStatus(lines) {
@@ -88,7 +138,7 @@ export function filterMapSchools({ schools = [], lines = [], filters = {} } = {}
 
   const byRegistry = groupLinesByRegistry(lines);
   const visible = schools
-    .map((school) => visibleSchoolRecord(school, byRegistry.get(text(school?.registryId)) || []))
+    .map((school, sourceIndex) => ({ ...visibleSchoolRecord(school, byRegistry.get(text(school?.registryId)) || []), sourceIndex }))
     .filter((record) => matchesSchoolSearch(record.school, normalizedFilters.query))
     .filter((record) => !normalizedFilters.district || text(record.school.district) === normalizedFilters.district)
     .filter((record) => normalizedFilters.coverage !== "monitored" || record.monitored)
@@ -105,16 +155,20 @@ export function filterMapSchools({ schools = [], lines = [], filters = {} } = {}
       return !normalizedFilters.status || record.lines.length > 0;
     });
 
-  const visibleLines = visible.flatMap((record) => record.lines);
-  const attentionSchoolCount = visible.filter((record) => ATTENTION_STATUSES.has(record.status)).length;
+  const ordered = normalizedFilters.query
+    ? visible.slice().sort((left, right) => compareSearchRecords(left, right, normalizedFilters.query))
+    : visible;
+  const records = ordered.map(({ sourceIndex, ...record }) => record);
+  const visibleLines = records.flatMap((record) => record.lines);
+  const attentionSchoolCount = records.filter((record) => ATTENTION_STATUSES.has(record.status)).length;
   return {
     filters: normalizedFilters,
-    schools: visible.map((record) => record.school),
+    schools: records.map((record) => record.school),
     lines: visibleLines,
-    records: visible,
+    records,
     counts: {
-      visibleSchoolCount: visible.length,
-      monitoredSchoolCount: visible.filter((record) => record.lines.length > 0).length,
+      visibleSchoolCount: records.length,
+      monitoredSchoolCount: records.filter((record) => record.lines.length > 0).length,
       attentionSchoolCount,
     },
   };
