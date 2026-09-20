@@ -117,6 +117,12 @@ const SCOPE_LABEL_KEYS = Object.freeze({
   LINE: "field.line",
 });
 
+const AUDIT_INTERNAL_FIELDS = Object.freeze(new Set([
+  "id", "line_id", "school_id", "organization_id", "provider_id", "incident_id", "provider_case_id", "measurement_id", "device_id", "monitoring_point_id",
+  "request_id", "client_event_id", "evidence_measurement_ids", "violations", "policy", "contract", "opening_snapshot", "opening_snapshot_json", "policy_snapshot", "contract_snapshot", "line_context_snapshot",
+  "created_at", "updated_at", "confirmed_at", "received_at", "raw", "raw_json", "reason", "failure_category", "evidence_digest", "draft_bytes", "prompt_version", "model",
+]));
+
 function code(value) {
   return String(value ?? "").trim().toUpperCase().replace(/[.\s-]+/g, "_");
 }
@@ -198,13 +204,71 @@ function auditChanges(item, context) {
   const before = auditSnapshot(item?.before);
   const after = auditSnapshot(item?.after);
   const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
-    .filter((key) => !["password", "token", "secret", "request_id", "created_at", "updated_at"].includes(key));
+    .filter((key) => !AUDIT_INTERNAL_FIELDS.has(key))
+    .filter((key) => !/(password|token|secret|credential|snapshot|_json$)/i.test(key));
   return keys.filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key])).slice(0, 12).map((key) => ({
     key,
     label: adminFieldLabel(key, context.i18n),
     before: auditValueText(key, before[key], context),
     after: auditValueText(key, after[key], context),
   }));
+}
+
+function auditMetricLabel(metric, i18n) {
+  const key = String(metric || "").toLowerCase();
+  const labels = { download: "field.download", upload: "field.upload", ping: "field.ping", jitter: "field.jitter", packet_loss: "field.loss", availability: "reports.availability" };
+  return i18n.t(labels[key] || "field.metrics");
+}
+
+function auditMetricValue(metric, value, { i18n }) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  const suffix = ["download", "upload"].includes(metric) ? i18n.t("unit.mbps")
+    : ["ping", "jitter"].includes(metric) ? i18n.t("unit.ms")
+      : ["packet_loss", "availability"].includes(metric) ? i18n.t("unit.percent") : "";
+  return `${number.toLocaleString(i18n.locale, { maximumFractionDigits: 2 })}${suffix}`;
+}
+
+function auditIncidentReason(after, context) {
+  const violations = Array.isArray(after?.violations) ? after.violations : [];
+  const locale = context.i18n.locale;
+  const facts = violations.map((violation) => {
+    const codeValue = code(violation?.code);
+    if (codeValue === "NO_INTERNET" || String(violation?.metric) === "connection_status") {
+      return locale === "kk" ? "интернетке қолжетім жоқ" : "отсутствует доступ в интернет";
+    }
+    const metric = String(violation?.metric || "").toLowerCase();
+    const actual = auditMetricValue(metric, violation?.actual, context);
+    const threshold = auditMetricValue(metric, violation?.threshold, context);
+    if (!actual || !threshold) return "";
+    const label = auditMetricLabel(metric, context.i18n).toLocaleLowerCase();
+    const maximum = ["ping", "jitter", "packet_loss"].includes(metric);
+    if (locale === "kk") return `${label} — ${actual}, ${maximum ? "ең жоғары шек" : "ең төменгі шек"} ${threshold}`;
+    return `${label} — ${actual}, ${maximum ? "при максимуме" : "при минимуме"} ${threshold}`;
+  }).filter(Boolean);
+  if (!facts.length) return "";
+  return locale === "kk" ? `Себебі:\n${facts.join(";\n")}.` : `Причина:\n${facts.join(";\n")}.`;
+}
+
+function auditDescription(item, action, actionLabel, identity, context) {
+  const normalized = String(action || "").trim().toLowerCase().replace(/_/g, ".");
+  const after = auditSnapshot(item?.after);
+  const locale = context.i18n.locale;
+  if (normalized === "incident.created") {
+    const lead = locale === "kk" ? "Жүйе мониторинг желісі бойынша оқиғаны жасады." : "Система создала инцидент по линии мониторинга.";
+    const reason = auditIncidentReason(after, context);
+    return reason ? `${lead}\n\n${reason}` : lead;
+  }
+  if (normalized === "incident.created.manual") {
+    return locale === "kk" ? "Оператор мониторинг желісі бойынша оқиғаны қолмен тіркеді." : "Оператор вручную зарегистрировал инцидент по линии мониторинга.";
+  }
+  if (normalized === "incident.comment" && typeof after.note === "string" && after.note.trim()) {
+    return locale === "kk" ? `Оператор түсініктеме қосты: ${after.note.trim()}` : `Оператор добавил комментарий: ${after.note.trim()}`;
+  }
+  if (normalized === "provider.case.ai.draft.failed") {
+    return locale === "kk" ? "Автоматты жоба дайындалмады. Өтінішті қолмен дайындауға болады." : "Автоматический черновик не подготовлен. Обращение можно составить вручную.";
+  }
+  return `${actionLabel}${identity ? ` «${identity}»` : ""}.`;
 }
 
 export function presentAdminRecord(resource, item, { i18n, presentation }) {
@@ -256,10 +320,9 @@ export function presentAuditItem(item, { i18n, presentation }) {
   const changes = auditChanges(item, context);
   const after = auditSnapshot(item?.after);
   const before = auditSnapshot(item?.before);
-  const identity = after.name || after.organization_name || after.display_name || after.username || before.name || before.organization_name || before.display_name || before.username || item?.object_id || "";
+  const identity = after.name || after.organization_name || after.display_name || after.username || before.name || before.organization_name || before.display_name || before.username || "";
   const objectLabel = humanObjectLabel(item?.object_type, i18n);
   const actionLabel = humanEventLabel(action, { i18n, presentation });
-  const changeText = changes.length ? changes.map((change) => `${change.label}: ${change.before} → ${change.after}`).join("; ") : i18n.t("audit.noFieldChanges");
   return {
     id: item?.id,
     actionLabel,
@@ -271,7 +334,7 @@ export function presentAuditItem(item, { i18n, presentation }) {
     rawObject: item?.object_id || "",
     rawActorType: item?.actor_type || "",
     rawActor: item?.actor_id || "",
-    description: `${actionLabel}: ${objectLabel}${identity ? ` «${identity}»` : ""}. ${changeText}`,
+    description: auditDescription(item, action, actionLabel, identity, context),
     changes,
     payload: item?.metadata || item?.after || item?.before || null,
   };

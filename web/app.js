@@ -11,7 +11,7 @@ import { createAdminBoundary, writableAdminPayload } from "./features/admin.mjs"
 import { createAuditBoundary } from "./features/audit.mjs";
 import { createIncidentsBoundary } from "./features/incidents.mjs";
 import { createLinesBoundary } from "./features/lines.mjs";
-import { createNotificationsBoundary, NOTIFICATION_POLL_INTERVAL_MS, notificationKey, notificationSeenStorageKey, notificationIsServerRead, notificationSummary, readNotificationSeenIDs, readNotificationSoundMuted, writeNotificationSeenIDs, writeNotificationSoundMuted } from "./features/notifications.mjs";
+import { createNotificationsBoundary, NOTIFICATION_POLL_INTERVAL_MS, notificationKey, notificationSeenStorageKey, notificationIsServerRead, notificationSummary, readNotificationSeenIDs, writeNotificationSeenIDs } from "./features/notifications.mjs";
 import { createProviderCaseBoundary } from "./features/provider-case.mjs";
 import { createReportsBoundary } from "./features/reports.mjs";
 import { defaultReportFilters, reportAvailability as formatReportAvailability, reportContextFilters, reportEvidenceSummary, reportFilterOptions, reportQuery, reportState } from "./features/reports-presentation.mjs";
@@ -21,9 +21,10 @@ import { activeIncident, availableMetrics, createSelectedSchool, mergeLineDetail
 import { adminResourceDefinitions, presentAdminRecord, presentAgentVersion, presentAuditItem, presentNotification } from "./features/secondary-presentation.mjs";
 
 const $ = (selector, root = document) => root.querySelector(selector);
+const OPERATIONAL_POLL_INTERVAL_MS = 5_000;
 const state = {
   capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, mapPopupAnchor: null, selectedSchool: null,
-  mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null, drawerTrigger: null, drawerFocusSet: false,
+  mapInitialized: false, mapLoaded: false, mapLoadPromise: null, operationalPollTimer: null, toastTimer: null, drawerTrigger: null, drawerFocusSet: false,
   notificationsTrigger: null, searchActiveIndex: -1,
   incidents: createIncidentSurfaceState(),
   reports: createReportsSurfaceState(),
@@ -126,7 +127,6 @@ function createNotificationsSurfaceState() {
   return {
     open: false, state: "idle", items: [], loadPromise: null, actionId: null, actionState: "idle", actionError: "", actionErrorId: null,
     seenIDs: new Set(), knownIDs: new Set(), baselineInitialized: false, storageKey: "", pollTimer: null,
-    soundMuted: readNotificationSoundMuted(browserStorage()), audioContext: null, soundUnavailable: false,
   };
 }
 
@@ -171,7 +171,6 @@ function hydrateNotificationState(user = session?.user) {
     view.items = [];
     view.state = "idle";
   }
-  view.soundMuted = readNotificationSoundMuted(browserStorage());
 }
 
 function markNotificationsSeen(items = state.notifications.items) {
@@ -189,6 +188,17 @@ function stopNotificationPolling() {
   view.pollTimer = null;
 }
 
+function stopOperationalPolling() {
+  if (state.operationalPollTimer !== null) globalThis.clearInterval?.(state.operationalPollTimer);
+  state.operationalPollTimer = null;
+}
+
+function startOperationalPolling() {
+  stopOperationalPolling();
+  if (!session?.authenticated || typeof globalThis.setInterval !== "function") return;
+  state.operationalPollTimer = globalThis.setInterval(() => { void refreshOperationalWorkspace(); }, OPERATIONAL_POLL_INTERVAL_MS);
+}
+
 function startNotificationPolling() {
   stopNotificationPolling();
   if (!session?.authenticated || !state.capabilities.has("notification.read")) return;
@@ -197,36 +207,6 @@ function startNotificationPolling() {
   state.notifications.pollTimer = interval(() => {
     if (session?.authenticated && state.capabilities.has("notification.read")) void loadNotifications({ force: true, background: true });
   }, NOTIFICATION_POLL_INTERVAL_MS);
-}
-
-function playNotificationSound() {
-  const view = state.notifications;
-  if (view.soundMuted || view.soundUnavailable) return;
-  const AudioContext = globalThis.AudioContext || globalThis.webkitAudioContext;
-  if (typeof AudioContext !== "function") {
-    view.soundUnavailable = true;
-    return;
-  }
-  try {
-    const context = view.audioContext || new AudioContext();
-    view.audioContext = context;
-    const resume = context.state === "suspended" ? context.resume?.() : null;
-    resume?.catch?.(() => { view.soundUnavailable = true; });
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    const now = context.currentTime;
-    oscillator.type = "sine";
-    oscillator.frequency.setValueAtTime(720, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.035, now + 0.012);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
-    oscillator.connect(gain);
-    gain.connect(context.destination);
-    oscillator.start(now);
-    oscillator.stop(now + 0.12);
-  } catch (error) {
-    view.soundUnavailable = true;
-  }
 }
 
 function confirmAction(key) {
@@ -347,6 +327,7 @@ function renderSession(snapshot = session.getState()) {
 
 function resetAuthenticatedSurfaces() {
   stopNotificationPolling();
+  stopOperationalPolling();
   closeDrawer(false);
   closeMapPopup(false);
   closeNotifications(false);
@@ -383,6 +364,7 @@ function handleSessionChange(snapshot) {
   if (snapshot.authenticated) {
     initializeAuthenticatedWorkspace();
     startNotificationPolling();
+    startOperationalPolling();
     void loadNotifications();
   }
 }
@@ -406,21 +388,22 @@ function renderMapStatus() {
   renderSchoolSearchResults();
 }
 
-async function loadAuthenticatedMap() {
+async function loadAuthenticatedMap({ preserveViewport = false, background = false } = {}) {
   if (state.mapLoadPromise) return state.mapLoadPromise;
   renderMapStatus();
   const requestGeneration = session.generation;
-  const loadPromise = map.loadCurrent()
+  const loadPromise = map.loadCurrent({ preserveViewport, retainOperationalState: background })
     .then(() => {
       if (session.generation !== requestGeneration || !session.authenticated) return;
       state.mapLoaded = true;
+      reconcileOperationalMapSelection();
       renderMapStatus();
     })
     .catch((error) => {
       if (session.generation !== requestGeneration || !session.authenticated) return;
       state.mapLoaded = true;
       renderMapStatus();
-      showToast(error.status === 403 ? "map.forbidden" : "map.temporarilyUnavailable", "warn");
+      if (!background) showToast(error.status === 403 ? "map.forbidden" : "map.temporarilyUnavailable", "warn");
     })
     .finally(() => {
       if (session.generation === requestGeneration && state.mapLoadPromise === loadPromise) state.mapLoadPromise = null;
@@ -438,6 +421,52 @@ function initializeAuthenticatedWorkspace() {
   state.mapInitialized = true;
   applyReducedMotionToMap();
   loadAuthenticatedMap();
+}
+
+function updatedOperationalLines(items) {
+  return (Array.isArray(items) ? items : []).map((line) => map.getLine(line?.id) || line);
+}
+
+function reconcileOperationalMapSelection() {
+  const selection = state.selectedSchool;
+  if (selection?.lines?.length) {
+    const nextLines = updatedOperationalLines(selection.lines);
+    state.selectedSchool = { ...selection, lines: nextLines, context: { ...(selection.context || {}), lines: nextLines } };
+  }
+  if (!state.mapPopupContext) return;
+  const context = state.mapPopupContext;
+  const nextContext = Array.isArray(context.lines) ? { ...context, lines: updatedOperationalLines(context.lines) } : context;
+  state.mapPopupContext = nextContext;
+  state.mapPopupTrigger = markerForMapContext(nextContext) || state.mapPopupTrigger;
+  const popup = $("#mapPopup");
+  if (!popup?.hidden && !popup.contains(document.activeElement)) renderPopup(nextContext);
+  else scheduleMapPopupAnchor();
+}
+
+async function refreshOpenLineDetail() {
+  if ($("#detailDrawer")?.hidden) return;
+  const line = selectedLine(state.selectedSchool);
+  if (!line?.id) return;
+  const lineID = line.id;
+  try {
+    const payload = await lines.get(lineID);
+    const current = state.selectedSchool;
+    const currentLine = selectedLine(current);
+    if (!current || String(currentLine?.id) !== String(lineID)) return;
+    state.selectedSchool = { ...current, detail: mergeLineDetail(currentLine, payload), detailState: "ready" };
+    renderSchoolDrawer(state.selectedSchool);
+  } catch (error) {
+    // Keep the last confirmed detail visible while a background refresh fails.
+  }
+}
+
+async function refreshOperationalWorkspace() {
+  if (!session?.authenticated) return;
+  const refreshes = [];
+  if (state.mapInitialized) refreshes.push(loadAuthenticatedMap({ preserveViewport: true, background: true }));
+  if (!$("#detailDrawer")?.hidden) refreshes.push(refreshOpenLineDetail());
+  if (router.getState().view === "incidents" && state.capabilities.canRead("incident")) refreshes.push(loadIncidents({ force: true, background: true }));
+  await Promise.allSettled(refreshes);
 }
 
 function replaceOptions(selector, options, emptyKey, label = (value) => value) {
@@ -1163,19 +1192,23 @@ async function downloadReportExport(event) {
   event.preventDefault();
   const request = reportExportQuery(event.currentTarget);
   if (request.error || !state.capabilities.has("report.export")) return;
-  try { triggerDownload(await reports.exportData(request.query), `linkwatch-report.${event.currentTarget.elements.format.value}`); }
+  try { await triggerDownload(await reports.exportData(request.query), `linkwatch-report.${event.currentTarget.elements.format.value}`); }
   catch (error) { showToast("reports.exportFailed", "warn"); }
 }
 
-function triggerDownload(response, filename) {
-  response.blob().then((blob) => {
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = filename;
-    anchor.click();
+async function triggerDownload(response, filename) {
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.hidden = true;
+  document.body.appendChild(anchor);
+  anchor.click();
+  globalThis.setTimeout(() => {
+    anchor.remove();
     URL.revokeObjectURL(url);
-  }).catch(() => showToast("reports.exportFailed", "warn"));
+  }, 1_000);
 }
 
 async function previewEvidenceReport() {
@@ -1237,18 +1270,12 @@ function renderNotificationButton() {
   button.setAttribute("title", count > 0 ? `${label}. ${i18n.t("notification.new", { count })}` : label);
 }
 
-function notificationSoundControl(view) {
-  const key = view.soundMuted ? "notification.soundUnmute" : "notification.soundMute";
-  const stateKey = view.soundMuted ? "notification.soundMuted" : "notification.soundEnabled";
-  return '<button type="button" class="link-action notification-sound-control" data-notification-mute aria-pressed="' + String(view.soundMuted) + '" title="' + escapeHtml(i18n.t(key)) + '">' + escapeHtml(i18n.t(stateKey)) + "</button>";
-}
-
 function notificationHeader(view, withRefresh = false) {
   const refresh = withRefresh ? '<button type="button" class="secondary-action utility-refresh" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + "</button>" : "";
-  return '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div>' + notificationSoundControl(view) + refresh + '<button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">×</button></div></header>';
+  return '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div>' + refresh + '<button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">×</button></div></header>';
 }
 
-function ingestNotifications(items, { playSound = true } = {}) {
+function ingestNotifications(items) {
   const view = state.notifications;
   const nextItems = Array.isArray(items) ? items : [];
   const summary = notificationSummary(nextItems, view.seenIDs);
@@ -1258,8 +1285,7 @@ function ingestNotifications(items, { playSound = true } = {}) {
   nextItems.map(notificationKey).filter(Boolean).forEach((id) => view.knownIDs.add(id));
   view.items = nextItems;
   view.baselineInitialized = true;
-  if (playSound && fresh.length > 0) {
-    playNotificationSound();
+  if (fresh.length > 0) {
     const latest = presentNotification(fresh[0], { i18n, presentation });
     showToast("notification.newToast", "notification", { message: latest.message });
   }
@@ -1302,11 +1328,6 @@ function renderNotificationsSurface() {
   }
   root.querySelector("[data-notifications-close]")?.addEventListener("click", closeNotifications);
   root.querySelector("[data-notifications-refresh]")?.addEventListener("click", () => loadNotifications({ force: true }));
-  root.querySelector("[data-notification-mute]")?.addEventListener("click", () => {
-    view.soundMuted = !view.soundMuted;
-    writeNotificationSoundMuted(browserStorage(), view.soundMuted);
-    renderNotificationsSurface();
-  });
   root.querySelectorAll("[data-notification-dispatch]").forEach((button) => button.addEventListener("click", () => dispatchNotification(button.dataset.notificationDispatch)));
   root.querySelectorAll("[data-notification-incident]").forEach((button) => button.addEventListener("click", () => openIncident(button.dataset.notificationIncident)));
 }
@@ -1375,7 +1396,7 @@ async function dispatchNotification(id) {
     await boundaries.notifications.dispatch(id);
     const readback = await boundaries.notifications.list({ limit: "50" });
     if (!Array.isArray(readback)) throw new Error("notification readback unavailable");
-    ingestNotifications(readback, { playSound: false });
+    ingestNotifications(readback);
     view.actionId = null;
     view.actionState = "idle";
     view.actionErrorId = null;
@@ -2031,12 +2052,19 @@ function renderAuditSelection(item) {
   if (!item) return '<aside class="audit-selection" aria-live="polite"><h2>' + escapeHtml(i18n.t("audit.title")) + '</h2><p class="surface-state">' + escapeHtml(i18n.t("audit.selectHint")) + "</p></aside>";
   const entry = presentAuditItem(item, { i18n, presentation });
   const changes = entry.changes.length ? '<div class="audit-changes"><h3>' + escapeHtml(i18n.t("audit.changedFields")) + '</h3><dl>' + entry.changes.map((change) => '<div><dt>' + escapeHtml(change.label) + '</dt><dd><span>' + escapeHtml(change.before) + '</span><b aria-hidden="true">→</b><span>' + escapeHtml(change.after) + '</span></dd></div>').join("") + '</dl></div>' : "";
+  const technicalPayload = entry.payload || {
+    action: entry.rawAction,
+    object_type: entry.rawObjectType,
+    object_id: entry.rawObject,
+    actor_id: entry.rawActor,
+  };
+  const technical = '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(technicalPayload, null, 2)) + '</pre></details>';
   return '<aside class="audit-selection" aria-live="polite"><h2>' + escapeHtml(entry.actionLabel) + '</h2><dl class="detail-grid">'
     + '<div><dt>' + escapeHtml(i18n.t("audit.description")) + '</dt><dd>' + escapeHtml(entry.description) + '</dd></div>'
     + '<div><dt>' + escapeHtml(i18n.t("audit.action")) + '</dt><dd>' + escapeHtml(entry.actionLabel) + '</dd></div>'
     + '<div><dt>' + escapeHtml(i18n.t("audit.object")) + '</dt><dd>' + escapeHtml(entry.objectLabel) + '</dd></div>'
     + '<div><dt>' + escapeHtml(i18n.t("audit.actor")) + '</dt><dd>' + escapeHtml(entry.actorLabel) + '</dd></div>'
-    + '<div><dt>' + escapeHtml(i18n.t("audit.at")) + '</dt><dd>' + escapeHtml(entry.atLabel) + '</dd></div></dl>' + changes + '</aside>';
+    + '<div><dt>' + escapeHtml(i18n.t("audit.at")) + '</dt><dd>' + escapeHtml(entry.atLabel) + '</dd></div></dl>' + changes + technical + '</aside>';
 }
 
 function renderAuditSurface() {
@@ -2500,17 +2528,21 @@ function bindIncidentSurfaceEvents(root) {
   root.querySelector("[data-incident-comment]")?.addEventListener("submit", submitIncidentComment);
 }
 
-async function loadIncidents({ force = false } = {}) {
+async function loadIncidents({ force = false, background = false } = {}) {
   const view = incidentSurfaceState();
   if (!session.authenticated) return;
   if (view.state === "loading") return view.loadPromise;
   if (view.state === "ready" && !force) { renderIncidentsPreservingScroll(); return; }
-  view.state = "loading";
-  renderIncidentsPreservingScroll();
+  if (!background) {
+    view.state = "loading";
+    renderIncidentsPreservingScroll();
+  }
   view.loadPromise = Promise.allSettled([boundaries.incidents.list(), boundaries.incidents.situations()]).then(async ([incidentsResult, situationsResult]) => {
     if (incidentsResult.status !== "fulfilled") {
-      view.state = "error";
-      renderIncidentsPreservingScroll();
+      if (!background) {
+        view.state = "error";
+        renderIncidentsPreservingScroll();
+      }
       return;
     }
     view.items = incidentsResult.value;
@@ -2851,9 +2883,11 @@ function bindEvents() {
   });
   globalThis.addEventListener?.("focus", () => {
     if (session?.authenticated && state.capabilities.has("notification.read")) void loadNotifications({ force: true, background: true });
+    if (session?.authenticated) void refreshOperationalWorkspace();
   });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && session?.authenticated && state.capabilities.has("notification.read")) void loadNotifications({ force: true, background: true });
+    if (document.visibilityState === "visible" && session?.authenticated) void refreshOperationalWorkspace();
   });
   globalThis.LinkwatchMap?.setMarkerClickHandler((context, marker) => openMapPopup(context, marker));
 }

@@ -21,10 +21,15 @@ func (g testDraftGenerator) Generate(context.Context, ProviderDraftInput) (strin
 }
 
 func TestGenerateProviderDraftFallsBackOnGeneratorError(t *testing.T) {
-	input := ProviderDraftInput{LineID: "line-1", ViolationType: "PING"}
+	input := ProviderDraftInput{LineID: "line-1", Organization: "Средняя школа №32", ViolationType: "NO_INTERNET", ObservationsJSON: `[{},{}]`, Comment: "Проверьте line-42-primary"}
 	draft := generateProviderDraft(context.Background(), testDraftGenerator{err: errors.New("unavailable")}, input)
-	if !strings.Contains(draft, "line-1") || !strings.Contains(draft, "PING") {
-		t.Fatalf("fallback draft does not contain incident context: %q", draft)
+	if !strings.Contains(draft, "Средняя школа №32") || !strings.Contains(draft, "потеря интернет-соединения") {
+		t.Fatalf("fallback draft does not contain human incident context: %q", draft)
+	}
+	for _, forbidden := range []string{"line-1", "NO_INTERNET", "measurement IDs", "{"} {
+		if strings.Contains(draft, forbidden) {
+			t.Fatalf("fallback draft leaked technical data %q: %q", forbidden, draft)
+		}
 	}
 }
 
@@ -43,6 +48,12 @@ func TestValidateProviderDraftRejectsInvalidOutput(t *testing.T) {
 	if err := validateProviderDraft(strings.Repeat("x", maxProviderDraftLength+1)); err == nil {
 		t.Fatal("expected length validation error")
 	}
+	if err := validateProviderDraft(`{"measurement_id":7}`); err == nil {
+		t.Fatal("expected technical output validation error")
+	}
+	if err := validateProviderDraft("Просим проверить line-42-primary."); err == nil {
+		t.Fatal("expected internal identifier validation error")
+	}
 }
 
 func TestOllamaDraftGeneratorUsesStoredFactsOnly(t *testing.T) {
@@ -51,7 +62,7 @@ func TestOllamaDraftGeneratorUsesStoredFactsOnly(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			return nil, err
 		}
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"response":"Проверить линию line-1."}`)), Header: make(http.Header)}, nil
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"response":"Просим проверить состояние линии и сообщить номер заявки."}`)), Header: make(http.Header)}, nil
 	})
 	generator := &ollamaDraftGenerator{Endpoint: "http://127.0.0.1:11434", Model: "qwen3.5:9b-q6k", Timeout: time.Second, Client: &http.Client{Transport: transport}}
 	draft, err := generator.Generate(context.Background(), ProviderDraftInput{LineID: "line-1", EvidenceJSON: "[7]", Comment: "<unsafe>"})
@@ -82,6 +93,9 @@ func TestProviderDraftPromptDisallowsLegalConclusions(t *testing.T) {
 	prompt := buildProviderDraftPrompt(ProviderDraftInput{LineID: "line-1"})
 	if !strings.Contains(prompt, "Do not invent facts, causes, legal conclusions") {
 		t.Fatalf("prompt boundary missing: %q", prompt)
+	}
+	if !strings.Contains(prompt, "Never output JSON, internal IDs, enum codes, measurement IDs") {
+		t.Fatalf("prompt technical-output boundary missing: %q", prompt)
 	}
 }
 

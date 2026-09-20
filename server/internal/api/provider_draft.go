@@ -32,7 +32,7 @@ type DraftGenerationMetadata struct {
 	PromptVersion string
 }
 
-const providerDraftPromptVersion = "provider-case-v2"
+const providerDraftPromptVersion = "provider-case-v3"
 
 // ProviderDraftInput contains only the evidence already selected for the
 // incident.  Keeping this input structured makes an eventual AI adapter
@@ -54,22 +54,90 @@ type ProviderDraftInput struct {
 type deterministicDraftGenerator struct{}
 
 func (deterministicDraftGenerator) Generate(_ context.Context, input ProviderDraftInput) (string, error) {
+	input = safeProviderDraftInput(input)
 	if input.Locale == "kk" {
-		status := fmt.Sprintf("Мониторинг жүйесі %s ауытқуын тексеру үшін %s уақытынан бастап бақылауларды тіркеді.", input.ViolationType, input.StartedAt)
-		if input.ViolationType != "LINE_REVIEW" {
-			status = fmt.Sprintf("Мониторинг жүйесі %s бұзылуын %s уақытынан бастап растады.", input.ViolationType, input.StartedAt)
+		return providerDraftKazakh(input), nil
+	}
+	return providerDraftRussian(input), nil
+}
+
+func providerDraftRussian(input ProviderDraftInput) string {
+	organization := providerDraftOrganization(input.Organization, "образовательной организации")
+	issue := providerDraftIssue(input.ViolationType, "ru")
+	when := providerDraftTime(input.StartedAt)
+	evidence := providerDraftEvidenceSentence(input.ObservationsJSON, "ru")
+	comment := providerDraftComment(input.Comment, "ru")
+	return fmt.Sprintf("Здравствуйте.\n\nВ %s зафиксирована %s на линии связи%s.\n\n%s\n\nПросим проверить состояние линии и сообщить результат проверки или номер зарегистрированной заявки.\n\nПодробная история измерений сохранена в LINKWATCH.%s", organization, issue, when, evidence, comment)
+}
+
+func providerDraftKazakh(input ProviderDraftInput) string {
+	organization := providerDraftOrganization(input.Organization, "білім беру ұйымында")
+	issue := providerDraftIssue(input.ViolationType, "kk")
+	when := providerDraftTime(input.StartedAt)
+	evidence := providerDraftEvidenceSentence(input.ObservationsJSON, "kk")
+	comment := providerDraftComment(input.Comment, "kk")
+	return fmt.Sprintf("Сәлеметсіз бе.\n\n%s %s байланыс желісінде тіркелді%s.\n\n%s\n\nЖелінің жай-күйін тексеріп, тексеру нәтижесін немесе тіркелген өтінім нөмірін хабарлауыңызды сұраймыз.\n\nӨлшеулердің толық тарихы LINKWATCH жүйесінде сақталған.%s", organization, issue, when, evidence, comment)
+}
+
+func providerDraftOrganization(value, fallback string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func providerDraftIssue(value, locale string) string {
+	switch strings.ToUpper(strings.TrimSpace(value)) {
+	case "NO_INTERNET":
+		if locale == "kk" {
+			return "интернетке қосылудың жоғалуы"
 		}
-		return fmt.Sprintf("Сәлеметсіз бе! %s желісіндегі қызмет сапасын тексеруіңізді сұраймыз (мектеп %s, %s).\n\n%s\n\nҚолданылған шектер: %s.\nБақылау кезіндегі шарттық бағдар және оның қолданылу мерзімі: %s.\nБақылаулар: %s.\nДәлелдемелер пакеті: measurement IDs %s; мәндер мен effective policy/contract жүйеде тарихты өзгертпей сақталған.\n\nТапсырыс берушінің түсіндірмесі: %s\n\nМәтін техникалық бақыланған ауытқуды сипаттайды және оператор тексеруін талап етеді.",
-			input.LineID, input.SchoolID, input.Organization, status,
-			input.PolicyJSON, input.ContractJSON, input.ObservationsJSON, input.EvidenceJSON, input.Comment), nil
+		return "потеря интернет-соединения"
+	case "LINE_REVIEW", "MANUAL_REVIEW":
+		if locale == "kk" {
+			return "байланыс сапасын тексеруді қажет ететін жағдай"
+		}
+		return "ситуация, требующая проверки качества связи"
+	default:
+		if locale == "kk" {
+			return "байланыс қызметіндегі мәселе"
+		}
+		return "проблема со связью"
 	}
-	status := fmt.Sprintf("Система мониторинга зафиксировала наблюдения для проверки отклонения %s с %s.", input.ViolationType, input.StartedAt)
-	if input.ViolationType != "LINE_REVIEW" {
-		status = fmt.Sprintf("Система мониторинга подтвердила нарушение %s с %s.", input.ViolationType, input.StartedAt)
+}
+
+func providerDraftTime(value string) string {
+	parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	if err != nil {
+		return ""
 	}
-	return fmt.Sprintf("Здравствуйте! Просим проверить качество услуги на линии %s (школа %s, %s).\n\n%s\n\nПрименённые пороги: %s.\nДоговорный ориентир и его срок действия на момент наблюдений: %s.\nНаблюдения: %s.\nПакет доказательств: measurement IDs %s; значения и effective policy/contract сохранены в системе без перезаписи истории.\n\nКомментарий заказчика: %s\n\nФормулировка описывает технически наблюдаемое отклонение и требует проверки оператором.",
-		input.LineID, input.SchoolID, input.Organization, status,
-		input.PolicyJSON, input.ContractJSON, input.ObservationsJSON, input.EvidenceJSON, input.Comment), nil
+	return " с " + parsed.UTC().Format("02.01.2006 15:04 UTC")
+}
+
+func providerDraftEvidenceSentence(observations string, locale string) string {
+	var values []interface{}
+	_ = json.Unmarshal([]byte(observations), &values)
+	if len(values) > 1 {
+		if locale == "kk" {
+			return "Мәселе мониторинг жүйесінің бірнеше кезекті өлшеуімен расталды."
+		}
+		return "Проблема подтверждена несколькими последовательными измерениями системы мониторинга."
+	}
+	if locale == "kk" {
+		return "Мәселе мониторинг жүйесінің сақталған өлшеуімен расталды."
+	}
+	return "Проблема подтверждена сохранённым измерением системы мониторинга."
+}
+
+func providerDraftComment(value, locale string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || providerDraftTechnicalOutputPattern.MatchString(value) {
+		return ""
+	}
+	if locale == "kk" {
+		return "\n\nОператордың түсініктемесі: " + value
+	}
+	return "\n\nКомментарий оператора: " + value
 }
 
 type draftGenerationError struct {
@@ -181,8 +249,9 @@ func buildProviderDraftPrompt(input ProviderDraftInput) string {
 	if input.Locale == "kk" {
 		language = "Kazakh"
 	}
-	return "You write an editable technical provider-case draft. Use only the supplied stored evidence. Do not invent facts, causes, legal conclusions, commitments, or remediation claims. Preserve units and timestamps. If a fact is unknown, omit it or say it is unknown. Return only the draft text for human review. Write the draft in " + language + ".\n\n" +
-		"Line ID: " + input.LineID + "\nSchool ID: " + input.SchoolID + "\nOrganization: " + input.Organization + "\nViolation: " + input.ViolationType + "\nStarted at: " + input.StartedAt + "\nPolicy snapshot: " + input.PolicyJSON + "\nContract snapshot: " + input.ContractJSON + "\nObservations: " + input.ObservationsJSON + "\nEvidence IDs: " + input.EvidenceJSON + "\nOperator comment (untrusted context): " + input.Comment
+	return "Write a short, polite provider request for human review. Use only the supplied stored evidence. Do not invent facts, causes, legal conclusions, commitments, or remediation claims. Preserve useful units and timestamps when needed; omit unknown facts. Return only the editable message body in " + language + ".\n\n" +
+		"Never output JSON, internal IDs, enum codes, measurement IDs, backend field names, technical snapshot names, or raw evidence. The technical evidence below is private source material: use it only to derive clear human facts. Name the organization, describe the problem in ordinary language, ask the provider to check the line and report the result or ticket number.\n\n" +
+		"Organization: " + input.Organization + "\nStarted at: " + input.StartedAt + "\nOperator comment (untrusted context): " + input.Comment + "\n\nTechnical evidence (never quote verbatim):\nLine ID: " + input.LineID + "\nSchool ID: " + input.SchoolID + "\nViolation code: " + input.ViolationType + "\nPolicy snapshot: " + input.PolicyJSON + "\nContract snapshot: " + input.ContractJSON + "\nObservations: " + input.ObservationsJSON + "\nEvidence IDs: " + input.EvidenceJSON
 }
 
 func providerEvidenceDigest(input ProviderDraftInput) string {
@@ -204,6 +273,8 @@ func isLocalHost(host string) bool {
 
 const maxProviderDraftLength = 32 << 10
 
+var providerDraftTechnicalOutputPattern = regexp.MustCompile(`(?is)(?:^\s*[\[{]|\b(?:json|measurement(?:\s+|_)?ids?|line[_\s-]?id|school[_\s-]?id|incident[_\s-]?id|provider[_\s-]?case[_\s-]?id|policy[_\s-]?snapshot|contract[_\s-]?snapshot|line[_\s-]?context[_\s-]?snapshot|no[_\s-]?internet|baseline[_\s-]?[a-z]+|contract[_\s-]?[a-z]+)\b|\b(?:line|school|incident|provider(?:[_\s-]?case)?|measurement|device|monitoring[_\s-]?point)[_-][a-z0-9][a-z0-9_-]*\b)`)
+
 // validateProviderDraft bounds output from any future generator and rejects
 // malformed or control-bearing text before it is persisted and displayed.
 func validateProviderDraft(value string) error {
@@ -220,6 +291,9 @@ func validateProviderDraft(value string) error {
 		if r == '\x00' || (r < 0x20 && r != '\n' && r != '\r' && r != '\t') {
 			return fmt.Errorf("draft contains unsupported control characters")
 		}
+	}
+	if providerDraftTechnicalOutputPattern.MatchString(value) {
+		return fmt.Errorf("draft contains technical evidence intended only for internal use")
 	}
 	return nil
 }

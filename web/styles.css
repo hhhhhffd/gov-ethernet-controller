@@ -662,7 +662,6 @@ html, body { font-size: 14px; line-height: 1.5; }
 .utility-header { display: grid; grid-template-columns: minmax(100px, 1fr) auto; align-items: center; }
 .utility-header > div { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 8px; }
 .utility-header h2 { min-width: 0; flex: 1 1 auto; line-height: 1.2; overflow-wrap: anywhere; }
-.notification-sound-control { position: relative; left: -10px; flex: 0 1 auto; white-space: nowrap; }
 .notification-surface .icon-close { flex: 0 0 42px; }
 .toast-region { display: grid; width: min(420px, calc(100% - 32px)); gap: 8px; }
 .toast.notification { border-color: color-mix(in srgb, var(--ref-notification) 52%, var(--ref-border-medium)); box-shadow: 0 12px 30px rgb(0 0 0 / 24%), inset 3px 0 0 var(--ref-notification); }
@@ -761,7 +760,6 @@ html, body { font-size: 14px; line-height: 1.5; }
   .notification-surface { right: 12px; width: calc(100% - 24px); padding: 14px; }
   .utility-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
   .utility-header > div { flex-wrap: wrap; }
-  .notification-sound-control { left: 0; }
   .incident-create-form { grid-template-columns: 1fr; }
   .admin-field-name, .admin-field-address { grid-column: 1; }
   .audit-changes dd { grid-template-columns: 1fr; }

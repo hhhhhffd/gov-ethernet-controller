@@ -102,7 +102,7 @@ export function createMapIntegration({ api, reports, session = null, mapApi = gl
     }
     return mapDataPromise;
   }
-  async function loadCurrent() {
+  async function loadCurrent({ preserveViewport = false, retainOperationalState = false } = {}) {
     const key = requestKey();
     const operation = ++loadSequence;
     state.loading = true;
@@ -116,6 +116,7 @@ export function createMapIntegration({ api, reports, session = null, mapApi = gl
     } catch (error) {
       if (!isCurrent(key)) return state;
       state.operationalError = error;
+      if (retainOperationalState && state.model) return state;
       state.lines = [];
       const assets = await loadMapData(key);
       if (!isCurrent(key)) return state;
@@ -124,7 +125,7 @@ export function createMapIntegration({ api, reports, session = null, mapApi = gl
       if (operation === loadSequence) state.loading = false;
     }
     if (!isCurrent(key)) return state;
-    render();
+    render({ preserveViewport });
     return state;
   }
   async function loadHistorical(query = "period=week") {
@@ -166,7 +167,7 @@ export function createMapIntegration({ api, reports, session = null, mapApi = gl
     if (mapApi?.getMap?.()) mapApi.render?.({ mode: "current", registry: { schools: [] }, lines: [], historicalByLine: {} });
     return state;
   }
-  function render() {
+  function render({ preserveViewport = false } = {}) {
     if (!state.model || !mapApi) return false;
     const filtered = filterMapSchools({
       schools: state.model.registry.schools,
@@ -185,7 +186,7 @@ export function createMapIntegration({ api, reports, session = null, mapApi = gl
     // integration keeps them in the render context and diagnostics instead of
     // silently erasing authoritative backend rows at the boundary.
     const renderLines = [...state.view.lines, ...unmappedLines.filter((line) => !state.view.lines.includes(line))];
-    return mapApi.render({ mode: state.mapMode, registry: { ...state.model.registry, schools: state.view.schools }, lines: renderLines, historicalByLine: state.historicalByLine });
+    return mapApi.render({ mode: state.mapMode, registry: { ...state.model.registry, schools: state.view.schools }, lines: renderLines, historicalByLine: state.historicalByLine, preserveViewport });
   }
   return {
     state,

@@ -4,7 +4,6 @@ const NOTIFICATION_FILTERS = Object.freeze(new Set(["source_type", "status", "be
 const DISPATCHABLE_STATUSES = Object.freeze(new Set(["PENDING", "GENERATED", "FAILED"]));
 export const NOTIFICATION_POLL_INTERVAL_MS = 5_000;
 export const NOTIFICATION_SEEN_STORAGE_KEY = "linkwatch.notifications.seen";
-export const NOTIFICATION_SOUND_STORAGE_KEY = "linkwatch.notifications.sound-muted";
 
 function code(value) {
   return String(value ?? "").trim().toUpperCase().replace(/[.\s-]+/g, "_");
@@ -67,22 +66,6 @@ export function notificationSummary(items, seenIDs = new Set()) {
     unseenIDs: unseen.map(notificationKey),
     serverUnreadCount: values.filter((item) => !notificationIsServerRead(item)).length,
   };
-}
-
-export function readNotificationSoundMuted(storage) {
-  try {
-    return storage?.getItem(NOTIFICATION_SOUND_STORAGE_KEY) === "1";
-  } catch (error) {
-    return false;
-  }
-}
-
-export function writeNotificationSoundMuted(storage, muted) {
-  try {
-    storage?.setItem(NOTIFICATION_SOUND_STORAGE_KEY, muted ? "1" : "0");
-  } catch (error) {
-    // A mute preference is optional and must not block the notification surface.
-  }
 }
 
 function notificationQuery(filters) {
