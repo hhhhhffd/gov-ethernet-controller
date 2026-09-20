@@ -86,6 +86,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .shell-logo-mark { position: relative; display: block; width: 20px; height: 27px; border: 2px solid var(--ref-text-primary); border-radius: 3px; }
 .shell-logo-mark::after { position: absolute; right: -2px; bottom: 3px; width: 9px; height: 2px; background: var(--ref-text-primary); content: ""; }
 .primary-nav { gap: 4px; }
+.nav-overflow { position: relative; display: none; }
+.nav-overflow > summary {
+  display: inline-flex;
+  width: var(--theme-control-size);
+  height: var(--theme-control-size);
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(255 255 255 / 3%);
+  border-radius: var(--theme-control-radius);
+  background: var(--ref-nav-inactive);
+  color: var(--ref-text-primary);
+  cursor: pointer;
+  list-style: none;
+  font-size: 17px;
+  line-height: 1;
+}
+.nav-overflow > summary::-webkit-details-marker { display: none; }
+.nav-overflow[open] > summary { background: var(--ref-nav-active); }
+.nav-overflow-menu { position: absolute; top: 42px; left: 0; z-index: 500; display: grid; min-width: 140px; gap: 5px; padding: 7px; border: 1px solid var(--ref-border-medium); border-radius: 10px; background: var(--ref-surface-main); box-shadow: 0 8px 20px rgb(0 0 0 / 18%); }
+.nav-overflow-menu .reference-nav-item { width: 100%; min-width: 0; justify-content: flex-start; }
 .reference-nav-item {
   display: inline-flex;
   min-width: 83px;
@@ -333,6 +353,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .locale-switch { right: 225px; }
   .shell-top-left { left: 14px; gap: 14px; }
   .shell-top-right { right: 14px; }
+  #primaryNav > [data-route="incidents"], #primaryNav > [data-route="reports"] { display: none !important; }
+  .nav-overflow { display: block; }
   .reference-nav-item { min-width: 72px; padding-inline: 11px; }
   .map-filter-island { top: 68px; left: 12px; width: 224px; transform: none; }
   .map-tools { right: 14px; }
@@ -374,4 +396,13 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .admin-records { grid-template-columns: 1fr; }
   .admin-toolbar, .audit-filters { align-items: stretch; flex-direction: column; }
   .admin-toolbar select, .audit-filters select { width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
 }

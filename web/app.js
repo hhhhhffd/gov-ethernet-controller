@@ -24,6 +24,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const state = {
   capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, selectedSchool: null,
   mapInitialized: false, mapLoaded: false, mapLoadPromise: null, toastTimer: null, drawerTrigger: null, drawerFocusSet: false,
+  notificationsTrigger: null, searchActiveIndex: -1,
   incidents: createIncidentSurfaceState(),
   reports: createReportsSurfaceState(),
   notifications: createNotificationsSurfaceState(),
@@ -43,7 +44,7 @@ session = createSession({ api, onChange: handleSessionChange });
 const theme = createThemeState();
 const mapPresentationAdapter = createMapPresentationAdapter({ theme: theme.theme, locale: i18n.locale });
 const reports = createReportsBoundary(api);
-const map = createMapIntegration({ api, reports, presentation, mapPresentation: mapPresentationAdapter.snapshot() });
+const map = createMapIntegration({ api, reports, session, presentation, mapPresentation: mapPresentationAdapter.snapshot() });
 const lines = createLinesBoundary(api);
 const router = createShellRouter({
   canAccess(view) {
@@ -97,7 +98,8 @@ function localizeStaticContent() {
   document.querySelectorAll("[data-locale]").forEach((control) => {
     const active = control.dataset.locale === i18n.locale;
     control.toggleAttribute("aria-pressed", active);
-    control.setAttribute("aria-label", i18n.t("locale.switch"));
+    control.setAttribute("aria-label", `${i18n.t("locale.switch")}: ${i18n.t(control.dataset.locale === "kk" ? "locale.kk" : "locale.ru")}`);
+    control.setAttribute("title", i18n.t(control.dataset.locale === "kk" ? "locale.kk" : "locale.ru"));
   });
   renderThemeControl();
 }
@@ -119,6 +121,15 @@ function refreshTheme() {
   mapPresentationAdapter.setLocale(i18n.locale);
   map.setMapPresentation(mapPresentationAdapter.snapshot());
   renderThemeControl();
+}
+
+function applyReducedMotionToMap() {
+  const mapInstance = globalThis.LinkwatchMap?.getMap?.();
+  if (!mapInstance?.options) return;
+  const reduced = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches === true;
+  mapInstance.options.zoomAnimation = !reduced;
+  mapInstance.options.fadeAnimation = !reduced;
+  mapInstance.options.markerZoomAnimation = !reduced;
 }
 
 function showLogin(messageKey = "auth.enterCredentials", resolving = false) {
@@ -152,8 +163,10 @@ function renderRoute(snapshot = router.getState()) {
   if (liveStatus) liveStatus.textContent = i18n.t("map.openSection", { section: i18n.t("nav." + snapshot.view) });
   const refresh = $("#refreshButton");
   if (refresh) refresh.hidden = snapshot.view !== "map";
-  const hash = snapshot.view === "map" ? "" : "#" + snapshot.view;
-  if (globalThis.location && globalThis.location.hash !== hash) globalThis.history?.replaceState?.({}, "", globalThis.location.pathname + hash);
+  if (snapshot.view !== "map") {
+    closeDrawer(false);
+    closeMapPopup(false);
+  }
   if (snapshot.view === "incidents") loadIncidents();
   if (snapshot.view === "reports") loadReports();
   if (snapshot.view === "admin") loadAdminResource();
@@ -167,7 +180,7 @@ function renderRoute(snapshot = router.getState()) {
 
 function renderPrimaryNav() {
   const destinations = { map: true, incidents: state.capabilities.canRead("incident"), reports: state.capabilities.canRead("report") };
-  document.querySelectorAll("#primaryNav [data-route]").forEach((button) => { button.hidden = !destinations[button.dataset.route]; });
+  document.querySelectorAll("#primaryNav [data-route], #navOverflow [data-route]").forEach((button) => { button.hidden = !destinations[button.dataset.route]; });
   document.querySelectorAll("[data-capability]").forEach((control) => { control.hidden = !state.capabilities.has(control.dataset.capability); });
   const current = router.getState().view;
   if (!destinations[current]) router.navigate("map");
@@ -189,13 +202,29 @@ function renderSession(snapshot = session.getState()) {
   document.documentElement.dataset.authenticated = authenticated ? "true" : "false";
 }
 
+function resetAuthenticatedSurfaces() {
+  closeDrawer(false);
+  closeMapPopup(false);
+  closeNotifications(false);
+  state.mapPopupContext = null;
+  state.mapPopupTrigger = null;
+  state.selectedSchool = null;
+  state.drawerTrigger = null;
+  state.notificationsTrigger = null;
+  state.searchActiveIndex = -1;
+  if (state.toastTimer) clearTimeout(state.toastTimer);
+  state.toastTimer = null;
+  $("#toastRegion")?.replaceChildren();
+  map.resetSession?.();
+}
+
 function handleSessionChange(snapshot) {
   state.capabilities = createCapabilityState(snapshot.user);
   document.documentElement.dataset.capabilities = state.capabilities.capabilities.join(" ");
   if (!snapshot.authenticated) {
+    resetAuthenticatedSurfaces();
     state.mapLoaded = false;
     state.mapLoadPromise = null;
-    state.selectedSchool = null;
     state.incidents = createIncidentSurfaceState();
     state.reports = createReportsSurfaceState();
     state.notifications = createNotificationsSurfaceState();
@@ -229,11 +258,24 @@ function renderMapStatus() {
 async function loadAuthenticatedMap() {
   if (state.mapLoadPromise) return state.mapLoadPromise;
   renderMapStatus();
-  state.mapLoadPromise = map.loadCurrent()
-    .then(() => { state.mapLoaded = true; renderMapStatus(); })
-    .catch((error) => { state.mapLoaded = true; renderMapStatus(); showToast(error.status === 403 ? "map.forbidden" : "map.temporarilyUnavailable", "warn"); })
-    .finally(() => { state.mapLoadPromise = null; });
-  return state.mapLoadPromise;
+  const requestGeneration = session.generation;
+  const loadPromise = map.loadCurrent()
+    .then(() => {
+      if (session.generation !== requestGeneration || !session.authenticated) return;
+      state.mapLoaded = true;
+      renderMapStatus();
+    })
+    .catch((error) => {
+      if (session.generation !== requestGeneration || !session.authenticated) return;
+      state.mapLoaded = true;
+      renderMapStatus();
+      showToast(error.status === 403 ? "map.forbidden" : "map.temporarilyUnavailable", "warn");
+    })
+    .finally(() => {
+      if (session.generation === requestGeneration && state.mapLoadPromise === loadPromise) state.mapLoadPromise = null;
+    });
+  state.mapLoadPromise = loadPromise;
+  return loadPromise;
 }
 
 function initializeAuthenticatedWorkspace() {
@@ -243,6 +285,7 @@ function initializeAuthenticatedWorkspace() {
   }
   map.init({ containerId: "leafletMap" });
   state.mapInitialized = true;
+  applyReducedMotionToMap();
   loadAuthenticatedMap();
 }
 
@@ -279,23 +322,46 @@ function renderMapFilterControls() {
   if ($("#schoolSearch")) $("#schoolSearch").value = filters.query;
 }
 
+function setSearchComboboxState(expanded, activeId = "") {
+  const input = $("#schoolSearch");
+  if (!input) return;
+  input.setAttribute("aria-expanded", String(Boolean(expanded)));
+  if (activeId) input.setAttribute("aria-activedescendant", activeId);
+  else input.removeAttribute("aria-activedescendant");
+}
+
+function setSearchActiveIndex(index) {
+  const results = $("#schoolSearchResults");
+  const options = results ? [...results.querySelectorAll('[role="option"]')] : [];
+  state.searchActiveIndex = options.length ? Math.max(0, Math.min(index, options.length - 1)) : -1;
+  options.forEach((option, optionIndex) => option.setAttribute("aria-selected", String(optionIndex === state.searchActiveIndex)));
+  setSearchComboboxState(options.length > 0, options[state.searchActiveIndex]?.id || "");
+}
+
 function renderSchoolSearchResults() {
   const results = $("#schoolSearchResults");
   const status = $("#mapFilterStatus");
   if (!results || !status) return;
   const query = map.state.filters.query.trim();
+  const hasFilter = Boolean(query || map.state.filters.district || map.state.filters.provider || map.state.filters.status || map.state.coverage === "monitored");
+  const visibleSchoolCount = map.state.view?.counts?.visibleSchoolCount;
   results.replaceChildren();
   status.hidden = true;
-  if (!query) { results.hidden = true; return; }
+  state.searchActiveIndex = -1;
+  setSearchComboboxState(false);
+  if (!query && (!hasFilter || visibleSchoolCount !== 0)) { results.hidden = true; return; }
   if (map.state.registryLoading) { status.textContent = i18n.t("map.registryLoading"); status.hidden = false; results.hidden = true; return; }
   if (map.state.registryUnavailable) { status.textContent = i18n.t("map.registryUnavailable"); status.hidden = false; results.hidden = true; return; }
   const matches = map.searchResults();
+  if (!query && visibleSchoolCount === 0) { status.textContent = i18n.t("map.searchEmpty"); status.hidden = false; results.hidden = true; return; }
   if (!matches.length) { status.textContent = i18n.t("map.searchEmpty"); status.hidden = false; results.hidden = true; return; }
-  matches.forEach((record) => {
+  matches.forEach((record, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "school-search-result";
     button.setAttribute("role", "option");
+    button.id = `school-search-option-${index}`;
+    button.setAttribute("aria-selected", "false");
     button.dataset.registryId = record.school.registryId;
     const title = document.createElement("strong");
     title.textContent = presentation.schoolName(record.school);
@@ -306,16 +372,41 @@ function renderSchoolSearchResults() {
     results.appendChild(button);
   });
   results.hidden = false;
+  setSearchComboboxState(true);
 }
 
 function selectSearchResult(registryId) {
+  state.searchActiveIndex = -1;
   const result = map.focusSchool(registryId);
   if (!result.ok) {
     const status = $("#mapFilterStatus");
     if (status) { status.textContent = i18n.t("map.searchNoCoordinate"); status.hidden = false; }
     return;
   }
+  const results = $("#schoolSearchResults");
+  if (results) results.hidden = true;
+  setSearchComboboxState(false);
   openMapPopup(result.context, result.marker);
+}
+
+function handleSchoolSearchKeydown(event) {
+  const options = [...($("#schoolSearchResults")?.querySelectorAll('[role="option"]') || [])];
+  if (event.key === "ArrowDown" && options.length) {
+    event.preventDefault();
+    setSearchActiveIndex(state.searchActiveIndex + 1);
+  } else if (event.key === "ArrowUp" && options.length) {
+    event.preventDefault();
+    setSearchActiveIndex(state.searchActiveIndex <= 0 ? options.length - 1 : state.searchActiveIndex - 1);
+  } else if (event.key === "Enter" && state.searchActiveIndex >= 0 && options[state.searchActiveIndex]) {
+    event.preventDefault();
+    selectSearchResult(options[state.searchActiveIndex].dataset.registryId);
+  } else if (event.key === "Escape" && options.length) {
+    event.preventDefault();
+    state.searchActiveIndex = -1;
+    const results = $("#schoolSearchResults");
+    if (results) results.hidden = true;
+    setSearchComboboxState(false);
+  }
 }
 
 function applyMapFilters() {
@@ -439,10 +530,12 @@ function openMapPopup(context, trigger = null) {
 }
 function closeMapPopup(restoreFocus = true) {
   const popup = $("#mapPopup");
-  if (!popup) return;
-  popup.hidden = true;
-  popup.classList.add("hidden");
-  if (restoreFocus) (state.mapPopupTrigger?.getElement?.() || state.mapPopupTrigger)?.focus?.();
+  if (popup) {
+    popup.hidden = true;
+    popup.classList.add("hidden");
+  }
+  const trigger = state.mapPopupTrigger;
+  if (restoreFocus) (trigger?.getElement?.() || trigger)?.focus?.();
   state.mapPopupContext = null;
   state.mapPopupTrigger = null;
   if (!$("#detailDrawer")?.hidden) return;
@@ -715,6 +808,10 @@ function bindReportSurfaceEvents(root) {
   root.querySelector("[data-evidence-preview]")?.addEventListener("click", previewEvidenceReport);
 }
 
+function notificationCloseLabel() {
+  return i18n.locale === "kk" ? "Хабарландыруларды жабу" : "Закрыть уведомления";
+}
+
 function renderNotificationsSurface() {
   const root = $("#notificationsSurface");
   const button = $("#notificationsButton");
@@ -728,9 +825,9 @@ function renderNotificationsSurface() {
   root.hidden = !allowed || !view.open;
   if (!allowed || !view.open) return;
   if (view.state === "loading" || view.state === "idle") {
-    root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(i18n.t("action.closeMapCard")) + '">×</button></header><p class="surface-state" role="status">' + escapeHtml(i18n.t("notification.loading")) + "</p>";
+    root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">×</button></header><p class="surface-state" role="status">' + escapeHtml(i18n.t("notification.loading")) + "</p>";
   } else if (view.state === "error") {
-    root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(i18n.t("action.closeMapCard")) + '">×</button></header><p class="surface-state error" role="alert">' + escapeHtml(i18n.t("notification.unavailable")) + '</p><button type="button" class="secondary-action" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + "</button>";
+    root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">×</button></header><p class="surface-state error" role="alert">' + escapeHtml(i18n.t("notification.unavailable")) + '</p><button type="button" class="secondary-action" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + "</button>";
   } else {
     const rows = view.items.map((item) => {
       const notification = presentNotification(item, { i18n, presentation });
@@ -739,15 +836,18 @@ function renderNotificationsSurface() {
       const next = notification.nextAttemptLabel ? '<small>' + escapeHtml(i18n.t("notification.nextAttempt")) + ": " + escapeHtml(notification.nextAttemptLabel) + "</small>" : "";
       return '<article class="notification-item"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p><small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + '</article>';
     }).join("");
-    root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div><button type="button" class="secondary-action utility-refresh" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + '</button><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(i18n.t("action.closeMapCard")) + '">×</button></div></header>' + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("notification.empty")) + "</p>");
+    root.innerHTML = '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div><button type="button" class="secondary-action utility-refresh" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + '</button><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">×</button></div></header>' + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("notification.empty")) + "</p>");
   }
   root.querySelector("[data-notifications-close]")?.addEventListener("click", closeNotifications);
   root.querySelector("[data-notifications-refresh]")?.addEventListener("click", () => loadNotifications({ force: true }));
 }
 
-function closeNotifications() {
+function closeNotifications(restoreFocus = true) {
+  const trigger = state.notificationsTrigger;
   state.notifications.open = false;
+  state.notificationsTrigger = null;
   renderNotificationsSurface();
+  if (restoreFocus && trigger?.isConnected) trigger.focus();
 }
 
 async function loadNotifications({ force = false } = {}) {
@@ -769,12 +869,15 @@ async function loadNotifications({ force = false } = {}) {
 
 function toggleNotifications() {
   if (!state.capabilities.has("notification.read")) return;
-  state.notifications.open = !state.notifications.open;
   if (state.notifications.open) {
-    renderNotificationsSurface();
-    $("#notificationsSurface")?.focus();
-    loadNotifications();
-  } else renderNotificationsSurface();
+    closeNotifications();
+    return;
+  }
+  state.notificationsTrigger = document.activeElement !== document.body ? document.activeElement : $("#notificationsButton");
+  state.notifications.open = !state.notifications.open;
+  renderNotificationsSurface();
+  $("#notificationsSurface")?.focus();
+  loadNotifications();
 }
 
 function adminResourceLabel(resource) { return i18n.t("admin.resources." + resource); }
@@ -822,23 +925,25 @@ function renderAdminSurface() {
     return;
   }
   if (view.state === "error") {
-    root.innerHTML = '<div class="secondary-shell">' + header + '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t("admin.unavailable")) + '</p><button type="button" class="secondary-action" data-admin-refresh>' + escapeHtml(i18n.t("admin.refresh")) + "</button></div>";
+    root.innerHTML = '<div class="secondary-shell">' + header + '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t("admin.unavailable")) + "</p></div>";
     root.querySelector("[data-admin-refresh]")?.addEventListener("click", () => loadAdminResource({ force: true }));
     return;
   }
+  const mutationBusy = view.mutationState === "saving";
   const rows = view.items.map((item) => {
     const entries = Object.entries(item || {}).filter(([, value]) => value !== null && typeof value !== "object").slice(0, 6);
     const id = adminRecordId(item);
     const cells = entries.map(([key, value]) => '<div><dt>' + escapeHtml(adminFieldLabel(key)) + '</dt><dd>' + escapeHtml(adminDisplayValue(key, value)) + "</dd></div>").join("");
-    const edit = view.resource === "schedule" ? "" : '<button type="button" class="link-action" data-admin-edit="' + escapeHtml(String(id)) + '">' + escapeHtml(i18n.t("admin.update")) + "</button>";
-    const deviceActions = view.resource === "devices" && id ? '<div class="admin-device-actions"><button type="button" class="link-action" data-admin-device-action="block" data-admin-device-id="' + escapeHtml(String(id)) + '">' + escapeHtml(i18n.t("admin.block")) + '</button><button type="button" class="link-action" data-admin-device-action="unblock" data-admin-device-id="' + escapeHtml(String(id)) + '">' + escapeHtml(i18n.t("admin.unblock")) + '</button><button type="button" class="link-action" data-admin-device-action="rotate-token" data-admin-device-id="' + escapeHtml(String(id)) + '">' + escapeHtml(i18n.t("admin.rotateToken")) + "</button></div>" : "";
+    const edit = view.resource === "schedule" ? "" : '<button type="button" class="link-action" data-admin-edit="' + escapeHtml(String(id)) + '"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.update")) + "</button>";
+    const deviceDisabled = mutationBusy ? " disabled" : "";
+    const deviceActions = view.resource === "devices" && id ? '<div class="admin-device-actions"><button type="button" class="link-action" data-admin-device-action="block" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.block")) + '</button><button type="button" class="link-action" data-admin-device-action="unblock" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.unblock")) + '</button><button type="button" class="link-action" data-admin-device-action="rotate-token" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.rotateToken")) + "</button></div>" : "";
     return '<article class="admin-record"><dl class="detail-grid">' + cells + '</dl>' + edit + deviceActions + '<details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(item, null, 2)) + "</pre></details></article>";
   }).join("");
   const payloadLabel = view.resource === "devices" && !view.selectedId ? i18n.t("admin.registerDevice") : view.selectedId ? i18n.t("admin.update") : i18n.t("admin.create");
   const message = view.message ? '<p class="surface-state' + (view.mutationState === "error" ? " error" : "") + '" role="status">' + escapeHtml(i18n.t(view.message)) + "</p>" : "";
-  const impactControl = ["policies", "contracts", "lines"].includes(view.resource) ? '<button type="button" class="secondary-action" data-admin-impact>' + escapeHtml(i18n.t("admin.impactPreview")) + '</button>' : "";
-  const agentControl = ["agent-versions", "devices"].includes(view.resource) ? '<button type="button" class="secondary-action" data-admin-agent-update>' + escapeHtml(i18n.t("admin.agentUpdate")) + '</button>' : "";
-  root.innerHTML = '<div class="secondary-shell">' + header + '<div class="admin-toolbar"><label>' + escapeHtml(i18n.t("admin.resource")) + '<select data-admin-resource>' + options + "</select></label></div>" + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("admin.empty")) + '</p>') + '<form class="admin-editor" data-admin-editor><h2>' + escapeHtml(payloadLabel) + '</h2><label>' + escapeHtml(i18n.t("admin.recordId")) + '<input name="recordId" value="' + escapeHtml(view.selectedId) + '" placeholder="' + escapeHtml(i18n.t("empty.value")) + '"></label><label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="payload" required spellcheck="false">' + escapeHtml(view.payload) + '</textarea></label><p class="form-hint">' + escapeHtml(i18n.t("admin.payloadHint")) + '</p><button type="submit" class="primary-action"' + (view.mutationState === "saving" ? " disabled" : "") + '>' + escapeHtml(payloadLabel) + '</button>' + impactControl + agentControl + '</form>' + message + (view.preview ? '<div class="admin-preview"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><p>' + escapeHtml(i18n.t("admin.previewReady")) + '</p><pre>' + escapeHtml(JSON.stringify(view.preview, null, 2)) + '</pre></div>' : "") + '</div>';
+  const impactControl = ["policies", "contracts", "lines"].includes(view.resource) ? '<button type="button" class="secondary-action" data-admin-impact' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.impactPreview")) + '</button>' : "";
+  const agentControl = ["agent-versions", "devices"].includes(view.resource) ? '<button type="button" class="secondary-action" data-admin-agent-update' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.agentUpdate")) + '</button>' : "";
+  root.innerHTML = '<div class="secondary-shell">' + header + '<div class="admin-toolbar"><label>' + escapeHtml(i18n.t("admin.resource")) + '<select data-admin-resource>' + options + "</select></label></div>" + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("admin.empty")) + '</p>') + '<form class="admin-editor" data-admin-editor><h2>' + escapeHtml(payloadLabel) + '</h2><label>' + escapeHtml(i18n.t("admin.recordId")) + '<input name="recordId" value="' + escapeHtml(view.selectedId) + '" placeholder="' + escapeHtml(i18n.t("empty.value")) + '"></label><label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="payload" required spellcheck="false">' + escapeHtml(view.payload) + '</textarea></label><p class="form-hint">' + escapeHtml(i18n.t("admin.payloadHint")) + '</p><button type="submit" class="primary-action"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(payloadLabel) + '</button>' + impactControl + agentControl + '</form>' + message + (view.preview ? '<div class="admin-preview"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><p>' + escapeHtml(i18n.t("admin.previewReady")) + '</p><pre>' + escapeHtml(JSON.stringify(view.preview, null, 2)) + '</pre></div>' : "") + '</div>';
   bindAdminSurfaceEvents(root);
 }
 
@@ -899,6 +1004,7 @@ function isDestructiveAdminPayload(resource, payload, action = "save") {
 
 async function submitAdminMutation(event) {
   event.preventDefault();
+  if (state.admin.mutationState === "saving") return;
   const parsed = parseAdminPayload(event.currentTarget);
   if (!parsed) return;
   const { id, payload } = parsed;
@@ -923,7 +1029,7 @@ async function submitAdminMutation(event) {
 }
 
 async function adminDeviceAction(id, action) {
-  if (!id || !state.capabilities.has("admin.devices")) return;
+  if (!id || !state.capabilities.has("admin.devices") || state.admin.mutationState === "saving") return;
   if (!globalThis.confirm?.(i18n.t("admin.confirmDestructive"))) return;
   state.admin.mutationState = "saving";
   state.admin.message = "";
@@ -942,6 +1048,7 @@ async function adminDeviceAction(id, action) {
 }
 
 async function runAdminImpactPreview() {
+  if (state.admin.mutationState === "saving") return;
   const parsed = parseAdminPayload($("#adminSurface"));
   if (!parsed) return;
   try {
@@ -956,8 +1063,12 @@ async function runAdminImpactPreview() {
 }
 
 async function runAdminAgentUpdate() {
+  if (state.admin.mutationState === "saving") return;
   const parsed = parseAdminPayload($("#adminSurface"));
   if (!parsed || !globalThis.confirm?.(i18n.t("admin.confirmDestructive"))) return;
+  state.admin.mutationState = "saving";
+  state.admin.message = "";
+  renderAdminSurface();
   try {
     state.admin.payload = JSON.stringify(await boundaries.admin.agentUpdate(parsed.payload), null, 2);
     state.admin.message = "admin.mutationSucceeded";
@@ -1077,10 +1188,11 @@ function renderProviderCaseContext(incident) {
     const current = String(providerView.selectedId) === String(item.id);
     return '<li><button class="link-action" type="button" data-provider-case-id="' + escapeHtml(item.id) + '"' + (current ? ' aria-current="true"' : "") + '>' + escapeHtml(i18n.t("field.providerCase")) + " #" + escapeHtml(item.ticket_no || item.external_ticket_no || item.id) + ' <span>' + escapeHtml(presentation.deliveryStatus(item.delivery_status)) + "</span></button></li>";
   }).join("") + "</ul>" : '<p class="detail-muted">' + escapeHtml(i18n.t("incidents.noRelatedCases")) + "</p>";
+  const providerBusy = providerView.actionState !== "idle";
   const create = !cases.length && canPrepare
-    ? '<button class="secondary-action" type="button" data-provider-case-prepare' + (providerView.actionState === "creating" ? " disabled" : "") + ">" + escapeHtml(i18n.t("providerCase.prepare")) + "</button>"
+    ? '<button class="secondary-action" type="button" data-provider-case-prepare' + (providerBusy ? " disabled" : "") + ">" + escapeHtml(i18n.t("providerCase.prepare")) + "</button>"
     : !cases.length ? '<p class="detail-muted">' + escapeHtml(i18n.t("providerCase.unavailable")) + "</p>" : "";
-  const actionError = providerView.actionError ? '<p class="provider-case-error" role="alert">' + escapeHtml(providerView.actionError) + "</p>" : "";
+  const actionError = providerView.actionError ? '<p class="provider-case-error" role="alert">' + escapeHtml(i18n.t(providerView.actionError)) + "</p>" : "";
   return '<section class="provider-case-context"><h3>' + escapeHtml(i18n.t("incidents.relatedCases")) + "</h3>" + list + create + actionError + renderSelectedProviderCase() + "</section>";
 }
 
@@ -1094,8 +1206,8 @@ function renderSelectedProviderCase() {
   const metadata = '<dl class="detail-grid provider-case-fields"><div><dt>' + escapeHtml(i18n.t("providerCase.source")) + "</dt><dd>" + escapeHtml(item.sourceLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.status")) + "</dt><dd>" + escapeHtml(item.statusLabel) + " · " + escapeHtml(item.deliveryLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.createdAt")) + "</dt><dd>" + escapeHtml(item.createdAtLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.lastVerified")) + "</dt><dd>" + escapeHtml(item.lastVerifiedLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.provenance")) + "</dt><dd>" + escapeHtml(item.provenanceLabel) + "</dd></div>" + (item.externalReference ? "<div><dt>" + escapeHtml(i18n.t("providerCase.reference")) + "</dt><dd>" + escapeHtml(item.externalReference) + "</dd></div>" : "") + (item.status === "SENT" ? "<div><dt>" + escapeHtml(i18n.t("providerCase.sentAt")) + "</dt><dd>" + escapeHtml(item.sentAtLabel) + "</dd></div>" : "") + "</dl>";
   const automatic = providerView.generated?.provider ? '<p class="detail-muted">' + escapeHtml(i18n.t("providerCase.automaticDraft")) + "</p>" : "";
   const draft = item.text ? '<label class="provider-case-text"><span>' + escapeHtml(i18n.t("providerCase.text")) + '</span><textarea data-provider-case-text maxlength="32768"' + (actions.canSend ? "" : " readonly") + ">" + escapeHtml(item.text) + "</textarea></label>" : '<p class="provider-case-error">' + escapeHtml(i18n.t("providerCase.textUnavailable")) + "</p>";
-  const generate = actions.canGenerate ? '<button class="secondary-action" type="button" data-provider-case-generate' + (providerView.actionState === "generating" ? " disabled" : "") + ">" + escapeHtml(i18n.t("providerCase.prepareAutomatic")) + "</button>" : "";
-  const send = actions.canSend && item.text ? '<form class="provider-case-send" data-provider-case-send><label><input type="checkbox" data-provider-case-reviewed required /> ' + escapeHtml(i18n.t("providerCase.reviewed")) + '</label><button class="primary-action" type="submit" data-provider-case-submit disabled>' + escapeHtml(i18n.t(actions.isRetry ? "providerCase.retry" : "providerCase.send")) + "</button></form>" : "";
+  const generate = actions.canGenerate ? '<button class="secondary-action" type="button" data-provider-case-generate' + (providerView.actionState !== "idle" ? " disabled" : "") + ">" + escapeHtml(i18n.t("providerCase.prepareAutomatic")) + "</button>" : "";
+  const send = actions.canSend && item.text ? '<form class="provider-case-send" data-provider-case-send><label><input type="checkbox" data-provider-case-reviewed required' + (providerView.actionState !== "idle" ? " disabled" : "") + ' /> ' + escapeHtml(i18n.t("providerCase.reviewed")) + '</label><button class="primary-action" type="submit" data-provider-case-submit' + (providerView.actionState !== "idle" ? " disabled" : "") + ' disabled>' + escapeHtml(i18n.t(actions.isRetry ? "providerCase.retry" : "providerCase.send")) + "</button></form>" : "";
   const delivery = item.deliveryError ? '<details class="provider-case-delivery"><summary>' + escapeHtml(i18n.t("providerCase.deliveryFailed")) + "</summary><p>" + escapeHtml(i18n.t("providerCase.deliveryAttempts", { count: item.deliveryAttempts })) + (item.nextAttemptLabel !== i18n.t("empty.value") ? " · " + escapeHtml(i18n.t("providerCase.nextAttempt", { at: item.nextAttemptLabel })) : "") + "</p><p>" + escapeHtml(item.deliveryError) + "</p></details>" : "";
   return '<article class="provider-case-detail"><h4>' + escapeHtml(i18n.t("providerCase.title", { reference: item.reference })) + "</h4>" + metadata + automatic + draft + '<div class="provider-case-actions">' + generate + "</div>" + send + delivery + "</article>";
 }
@@ -1225,7 +1337,7 @@ async function selectProviderCase(id) {
 
 async function createIncidentProviderCase() {
   const view = incidentSurfaceState();
-  if (!view.selectedId || !view.detail || !providerCaseActions(null, state.capabilities).canPrepare) return;
+  if (!view.selectedId || !view.detail || view.providerCase.actionState !== "idle" || !providerCaseActions(null, state.capabilities).canPrepare) return;
   if (!globalThis.confirm?.(i18n.t("providerCase.confirmPrepare"))) return;
   view.providerCase.actionState = "creating";
   view.providerCase.actionError = "";
@@ -1236,7 +1348,7 @@ async function createIncidentProviderCase() {
     await selectProviderCase(created.id);
   } catch (error) {
     view.providerCase.actionState = "idle";
-    view.providerCase.actionError = i18n.t("providerCase.prepareFailed");
+    view.providerCase.actionError = "providerCase.prepareFailed";
     renderIncidentsSurface();
   }
 }
@@ -1244,7 +1356,7 @@ async function createIncidentProviderCase() {
 async function generateProviderCaseDraft() {
   const view = incidentSurfaceState();
   const detail = view.providerCase.detail;
-  if (!detail || !providerCaseActions(detail, state.capabilities).canGenerate) return;
+  if (!detail || view.providerCase.actionState !== "idle" || !providerCaseActions(detail, state.capabilities).canGenerate) return;
   if (!globalThis.confirm?.(i18n.t("providerCase.confirmAutomatic"))) return;
   view.providerCase.actionState = "generating";
   view.providerCase.actionError = "";
@@ -1258,7 +1370,7 @@ async function generateProviderCaseDraft() {
   } catch (error) {
     if (String(view.providerCase.selectedId) !== String(detail.id)) return;
     view.providerCase.actionState = "idle";
-    view.providerCase.actionError = i18n.t("providerCase.automaticFailed");
+    view.providerCase.actionError = "providerCase.automaticFailed";
   }
   renderIncidentsSurface();
 }
@@ -1269,7 +1381,7 @@ async function sendProviderCase(event) {
   const detail = view.providerCase.detail;
   const finalText = event.currentTarget.closest(".provider-case-detail")?.querySelector("[data-provider-case-text]")?.value.trim();
   const reviewed = event.currentTarget.querySelector("[data-provider-case-reviewed]")?.checked === true;
-  if (!detail || !reviewed || !finalText || !providerCaseActions(detail, state.capabilities).canSend) return;
+  if (!detail || view.providerCase.actionState !== "idle" || !reviewed || !finalText || !providerCaseActions(detail, state.capabilities).canSend) return;
   if (!globalThis.confirm?.(i18n.t("providerCase.confirmSend"))) return;
   view.providerCase.actionState = "sending";
   view.providerCase.actionError = "";
@@ -1284,7 +1396,7 @@ async function sendProviderCase(event) {
   } catch (error) {
     if (String(view.providerCase.selectedId) !== String(detail.id)) return;
     view.providerCase.actionState = "idle";
-    view.providerCase.actionError = i18n.t("providerCase.sendFailed");
+    view.providerCase.actionError = "providerCase.sendFailed";
     try {
       const refreshed = objectPayload(await boundaries.providerCases.get(detail.id));
       if (String(view.providerCase.selectedId) === String(detail.id)) {
@@ -1350,7 +1462,7 @@ async function openIncident(id) {
   await selectIncident(id);
 }
 
-function closeDrawer() {
+function closeDrawer(restoreFocus = true) {
   $("#detailDrawer")?.classList.remove("open");
   if ($("#detailDrawer")) $("#detailDrawer").hidden = true;
   if ($("#drawerBackdrop")) $("#drawerBackdrop").hidden = true;
@@ -1358,13 +1470,21 @@ function closeDrawer() {
   const trigger = state.drawerTrigger;
   state.drawerTrigger = null;
   state.drawerFocusSet = false;
-  trigger?.focus?.();
+  if (restoreFocus) trigger?.focus?.();
 }
 async function refreshMap() {
   if (!session.authenticated) return;
   state.mapLoaded = false;
   state.mapLoadPromise = null;
   await loadAuthenticatedMap();
+}
+
+function mapControlAction(action) {
+  const mapInstance = globalThis.LinkwatchMap?.getMap?.();
+  const method = mapInstance?.[action];
+  if (typeof method !== "function") return false;
+  method.call(mapInstance);
+  return true;
 }
 
 function trapOverlayFocus(event) {
@@ -1399,7 +1519,10 @@ function bindEvents() {
     if (firstResult) selectSearchResult(firstResult.school.registryId);
   });
   document.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => {
-    if (router.navigate(button.dataset.route)) $("#accountControl")?.removeAttribute("open");
+    if (router.navigate(button.dataset.route)) {
+      $("#accountControl")?.removeAttribute("open");
+      $("#navOverflow")?.removeAttribute("open");
+    }
   }));
   document.querySelectorAll("[data-locale]").forEach((button) => button.addEventListener("click", () => i18n.setLocale(button.dataset.locale)));
   $("#mapListMode")?.addEventListener("change", async (event) => {
@@ -1412,14 +1535,15 @@ function bindEvents() {
   $("#districtFilter")?.addEventListener("change", applyMapFilters);
   $("#providerFilter")?.addEventListener("change", applyMapFilters);
   $("#statusFilter")?.addEventListener("change", applyMapFilters);
-  $("#schoolSearch")?.addEventListener("input", (event) => { map.setFilters({ query: event.target.value }); renderMapStatus(); });
+  $("#schoolSearch")?.addEventListener("input", (event) => { state.searchActiveIndex = -1; map.setFilters({ query: event.target.value }); renderMapStatus(); });
+  $("#schoolSearch")?.addEventListener("keydown", handleSchoolSearchKeydown);
   $("#mapFiltersReset")?.addEventListener("click", () => { map.resetFilters(); renderMapStatus(); });
   $("#mapPopupClose")?.addEventListener("click", () => closeMapPopup());
   $("#mapPopupOpenLine")?.addEventListener("click", openSelectedSchoolDetail);
   $("#drawerClose")?.addEventListener("click", closeDrawer);
   $("#drawerBackdrop")?.addEventListener("click", closeDrawer);
-  $("#mapZoomIn")?.addEventListener("click", () => mapApiAction("zoomIn"));
-  $("#mapZoomOut")?.addEventListener("click", () => mapApiAction("zoomOut"));
+  $("#mapZoomIn")?.addEventListener("click", () => mapControlAction("zoomIn"));
+  $("#mapZoomOut")?.addEventListener("click", () => mapControlAction("zoomOut"));
   $("#mapReset")?.addEventListener("click", () => globalThis.LinkwatchMap?.resetView());
   document.addEventListener("keydown", (event) => { trapOverlayFocus(event); if (event.key === "Escape") { if (state.notifications.open) closeNotifications(); else if (!$("#mapPopup")?.hidden) closeMapPopup(); else if (!$("#detailDrawer")?.hidden) closeDrawer(); } });
   globalThis.LinkwatchMap?.setMarkerClickHandler((context, marker) => openMapPopup(context, marker));
@@ -1446,16 +1570,18 @@ async function boot() {
   bindEvents();
   i18n.subscribe(refreshLocale);
   theme.subscribe(refreshTheme);
+  const reducedMotionQuery = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)");
+  reducedMotionQuery?.addEventListener?.("change", applyReducedMotionToMap);
   renderSession();
   if (!session.hasToken()) return;
   try {
     await session.bootstrap();
     const requestedRoute = globalThis.location?.hash?.slice(1);
-    if (requestedRoute) router.navigate(requestedRoute);
+    if (requestedRoute) router.navigate(requestedRoute, { replace: true });
   } catch (error) {
     showLogin(error.status === 401 || error.status === 403 ? "auth.invalidSession" : "auth.serviceUnavailable");
   }
 }
 
-globalThis.LinkwatchApp = { i18n, presentation, theme, router, state, boundaries, refreshMap, openLine, openIncident, openMapPopup };
+globalThis.LinkwatchApp = { i18n, presentation, theme, router, state, boundaries, refreshMap, openLine, openIncident, openMapPopup, mapControlAction };
 document.addEventListener("DOMContentLoaded", boot);

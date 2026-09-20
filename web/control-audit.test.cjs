@@ -34,4 +34,8 @@ test("UI-003 mutations require permissions, confirmation and awaited server succ
   assert.match(app, /await boundaries\.admin\.save/);
   assert.match(app, /state\.admin\.message = "admin\.mutationSucceeded"/);
   assert.match(app, /state\.admin\.message = "admin\.mutationFailed"/);
+  assert.doesNotMatch(app, /mapApiAction\(/);
+  assert.match(app, /LinkwatchMap\?\.getMap\?\.\(\)/);
+  assert.match(app, /providerCase\.actionState !== "idle"/);
+  assert.match(app, /state\.admin\.mutationState === "saving"/);
 });

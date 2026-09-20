@@ -8,6 +8,13 @@ const report = { surfaces: [], failures: [], blockers: [] };
 function check(condition, message) { if (!condition) throw new Error(message); }
 function record(surface, status, evidence) { report.surfaces.push({ surface, status, evidence }); if (status === "FAIL") report.failures.push({ surface, status, evidence }); if (status === "BLOCKED_EXTERNAL") report.blockers.push({ surface, status, evidence }); }
 async function surface(name, callback) { try { record(name, "PASS", await callback()); } catch (error) { record(name, "FAIL", error instanceof Error ? error.message : String(error)); } }
+async function waitForCondition(page, label, predicate, argument) {
+  try { return await page.waitForFunction(predicate, argument); }
+  catch (error) {
+    const state = await page.evaluate(() => { const map = window.LinkwatchMap?.getMap?.(); return { route: document.querySelector("#authenticatedWorkspace")?.dataset.route, zoom: map?.getZoom?.(), internalZoom: map?._zoom, animatingZoom: map?._animatingZoom, loaded: map?._loaded, resetZoom: window.LinkwatchMap?.getConfig?.()?.zoom, url: location.href }; });
+    throw new Error(`${label}: ${error instanceof Error ? error.message : String(error)} (${JSON.stringify(state)})`);
+  }
+}
 
 const BROWSER_MAP_FIXTURE = Object.freeze({
   registry: { schema_version: 1, artifact: "browser-e2e-test-fixture", provenance: { source: "browser-e2e-test-fixture" }, schools: [
@@ -98,32 +105,57 @@ async function runMapAcceptance() {
       check(await page.locator(".map-workspace").count() === 1 && await page.locator(".map-card, .map-controls, .session-bar, .dashboard-grid, .kpi-grid, .activity-panel, .sidebar, .rail").count() === 0, "legacy shell surface is still present");
       check(await page.locator(".primary-nav [data-route]:visible").count() === 3, "capability-aware primary nav does not expose exactly Map, Incidents and Reports");
       check(await page.locator(".leaflet-control-zoom").count() === 0 && await page.locator(".map-tools").count() === 1 && await page.locator(".map-tools button").count() === 3, "map has duplicate or missing zoom/fit controls");
-      await page.locator('.primary-nav [data-route="reports"]').click();
-      await page.waitForFunction(() => document.querySelector("#authenticatedWorkspace")?.dataset.route === "reports");
-      check(await page.locator('.primary-nav [data-route="reports"]').getAttribute("aria-current") === "page" && new URL(page.url()).hash === "#reports", "primary navigation has no route effect");
+      await page.locator('#primaryNav > [data-route="reports"]').click();
+      await waitForCondition(page, "reports route after primary navigation", () => document.querySelector("#authenticatedWorkspace")?.dataset.route === "reports");
+      check(await page.locator('#primaryNav > [data-route="reports"]').getAttribute("aria-current") === "page" && new URL(page.url()).hash === "#reports", "primary navigation has no route effect");
       await page.locator("#reportsSurface h1").waitFor({ state: "visible" });
       check(await page.locator("#reportsSurface [data-report-filters]").count() === 1, "reports route did not render real report filters");
       check((await page.locator("#reportsSurface").textContent()).includes("За выбранный период"), "reports route did not preserve the honest empty historical state");
       await page.screenshot({ path: "artifacts/task022-reports-1355x880.png", scale: "css" });
-      await page.locator('.primary-nav [data-route="incidents"]').click();
-      await page.waitForFunction(() => document.querySelector("#authenticatedWorkspace")?.dataset.route === "incidents");
+      await page.goBack();
+      await waitForCondition(page, "map route after browser Back", () => document.querySelector("#authenticatedWorkspace")?.dataset.route === "map");
+      check(new URL(page.url()).hash === "", "browser Back did not restore the map route");
+      await page.locator('#primaryNav > [data-route="reports"]').click();
+      await waitForCondition(page, "reports route after returning from browser Back", () => document.querySelector("#authenticatedWorkspace")?.dataset.route === "reports");
+      await page.locator('#primaryNav > [data-route="incidents"]').click();
+      await waitForCondition(page, "incidents route after primary navigation", () => document.querySelector("#authenticatedWorkspace")?.dataset.route === "incidents");
       await page.locator("#incidentsSurface h1").waitFor({ state: "visible" });
       check((await page.locator("#incidentsSurface").textContent()).includes("В доступном охвате инцидентов нет"), "incidents route did not render the honest empty state");
       await page.screenshot({ path: "artifacts/task022-incidents-1355x880.png", scale: "css" });
-      await page.locator('.primary-nav [data-route="map"]').click();
+      await page.locator('#primaryNav > [data-route="map"]').click();
+      const zoomBefore = await page.evaluate(() => window.LinkwatchMap.getMap()?.getZoom?.() || 0);
+      const zoomMaximum = await page.evaluate(() => window.LinkwatchMap.getConfig()?.maxZoom || 18);
+      check(zoomBefore < zoomMaximum, "fixture map starts at maximum zoom");
+      await page.locator("#mapZoomIn").click();
+      await waitForCondition(page, "zoom in", (before) => { const map = window.LinkwatchMap.getMap(); return (map?.getZoom?.() || 0) > before && !map?._animatingZoom; }, zoomBefore);
+      await page.locator("#mapZoomOut").click();
+      await waitForCondition(page, `zoom out from ${zoomBefore}`, (before) => { const map = window.LinkwatchMap.getMap(); return (map?.getZoom?.() || 0) <= before && !map?._animatingZoom; }, zoomBefore);
+      await page.locator("#mapReset").click();
+      await page.setViewportSize({ width: 800, height: 700 });
+      await waitForCondition(page, "compact overflow display", () => getComputedStyle(document.querySelector("#navOverflow")).display !== "none");
+      check(await page.locator("#primaryNav > [data-route=\"incidents\"]").isHidden(), "narrow navigation kept the secondary incident button visible");
+      check(await page.locator("#navOverflow").isVisible(), "narrow navigation did not expose the compact overflow");
+      await page.locator("#navOverflow > summary").click();
+      await page.locator("#navOverflow [data-route=\"reports\"]").click();
+      await waitForCondition(page, "reports route from compact overflow", () => document.querySelector("#authenticatedWorkspace")?.dataset.route === "reports");
+      await page.locator('#primaryNav > [data-route="map"]').click();
+      await page.setViewportSize({ width: 1355, height: 880 });
+      await waitForCondition(page, "restored desktop map width", () => Math.round(document.querySelector("#mapWrap")?.getBoundingClientRect().width || 0) === window.innerWidth);
       const darkGeometry = await page.evaluate(() => ["#mapWrap", ".shell-top-left", ".primary-nav .reference-nav-item", "#schoolSearch", ".map-tools button"].flatMap((selector) => [...document.querySelectorAll(selector)].map((element) => { const box = element.getBoundingClientRect(); return [selector, Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)]; })));
       await page.screenshot({ path: "artifacts/task006-shell-1355x880.png", scale: "css" });
       await page.screenshot({ path: "artifacts/task022-dark-1355x880.png", scale: "css" });
       await page.locator("#themeToggle").click();
-      await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
+      await waitForCondition(page, "light theme", () => document.documentElement.dataset.theme === "light");
       const lightGeometry = await page.evaluate(() => ["#mapWrap", ".shell-top-left", ".primary-nav .reference-nav-item", "#schoolSearch", ".map-tools button"].flatMap((selector) => [...document.querySelectorAll(selector)].map((element) => { const box = element.getBoundingClientRect(); return [selector, Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)]; })));
       await page.screenshot({ path: "artifacts/task022-light-1355x880.png", scale: "css" });
       check(JSON.stringify(darkGeometry) === JSON.stringify(lightGeometry), "dark and light themes changed canonical geometry");
       await page.locator("#themeToggle").click();
-      await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+      await waitForCondition(page, "dark theme", () => document.documentElement.dataset.theme === "dark");
       return "map fills 1355×880, shell is isolated, nav is capability-aware, one map tool stack is visible, and dark/light geometry matches";
     });
     await surface("locale boundary", async () => {
+      check((await page.locator('[data-locale="ru"]').getAttribute("aria-label")).includes("РУ"), "Russian locale control does not identify its language");
+      check((await page.locator('[data-locale="kk"]').getAttribute("aria-label")).includes("ҚАЗ"), "Kazakh locale control does not identify its language");
       await page.locator('[data-locale="kk"]').click();
       await page.waitForFunction(() => document.documentElement.lang === "kk");
       check((await page.locator("#schoolSearch").getAttribute("placeholder")) === "Мектеп, аудан немесе мекенжай", "Kazakh locale did not update the map search copy");
@@ -139,7 +171,11 @@ async function runMapAcceptance() {
       await page.locator("#schoolSearch").fill("№32");
       const result = page.locator('.school-search-result[data-registry-id="18383"]');
       await result.waitFor({ state: "visible" });
-      await result.click();
+      await page.locator("#schoolSearch").press("ArrowDown");
+      check((await page.locator("#schoolSearch").getAttribute("aria-expanded")) === "true", "search combobox did not expose its expanded state");
+      check(Boolean(await page.locator("#schoolSearch").getAttribute("aria-activedescendant")), "search combobox did not expose an active option");
+      check((await result.getAttribute("aria-selected")) === "true", "search listbox did not mark its active option");
+      await page.locator("#schoolSearch").press("Enter");
       check((await page.locator("#mapPopupTitle").textContent()).includes("№32"), "search selection did not open the real registry school");
       await page.waitForFunction(() => (window.LinkwatchMap.getMap()?.getZoom?.() || 0) >= 14);
       await page.screenshot({ path: "artifacts/task022-selected-school-1355x880.png", scale: "css" });
@@ -149,6 +185,11 @@ async function runMapAcceptance() {
       check((await page.locator("#mapFilterStatus").textContent()).includes("Школы не найдены"), "zero search result is not explicit");
       await page.locator("#schoolSearch").fill("");
       await page.locator(".map-filter-details summary").click();
+      await page.locator("#districtFilter").selectOption("Глубоковский район");
+      await page.locator("#coverageFilter").selectOption("monitored");
+      await page.locator("#mapFilterStatus").waitFor({ state: "visible" });
+      check((await page.locator("#mapFilterStatus").textContent()).includes("Школы не найдены"), "zero filter result is not explicit without a search query");
+      await page.locator("#mapFiltersReset").click();
       await page.locator("#districtFilter").selectOption("Усть-Каменогорск");
       await page.locator("#providerFilter").selectOption("Fixture Telecom");
       await page.locator("#statusFilter").selectOption("NO_INTERNET");
@@ -162,7 +203,7 @@ async function runMapAcceptance() {
     });
     await surface("historical boundary", async () => { await page.locator("#mapListMode").selectOption("historical"); await page.waitForFunction(() => { const text = document.querySelector("#mapFooterNote")?.textContent || ""; return text.includes("Исторические данные") && text.includes("текущее состояние не используется"); }); await page.locator(".leaflet-marker-icon.linkwatch-monitoring-marker").first().click(); const text = await page.locator("#mapPopup").textContent(); check(text.includes("текущее состояние не используется"), "historical popup reused current state"); return "historical mode remains explicitly separate from current LineState"; });
     await surface("coverage boundary", async () => { await page.locator("#mapPopupClose").click(); await page.locator("#mapListMode").selectOption("current"); await page.locator("#coverageFilter").selectOption("monitored"); await page.waitForFunction(() => window.LinkwatchMap.getLayers().registryMarkers.length === 1); const ids = await page.evaluate(() => window.LinkwatchMap.getLayers().registryMarkers.map((marker) => marker.__linkwatchContext.registryId)); check(ids.length === 1 && ids[0] === "fixture-reg-001", "monitored coverage changed registry identity"); await page.locator("#coverageFilter").selectOption("all"); return "coverage changes presentation scope without replacing registry data"; });
-    await surface("neutral cluster", async () => { const cluster = page.locator(".leaflet-marker-icon.linkwatch-registry-cluster").first(); await cluster.waitFor({ state: "visible" }); check(await cluster.count() === 1, "registry cluster marker is missing"); await cluster.click(); const text = await page.locator("#mapPopup").textContent(); check(text.includes("Школ в группе") && !text.includes("Текущее состояние"), `cluster is not neutral: ${JSON.stringify(text)}`); const school = page.locator('[data-popup-registry-id="18383"]'); check(await school.count() === 1, "cluster member school is missing"); await school.click(); check((await page.locator("#mapPopupTitle").textContent()).includes("№32"), "cluster member selection lost school identity"); return "cluster member selection remains registry-backed"; });
+    await surface("neutral cluster", async () => { await page.reload({ waitUntil: "domcontentloaded" }); await page.locator("#authBackdrop").waitFor({ state: "hidden", timeout: 15000 }); await waitForCondition(page, "cluster fixture reload", () => document.querySelector("#registryDataStatus")?.dataset.state === "available" && document.querySelector("#lineCount")?.textContent?.trim() === "1" && Boolean(document.querySelector(".leaflet-marker-icon.linkwatch-registry-cluster"))); const cluster = page.locator(".leaflet-marker-icon.linkwatch-registry-cluster").first(); await cluster.click(); const text = await page.locator("#mapPopup").textContent(); check(text.includes("Школ в группе") && !text.includes("Текущее состояние"), `cluster is not neutral: ${JSON.stringify(text)}`); const school = page.locator('[data-popup-registry-id="18383"]'); check(await school.count() === 1, "cluster member school is missing"); await school.click(); check((await page.locator("#mapPopupTitle").textContent()).includes("№32"), "cluster member selection lost school identity"); return "cluster member selection remains registry-backed"; });
     await surface("logout and local cleanup", async () => {
       await page.locator("#accountButton").click();
       await page.locator("#logoutButton").click();

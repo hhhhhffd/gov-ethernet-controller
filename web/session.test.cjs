@@ -100,3 +100,82 @@ test("CAP-001 and CAP-002 use explicit capabilities, not role labels", async () 
   assert.equal(operatorWithManagement.has("admin.manage"), true);
   assert.equal(operatorWithManagement.has("notification.read"), true);
 });
+
+test("session generation prevents a stale bootstrap from restoring the previous user", async () => {
+  const { createSession, ME_PATHS } = await sessionModule();
+  const storage = memoryStorage("old-session");
+  let resolveProfile;
+  const profile = new Promise((resolve) => { resolveProfile = resolve; });
+  const api = { async tryRequest(paths) { assert.deepEqual(paths, ME_PATHS); return profile; } };
+  const session = createSession({ api, storage });
+  const pending = session.bootstrap();
+  const oldGeneration = session.generation;
+
+  session.clear();
+  resolveProfile({ user: { role: "SCHOOL", capabilities: ["line.read"] } });
+  const result = await pending;
+
+  assert.equal(result.authenticated, false);
+  assert.equal(session.user, null);
+  assert.equal(session.token, "");
+  assert.ok(session.generation > oldGeneration);
+});
+
+test("router writes navigations and restores routes on browser history changes", async () => {
+  const { createShellRouter } = await import("./core/router.mjs");
+  const location = { pathname: "/", search: "", hash: "" };
+  const historyCalls = [];
+  const history = {
+    pushState(_state, _title, url) { historyCalls.push(["push", url]); location.hash = String(url).split("#")[1] ? `#${String(url).split("#")[1]}` : ""; },
+    replaceState(_state, _title, url) { historyCalls.push(["replace", url]); location.hash = String(url).split("#")[1] ? `#${String(url).split("#")[1]}` : ""; },
+  };
+  const eventHandlers = new Map();
+  const eventTarget = {
+    addEventListener(name, handler) { eventHandlers.set(name, handler); },
+    removeEventListener(name) { eventHandlers.delete(name); },
+  };
+  const changes = [];
+  const router = createShellRouter({ locationObject: location, historyObject: history, eventTarget, onChange: (snapshot) => changes.push(snapshot.view) });
+
+  assert.equal(router.navigate("reports"), true);
+  assert.equal(location.hash, "#reports");
+  assert.deepEqual(historyCalls[0], ["push", "/#reports"]);
+  location.hash = "";
+  eventHandlers.get("popstate")();
+  assert.equal(router.getState().view, "map");
+  assert.deepEqual(changes, ["reports", "map"]);
+  router.destroy();
+  assert.equal(eventHandlers.size, 0);
+});
+
+test("map integration ignores lines that resolve after the session generation changed", async () => {
+  const { createMapIntegration } = await import("./integration/map-integration.mjs");
+  const dataModel = require("./data-model.js");
+  const registryPayload = { schools: [{ registry_id: "school-1", official_name: "School 1", district: "District", latitude: 50, longitude: 82 }] };
+  const mappingPayload = { entries: [{ organization_id: "org-1", registry_id: "school-1", match_status: "AUTO_MATCH", confidence: 1 }] };
+  const line = { id: "line-1", organization_id: "org-1", status: "OK", school_name: "School 1" };
+  const pendingLines = new Promise((resolve) => { globalThis.__resolveMapLines = resolve; });
+  let generation = 1;
+  let renders = 0;
+  const integration = createMapIntegration({
+    session: { get generation() { return generation; } },
+    api: { tryRequest() { return pendingLines; } },
+    reports: {},
+    dataModel: {
+      ...dataModel,
+      createDataLoader() { return { load: async () => ({ registryPayload, mappingPayload, registryUnavailable: false, mappingUnavailable: false }) }; },
+    },
+    mapApi: { render() { renders += 1; }, setPresentation() {}, setMapPresentation() {} },
+  });
+
+  const pendingLoad = integration.loadCurrent();
+  generation = 2;
+  globalThis.__resolveMapLines([line]);
+  await pendingLoad;
+  delete globalThis.__resolveMapLines;
+
+  assert.deepEqual(integration.state.lines, []);
+  assert.equal(integration.state.model, null);
+  assert.equal(renders, 0);
+  assert.equal(integration.state.loading, false);
+});

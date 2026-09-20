@@ -13,6 +13,7 @@ export function createSession({ api, storage = globalThis.localStorage, onChange
   let token = storage?.getItem(TOKEN_KEY) || "";
   let user = null;
   let phase = token ? "resolving" : "anonymous";
+  let generation = 0;
   const listeners = new Set();
 
   function snapshot() {
@@ -20,6 +21,7 @@ export function createSession({ api, storage = globalThis.localStorage, onChange
       token,
       user,
       phase,
+      generation,
       resolving: phase === "resolving",
       authenticated: phase === "authenticated" && Boolean(token && user),
     });
@@ -34,7 +36,11 @@ export function createSession({ api, storage = globalThis.localStorage, onChange
     if (token) storage?.setItem(TOKEN_KEY, token);
     else storage?.removeItem(TOKEN_KEY);
   }
+  function isCurrent(requestGeneration, requestToken = token) {
+    return generation === requestGeneration && token === requestToken;
+  }
   function clear() {
+    generation += 1;
     setToken("");
     user = null;
     phase = "anonymous";
@@ -42,22 +48,29 @@ export function createSession({ api, storage = globalThis.localStorage, onChange
   }
   async function login(credentials) {
     clear();
+    const requestGeneration = generation;
     try {
       const response = await api.tryRequest(LOGIN_PATHS, { method: "POST", body: JSON.stringify(credentials), _authRetried: true });
+      if (!isCurrent(requestGeneration, "")) return snapshot();
       const nextToken = response?.token || response?.access_token || response?.session;
       if (!nextToken) throw new Error("Ответ авторизации не содержит сессию");
       setToken(nextToken);
       phase = "resolving";
       notify();
       await bootstrap();
+      if (!isCurrent(requestGeneration, nextToken)) return snapshot();
       return snapshot();
     } catch (error) {
+      if (error?.localStateCleared) throw error;
+      if (!isCurrent(requestGeneration)) return snapshot();
       clear();
       throw error;
     }
   }
   async function bootstrap() {
-    if (!token) {
+    const requestGeneration = generation;
+    const requestToken = token;
+    if (!requestToken) {
       phase = "anonymous";
       return snapshot();
     }
@@ -65,6 +78,7 @@ export function createSession({ api, storage = globalThis.localStorage, onChange
     notify();
     try {
       const response = await api.tryRequest(ME_PATHS, { _authRetried: true });
+      if (!isCurrent(requestGeneration, requestToken)) return snapshot();
       const nextUser = response?.user || response;
       if (!nextUser || !nextUser.role || !Array.isArray(nextUser.capabilities)) {
         throw new Error("Ответ профиля не содержит серверные полномочия");
@@ -73,7 +87,9 @@ export function createSession({ api, storage = globalThis.localStorage, onChange
       phase = "authenticated";
       notify();
     } catch (error) {
+      if (!isCurrent(requestGeneration, requestToken)) return snapshot();
       clear();
+      error.localStateCleared = true;
       throw error;
     }
     return snapshot();
@@ -83,13 +99,24 @@ export function createSession({ api, storage = globalThis.localStorage, onChange
       clear();
       return { serverConfirmed: true };
     }
+    const requestGeneration = generation + 1;
+    const requestToken = token;
+    generation = requestGeneration;
+    user = null;
+    phase = "anonymous";
+    notify();
     try {
       await api.tryRequest(LOGOUT_PATHS, { method: "POST", _authRetried: true });
+      if (!isCurrent(requestGeneration, requestToken)) return { serverConfirmed: false, superseded: true };
       clear();
       return { serverConfirmed: true };
     } catch (error) {
-      clear();
-      error.localStateCleared = true;
+      if (isCurrent(requestGeneration, requestToken)) {
+        clear();
+        error.localStateCleared = true;
+      } else if (!token) {
+        error.localStateCleared = true;
+      }
       throw error;
     }
   }
@@ -97,9 +124,11 @@ export function createSession({ api, storage = globalThis.localStorage, onChange
   return {
     get token() { return token; },
     get user() { return user; },
+    get generation() { return generation; },
     get authenticated() { return phase === "authenticated" && Boolean(token && user); },
     get resolving() { return phase === "resolving"; },
     getState: snapshot,
+    isCurrent: (requestGeneration, requestToken = token) => isCurrent(requestGeneration, requestToken),
     login,
     bootstrap,
     logout,

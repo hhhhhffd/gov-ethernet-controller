@@ -40,7 +40,7 @@ function historicalByLine(aggregate, analytics) {
   return result;
 }
 
-export function createMapIntegration({ api, reports, mapApi = globalThis.LinkwatchMap, dataModel = globalThis.LinkwatchDataModel, presentation = createPresentation(), mapPresentation = null } = {}) {
+export function createMapIntegration({ api, reports, session = null, mapApi = globalThis.LinkwatchMap, dataModel = globalThis.LinkwatchDataModel, presentation = createPresentation(), mapPresentation = null } = {}) {
   let activePresentation = presentation;
   let activeMapPresentation = mapPresentation;
   const state = {
@@ -49,13 +49,30 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
     registryLoading: false, loading: false,
   };
   let mapDataPromise = null;
+  let mapDataKey = null;
+  let resetVersion = 0;
+  let loadSequence = 0;
 
-  function loadMapData() {
-    if (!mapDataPromise) {
+  function sessionGeneration() {
+    return Number(session?.generation ?? session?.getState?.().generation ?? 0);
+  }
+
+  function requestKey() {
+    return `${sessionGeneration()}:${resetVersion}`;
+  }
+
+  function isCurrent(key) {
+    return key === requestKey();
+  }
+
+  function loadMapData(key = requestKey()) {
+    if (!mapDataPromise || mapDataKey !== key) {
+      mapDataKey = key;
       state.registryLoading = true;
       const loader = dataModel?.createDataLoader?.();
       mapDataPromise = (loader ? loader.load() : Promise.reject(new Error("map data model unavailable")))
         .then((result) => {
+          if (!isCurrent(key)) return result;
           state.registryUnavailable = Boolean(result.registryUnavailable);
           state.mappingUnavailable = Boolean(result.mappingUnavailable);
           state.registryError = result.registryError || null;
@@ -63,6 +80,7 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
           return result;
         })
         .catch((error) => {
+          if (!isCurrent(key)) return { registryPayload: null, mappingPayload: null, registryUnavailable: true, mappingUnavailable: true, registryError: error };
           state.registryUnavailable = true;
           state.mappingUnavailable = true;
           state.registryError = error;
@@ -73,38 +91,68 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
     return mapDataPromise;
   }
   async function loadCurrent() {
+    const key = requestKey();
+    const operation = ++loadSequence;
     state.loading = true;
     state.operationalError = null;
     try {
-      const [linesPayload, assets] = await Promise.all([api.tryRequest(apiAliases("/lines")), loadMapData()]);
+      const [linesPayload, assets] = await Promise.all([api.tryRequest(apiAliases("/lines")), loadMapData(key)]);
+      if (!isCurrent(key)) return state;
       state.lines = unwrapCollection(linesPayload).map(normalizeLine);
       state.model = dataModel.buildFrontendModel({ ...assets, lines: state.lines });
       state.lines = state.model.linkwatch.lines;
     } catch (error) {
+      if (!isCurrent(key)) return state;
       state.operationalError = error;
       state.lines = [];
-      const assets = await loadMapData();
+      const assets = await loadMapData(key);
+      if (!isCurrent(key)) return state;
       state.model = dataModel.buildFrontendModel({ ...assets, lines: [] });
     } finally {
-      state.loading = false;
+      if (operation === loadSequence) state.loading = false;
     }
+    if (!isCurrent(key)) return state;
     render();
     return state;
   }
   async function loadHistorical(query = "period=week") {
+    const key = requestKey();
+    const operation = ++loadSequence;
     state.loading = true;
     try {
       const [aggregate, analytics] = await Promise.all([
         reports.aggregate(query),
         reports.analytics(`${query}&limit=50`),
       ]);
+      if (!isCurrent(key)) return state.historicalByLine;
       state.historicalByLine = historicalByLine(aggregate, analytics);
       state.mapMode = "historical";
       render();
     } finally {
-      state.loading = false;
+      if (operation === loadSequence) state.loading = false;
     }
     return state.historicalByLine;
+  }
+  function resetSession() {
+    resetVersion += 1;
+    loadSequence += 1;
+    mapDataPromise = null;
+    mapDataKey = null;
+    state.lines = [];
+    state.model = null;
+    state.mapMode = "current";
+    state.coverage = "all";
+    state.filters = { query: "", district: "", provider: "", status: "" };
+    state.view = null;
+    state.historicalByLine = {};
+    state.registryUnavailable = true;
+    state.mappingUnavailable = true;
+    state.registryError = null;
+    state.operationalError = null;
+    state.registryLoading = false;
+    state.loading = false;
+    if (mapApi?.getMap?.()) mapApi.render?.({ mode: "current", registry: { schools: [] }, lines: [], historicalByLine: {} });
+    return state;
   }
   function render() {
     if (!state.model || !mapApi) return false;
@@ -124,6 +172,7 @@ export function createMapIntegration({ api, reports, mapApi = globalThis.Linkwat
     },
     loadCurrent,
     loadHistorical,
+    resetSession,
     render,
     setMode(mode) { state.mapMode = mode === "historical" ? "historical" : "current"; if (state.mapMode === "current") state.historicalByLine = {}; return render(); },
     setCoverage(coverage) { state.coverage = coverage === "monitored" ? "monitored" : "all"; return render(); },

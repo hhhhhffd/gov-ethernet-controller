@@ -19,7 +19,7 @@
           <div id="leafletMap" class="leaflet-map" role="application" data-i18n-aria-label="app.regionMap"></div>
           <form id="mapFilter" class="map-filter-island" data-i18n-aria-label="map.filter">
             <label class="visually-hidden" for="schoolSearch" data-i18n="map.searchLabel"></label>
-            <input id="schoolSearch" type="search" autocomplete="off" data-i18n-placeholder="map.searchPlaceholder" />
+            <input id="schoolSearch" type="search" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="schoolSearchResults" aria-expanded="false" data-i18n-placeholder="map.searchPlaceholder" />
             <div id="schoolSearchResults" class="school-search-results" role="listbox" data-i18n-aria-label="map.searchResults" hidden></div>
             <p id="mapFilterStatus" class="map-filter-status" role="status" hidden></p>
             <details class="map-filter-details">
@@ -49,12 +49,19 @@
             <button class="reference-nav-item" data-route="map" type="button" aria-current="page" data-i18n="nav.map"></button>
             <button class="reference-nav-item" data-route="incidents" type="button" hidden data-i18n="nav.incidents"></button>
             <button class="reference-nav-item" data-route="reports" type="button" hidden data-i18n="nav.reports"></button>
+            <details id="navOverflow" class="nav-overflow">
+              <summary data-i18n-aria-label="app.sections">⋯</summary>
+              <div class="nav-overflow-menu">
+                <button class="reference-nav-item" data-route="incidents" type="button" hidden data-i18n="nav.incidents"></button>
+                <button class="reference-nav-item" data-route="reports" type="button" hidden data-i18n="nav.reports"></button>
+              </div>
+            </details>
           </nav>
         </div>
         <div class="shell-top-right" data-i18n-aria-label="app.tools">
           <button id="themeToggle" class="reference-icon-button" type="button" data-i18n-aria-label="theme.switchToLight" data-i18n-title="theme.switchToLight">☼</button>
           <button id="refreshButton" class="reference-icon-button" type="button" data-i18n-aria-label="action.refreshMap" data-i18n-title="action.refreshMap">↻</button>
-          <button id="notificationsButton" class="reference-icon-button" type="button" data-capability="notification.read" data-i18n-aria-label="notification.open" data-i18n-title="notification.open" aria-expanded="false">♢</button>
+          <button id="notificationsButton" class="reference-icon-button" type="button" data-capability="notification.read" data-i18n-aria-label="notification.open" data-i18n-title="notification.open" aria-controls="notificationsSurface" aria-expanded="false">♢</button>
           <details id="accountControl" class="account-control">
             <summary id="accountButton" class="account-button" data-i18n-aria-label="app.account"><span id="sessionUser">—</span></summary>
             <div class="account-menu">
