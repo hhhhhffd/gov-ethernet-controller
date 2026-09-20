@@ -9,7 +9,7 @@ node --check web/app.js
 for file in web/core/*.mjs web/features/*.mjs web/integration/*.mjs; do node --check "$file"; done
 node --check web/vendor/leaflet/leaflet.js
 node scripts/web-map.test.cjs
-node --test web/boundaries.test.cjs web/data-model.test.cjs web/map-popup.test.cjs web/session.test.cjs web/i18n.test.cjs web/theme.test.cjs web/school-search.test.cjs web/school-detail.test.cjs web/incidents-situations.test.cjs web/provider-case-context.test.cjs web/reports.test.cjs web/secondary-presentation.test.cjs web/content-acceptance.test.cjs web/accessibility-responsive.test.cjs
+node --test web/boundaries.test.cjs web/data-model.test.cjs web/map-popup.test.cjs web/session.test.cjs web/i18n.test.cjs web/theme.test.cjs web/school-search.test.cjs web/school-detail.test.cjs web/incidents-situations.test.cjs web/provider-case-context.test.cjs web/reports.test.cjs web/secondary-presentation.test.cjs web/content-acceptance.test.cjs web/accessibility-responsive.test.cjs web/control-audit.test.cjs
 
 node - <<'NODE'
 const assert = require("node:assert/strict");
