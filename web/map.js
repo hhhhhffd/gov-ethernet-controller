@@ -330,7 +330,7 @@
     state.mapPresentation = {
       theme: nextPresentation.theme === "light" ? "light" : "dark",
       locale: nextPresentation.locale === "kk" ? "kk" : "ru",
-      style: "alidade-smooth-dark",
+      style: requestedStyle,
       fallback: nextPresentation.fallback || null,
       labels: nextPresentation.labels || "application-presentation",
     };

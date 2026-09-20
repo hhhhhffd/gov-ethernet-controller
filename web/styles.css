@@ -451,8 +451,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .admin-editor, .report-export { width: 100%; }
 .report-export .primary-action { margin-top: 0; }
 
-/* Light shell keeps the canonical raster basemap until a verified light URL is configured. */
-.leaflet-map[data-map-theme="light"][data-map-style="alidade-smooth-dark"] .leaflet-control-attribution {
+/* Keep attribution readable on the light basemap. */
+.leaflet-map[data-map-theme="light"][data-map-style="alidade-smooth"] .leaflet-control-attribution {
   border-color: var(--ref-border-medium);
   background: color-mix(in srgb, var(--ref-surface-main) 88%, transparent);
   color: var(--ref-text-secondary);

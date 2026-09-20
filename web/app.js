@@ -714,6 +714,7 @@ function renderPopup(context) {
   let title = context.label || popupSchoolName(school, context.lines?.[0]);
   let summary = "";
   openLineButton.hidden = true;
+  openLineButton.textContent = "";
   if (stateElement) { stateElement.textContent = ""; stateElement.className = "selection-state"; }
   if (context.kind === "registry-cluster") {
     title = i18n.t("map.clusterTitle", { count: context.count });
@@ -724,6 +725,7 @@ function renderPopup(context) {
     summary = i18n.t("map.registrySummary");
     fields.innerHTML = mapFields([[i18n.t("field.registryNumber"), school?.registryId], [i18n.t("field.address"), school?.address], [i18n.t("field.monitoringStatus"), presentation.status("NOT_MONITORED").label]]);
     if (stateElement) stateElement.textContent = presentation.statusDescription("NOT_MONITORED");
+    openLineButton.textContent = i18n.t("action.openSchoolDetail");
     openLineButton.hidden = false;
   } else {
     const linesAtSchool = selection?.lines || context.lines || [];
@@ -737,6 +739,7 @@ function renderPopup(context) {
         ? presentation.statusDescription(selected.linkwatchStatus || selected.status)
         : i18n.t("school.chooseLine");
     }
+    openLineButton.textContent = i18n.t("action.openLine");
     openLineButton.hidden = false;
     openLineButton.dataset.lineId = selected?.id || "";
   }

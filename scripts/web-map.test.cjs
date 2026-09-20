@@ -147,8 +147,8 @@ function setPopupOpen(open) {
   else popup.classList.add("hidden");
   popupObserverCallback?.();
 }
-assert.equal(mapApi.setMapPresentation({ theme: "light", locale: "kk", style: "alidade-smooth-dark", fallback: "preserve-canonical-dark-basemap", labels: "application-presentation" }), true);
-assert.equal(JSON.stringify(mapApi.getMapPresentation()), JSON.stringify({ theme: "light", locale: "kk", style: "alidade-smooth-dark", fallback: "preserve-canonical-dark-basemap", labels: "application-presentation" }));
+assert.equal(mapApi.setMapPresentation({ theme: "light", locale: "kk", style: "alidade-smooth", fallback: null, labels: "application-presentation" }), true);
+assert.equal(JSON.stringify(mapApi.getMapPresentation()), JSON.stringify({ theme: "light", locale: "kk", style: "alidade-smooth", fallback: null, labels: "application-presentation" }));
 assert.equal(mapApi.getConfig().tileUrl, mapApi.DEFAULT_CONFIG.tileUrl, "light presentation must retain the canonical map URL");
 assert.equal(tileLayers.length, 2, "switching to light presentation must replace the tile layer once");
 assert.equal(tileLayers[0].url, mapApi.DEFAULT_CONFIG.tileUrl, "dark theme must use the dark Alidade Smooth tiles");
