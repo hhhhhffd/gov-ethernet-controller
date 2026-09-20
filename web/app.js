@@ -382,6 +382,7 @@ function handleSessionChange(snapshot) {
   if (snapshot.authenticated) {
     initializeAuthenticatedWorkspace();
     startNotificationPolling();
+    void loadNotifications();
   }
 }
 
