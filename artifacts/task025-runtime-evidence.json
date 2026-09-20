@@ -1,0 +1,1117 @@
+{
+  "baseURL": "http://127.0.0.1:18080",
+  "viewport": {
+    "width": 1355,
+    "height": 880
+  },
+  "fixtureBoundary": {
+    "apiInterception": false,
+    "registryInterception": false,
+    "tileInterception": false,
+    "note": "The browser used the running server, its static registry/mapping assets, and direct Stadia tile responses."
+  },
+  "runtime": {
+    "authenticated": true,
+    "initialMap": {
+      "theme": "dark",
+      "mapTheme": "dark",
+      "mapStyle": "alidade-smooth-dark",
+      "mapLocale": "ru",
+      "zoom": 7,
+      "center": {
+        "latitude": 48.929717630629554,
+        "longitude": 84.05090332031251
+      },
+      "registryMarkers": 370,
+      "renderedClusters": 47,
+      "renderedRegistryMarkers": 3,
+      "monitoringMarkers": 0,
+      "visibleSchools": "370",
+      "lineCount": "4",
+      "registryState": "mapping-incomplete",
+      "registryStatus": "Реестр: 370 школ; связь с организациями недоступна",
+      "tileUrl": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
+      "lastRender": {
+        "mode": "current",
+        "registryMarkerCount": 370,
+        "monitoringMarkerCount": 0,
+        "monitoringLineCount": 0,
+        "fitCoordinateCount": 370,
+        "registryClusterCount": 50,
+        "registryVisibleMarkerCount": 50
+      }
+    },
+    "assets": {
+      "registryStatus": 200,
+      "registrySchools": 370,
+      "school32": {
+        "registry_id": "18383",
+        "official_name": "Коммунальное государственное учреждение «Средняя школа №32» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области",
+        "name": "Коммунальное государственное учреждение «Средняя школа №32» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области",
+        "district": "Усть-Каменогорск Г.А.",
+        "locality": null,
+        "address": "Восточно-Казахстанская область,город Усть-Каменогорск,Переулок Западный,14",
+        "latitude": 49.988825,
+        "longitude": 82.575407,
+        "identity_source": "egov-current-registry",
+        "coordinate_source": "official",
+        "match_method": "none",
+        "confidence": 0
+      },
+      "mappingStatus": 200,
+      "mappingEntries": 0,
+      "mappingRegistryOnly": 370,
+      "mappingStatusLabel": "NOT_PROVIDED"
+    },
+    "initialBoxes": {
+      "#mapWrap": {
+        "x": 0,
+        "y": 0,
+        "width": 1355,
+        "height": 880
+      },
+      ".shell-top-left": {
+        "x": 27,
+        "y": 20,
+        "width": 317,
+        "height": 37
+      },
+      ".shell-top-right": {
+        "x": 1148.03125,
+        "y": 20,
+        "width": 181.96875,
+        "height": 37
+      },
+      "#mapFilter": {
+        "x": 20,
+        "y": 82,
+        "width": 248,
+        "height": 80.5
+      },
+      ".map-tools": {
+        "x": 1293,
+        "y": 377.5,
+        "width": 37,
+        "height": 125
+      }
+    },
+    "pageErrorsAfterBootstrap": [],
+    "lightMap": {
+      "theme": "light",
+      "mapTheme": "light",
+      "mapStyle": "alidade-smooth-dark",
+      "mapLocale": "ru",
+      "zoom": 7,
+      "center": {
+        "latitude": 48.929717630629554,
+        "longitude": 84.05090332031251
+      },
+      "registryMarkers": 370,
+      "renderedClusters": 47,
+      "renderedRegistryMarkers": 3,
+      "monitoringMarkers": 0,
+      "visibleSchools": "370",
+      "lineCount": "4",
+      "registryState": "mapping-incomplete",
+      "registryStatus": "Реестр: 370 школ; связь с организациями недоступна",
+      "tileUrl": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
+      "lastRender": {
+        "mode": "current",
+        "registryMarkerCount": 370,
+        "monitoringMarkerCount": 0,
+        "monitoringLineCount": 0,
+        "fitCoordinateCount": 370,
+        "registryClusterCount": 50,
+        "registryVisibleMarkerCount": 50
+      }
+    },
+    "lightBoxes": {
+      "#mapWrap": {
+        "x": 0,
+        "y": 0,
+        "width": 1355,
+        "height": 880
+      },
+      ".shell-top-left": {
+        "x": 27,
+        "y": 20,
+        "width": 317,
+        "height": 37
+      },
+      ".shell-top-right": {
+        "x": 1148.03125,
+        "y": 20,
+        "width": 181.96875,
+        "height": 37
+      },
+      "#mapFilter": {
+        "x": 20,
+        "y": 82,
+        "width": 248,
+        "height": 80.5
+      },
+      ".map-tools": {
+        "x": 1293,
+        "y": 377.5,
+        "width": 37,
+        "height": 125
+      }
+    },
+    "themeGeometryEqual": true,
+    "pageErrorsFinal": [],
+    "runtimeAssertions": {
+      "actualAPI": true,
+      "actualRegistry": true,
+      "actualMappingAsset": true,
+      "actualAlidadeTiles": true,
+      "noPageErrors": true,
+      "mappingIsNotPopulated": true
+    }
+  },
+  "network": {
+    "api": [
+      {
+        "path": "/api/login",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      {
+        "path": "/api/auth/me",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      {
+        "path": "/api/lines",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      {
+        "path": "/api/situations",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      {
+        "path": "/api/incidents",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      {
+        "path": "/api/incidents/168",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      {
+        "path": "/api/lines/line-99-primary",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      {
+        "path": "/api/reports/aggregate?from=2026-09-14T00%3A00%3A00.000Z&to=2026-09-21T00%3A00%3A00.000Z&line_id=line-99-primary&school_id=school-99",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      {
+        "path": "/api/reports/analytics?from=2026-09-14T00%3A00%3A00.000Z&to=2026-09-21T00%3A00%3A00.000Z&line_id=line-99-primary&school_id=school-99",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      },
+      {
+        "path": "/api/reports/quality-passport?from=2026-09-14T00%3A00%3A00.000Z&to=2026-09-21T00%3A00%3A00.000Z&line_id=line-99-primary&school_id=school-99",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      }
+    ],
+    "registry": [
+      {
+        "path": "/static/data/vko-schools.json",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      }
+    ],
+    "mapping": [
+      {
+        "path": "/static/data/organization-school-map.json",
+        "status": 200,
+        "contentType": "application/json; charset=utf-8"
+      }
+    ],
+    "tiles": [
+      {
+        "path": "/tiles/alidade_smooth_dark/7/94/45.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/96/41.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/90/41.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/95/45.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/92/45.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/90/44.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/91/44.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/95/42.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/91/45.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/96/45.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/92/41.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/90/45.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/93/45.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/94/44.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/96/43.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/96/42.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/93/43.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/93/42.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/94/43.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/91/42.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/94/41.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/95/43.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/92/43.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/96/44.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/95/41.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/94/42.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/91/41.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/93/44.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/90/43.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/92/44.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/93/41.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/92/42.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/91/43.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/90/42.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/7/95/44.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2979/1377.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2979/1376.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2980/1377.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2980/1376.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2979/1378.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2980/1378.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2979/1379.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2977/1375.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2978/1377.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2981/1377.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2981/1375.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2981/1379.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2982/1379.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2977/1378.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2980/1375.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2977/1379.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2978/1375.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2982/1376.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2982/1377.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2978/1379.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2981/1376.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2979/1375.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2977/1376.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2980/1379.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2982/1378.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2978/1378.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2977/1377.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2982/1375.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2981/1378.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/12/2978/1376.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11949/5557.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11950/5557.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11949/5556.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11950/5556.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11950/5558.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11949/5558.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11948/5557.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11951/5557.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11948/5556.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11951/5556.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11948/5558.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11951/5558.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11949/5555.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11950/5555.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11949/5559.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11950/5559.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11951/5555.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11948/5555.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11947/5557.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11952/5557.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11948/5559.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11947/5556.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11951/5559.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11952/5556.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11947/5558.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11952/5558.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11947/5555.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11952/5555.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11947/5559.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      },
+      {
+        "path": "/tiles/alidade_smooth_dark/14/11952/5559.png",
+        "status": 200,
+        "contentType": "image/png",
+        "host": "tiles.stadiamaps.com"
+      }
+    ],
+    "failures": [
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2987/1389.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2987/1388.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2986/1389.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2988/1389.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2987/1390.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2986/1388.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2988/1388.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2986/1390.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2988/1390.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2987/1387.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2985/1389.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2989/1389.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2987/1391.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2986/1387.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2988/1387.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2985/1388.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2989/1388.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2985/1390.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2989/1390.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2986/1391.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2988/1391.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2985/1387.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2989/1387.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2985/1391.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2989/1391.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2984/1389.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2990/1389.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2984/1388.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2990/1388.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2984/1390.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2990/1390.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2984/1387.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2990/1387.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2984/1391.png",
+        "error": "net::ERR_ABORTED"
+      },
+      {
+        "url": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/12/2990/1391.png",
+        "error": "net::ERR_ABORTED"
+      }
+    ]
+  },
+  "screenshots": [
+    {
+      "file": "artifacts/task025-runtime-login-1355x880.png",
+      "width": 1355,
+      "height": 880
+    },
+    {
+      "file": "artifacts/task025-runtime-map-dark-1355x880.png",
+      "width": 1355,
+      "height": 880
+    },
+    {
+      "file": "artifacts/task025-runtime-map-light-1355x880.png",
+      "width": 1355,
+      "height": 880
+    },
+    {
+      "file": "artifacts/task025-runtime-cluster-expanded-1355x880.png",
+      "width": 1355,
+      "height": 880
+    },
+    {
+      "file": "artifacts/task025-runtime-school32-1355x880.png",
+      "width": 1355,
+      "height": 880
+    },
+    {
+      "file": "artifacts/task025-runtime-incidents-list-1355x880.png",
+      "width": 1355,
+      "height": 880
+    },
+    {
+      "file": "artifacts/task025-runtime-incident-detail-1355x880.png",
+      "width": 1355,
+      "height": 880
+    },
+    {
+      "file": "artifacts/task025-runtime-line-detail-1355x880.png",
+      "width": 1355,
+      "height": 880
+    },
+    {
+      "file": "artifacts/task025-runtime-reports-1355x880.png",
+      "width": 1355,
+      "height": 880
+    }
+  ],
+  "states": {
+    "login": {
+      "visible": true,
+      "title": "LINKWATCH"
+    },
+    "clusterExpanded": {
+      "before": {
+        "theme": "dark",
+        "mapTheme": "dark",
+        "mapStyle": "alidade-smooth-dark",
+        "mapLocale": "ru",
+        "zoom": 7,
+        "center": {
+          "latitude": 49.95121990866204,
+          "longitude": 82.6226806640625
+        },
+        "registryMarkers": 370,
+        "renderedClusters": 47,
+        "renderedRegistryMarkers": 3,
+        "monitoringMarkers": 0,
+        "visibleSchools": "370",
+        "lineCount": "4",
+        "registryState": "mapping-incomplete",
+        "registryStatus": "Реестр: 370 школ; связь с организациями недоступна",
+        "tileUrl": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
+        "lastRender": {
+          "mode": "current",
+          "registryMarkerCount": 370,
+          "monitoringMarkerCount": 0,
+          "monitoringLineCount": 0,
+          "fitCoordinateCount": 370,
+          "registryClusterCount": 50,
+          "registryVisibleMarkerCount": 50
+        }
+      },
+      "after": {
+        "theme": "dark",
+        "mapTheme": "dark",
+        "mapStyle": "alidade-smooth-dark",
+        "mapLocale": "ru",
+        "zoom": 12,
+        "center": {
+          "latitude": 50.663231251739894,
+          "longitude": 81.889035
+        },
+        "registryMarkers": 370,
+        "renderedClusters": 40,
+        "renderedRegistryMarkers": 243,
+        "monitoringMarkers": 0,
+        "visibleSchools": "370",
+        "lineCount": "4",
+        "registryState": "mapping-incomplete",
+        "registryStatus": "Реестр: 370 школ; связь с организациями недоступна",
+        "tileUrl": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
+        "lastRender": {
+          "mode": "current",
+          "registryMarkerCount": 370,
+          "monitoringMarkerCount": 0,
+          "monitoringLineCount": 0,
+          "fitCoordinateCount": 370,
+          "registryClusterCount": 283,
+          "registryVisibleMarkerCount": 283
+        }
+      },
+      "popupTitle": "Школ в группе: 12",
+      "memberCount": 12
+    },
+    "school32": {
+      "popupTitle": "Коммунальное государственное учреждение «Средняя школа №32» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области",
+      "popupSummary": "Официальная запись реестра",
+      "popupFields": "Номер в реестре\n18383\nАдрес\nВосточно-Казахстанская область,город Усть-Каменогорск,Переулок Западный,14\nСтатус мониторинга\nНе подключена к мониторингу",
+      "map": {
+        "theme": "dark",
+        "mapTheme": "dark",
+        "mapStyle": "alidade-smooth-dark",
+        "mapLocale": "ru",
+        "zoom": 14,
+        "center": {
+          "latitude": 49.988825,
+          "longitude": 82.575407
+        },
+        "registryMarkers": 1,
+        "renderedClusters": 0,
+        "renderedRegistryMarkers": 1,
+        "monitoringMarkers": 0,
+        "visibleSchools": "1",
+        "lineCount": "4",
+        "registryState": "mapping-incomplete",
+        "registryStatus": "Реестр: 370 школ; связь с организациями недоступна",
+        "tileUrl": "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
+        "lastRender": {
+          "mode": "current",
+          "registryMarkerCount": 1,
+          "monitoringMarkerCount": 0,
+          "monitoringLineCount": 0,
+          "fitCoordinateCount": 1,
+          "registryClusterCount": 1,
+          "registryVisibleMarkerCount": 1
+        }
+      },
+      "searchResultRegistryId": "18383"
+    },
+    "incidentsList": {
+      "count": 2,
+      "text": "Инциденты\n\nПодтверждённые нарушения в доступном вам охвате\n\nОбновить список\nСтатус\nВсе статусы\nЗакрыт\nНовый\nСерьёзность\nВсе уровни\nТребует внимания\nИнцидентов: 2\nСтатус\nШкола\nЛиния\nНачало\nДлительность\nПоследнее значимое обновление\nЗакрыт\nШкола №99\nПодтверждённое нарушение линии\nЛиния\n20 сент., 12:14\n3 мин\n6 ч назад\nНовый\nШкола №42\nПодтверждённое нарушение линии\nЛиния\n20 сент., 12:17\n6 ч 7 мин\n5 мин назад\n\nВыберите инцидент из списка, чтобы увидеть подтверждения и ход работы."
+    },
+    "incidentDetail": {
+      "text": "Инциденты\n\nПодтверждённые нарушения в доступном вам охвате\n\nОбновить список\nСтатус\nВсе статусы\nЗакрыт\nНовый\nСерьёзность\nВсе уровни\nТребует внимания\nИнцидентов: 2\nСтатус\nШкола\nЛиния\nНачало\nДлительность\nПоследнее значимое обновление\nЗакрыт\nШкола №99\nПодтверждённое нарушение линии\nЛиния\n20 сент., 12:14\n3 мин\n6 ч назад\nНовый\nШкола №42\nПодтверждённое нарушение линии\nЛиния\n20 сент., 12:17\n6 ч 7 мин\n5 мин назад\nТребует внимания\nINC-000168\n\nЗакрыт\n\nЧто произошло\n\nПодтверждённое нарушение линии\n\nГде\nШкола №99 · Линия\nКогда\n20 сент., 12:14 · 3 мин\nПочему подтверждено\nСистема опирается на 3 подтверждённых наблюдений.\nВосстановление\nВосстановление подтверждено\nОткрыть линию на карте\nХод работы\n20 сент., 12:16\nСистемное событие\n20 сент., 12:17\nУведомление поставлено в очередь\n20 сент., 12:16\nВосстановление наблюдается\n20 сент., 12:17\nВосстановление подтверждено\nКомментарий\nДобавить\nХод работы\nПередать провайдеру\nОтветственныйНазначить ответственного\nСтатус\nНовый\nПередан провайдеру\nВ работе\nОжидает информации\nУстранён; ожидает проверки\nИзменить статус\nСвязанные обращения провайдеру\n\nСвязанных обращений провайдеру нет.\n\nПодготовить обращение провайдеру\nСвязанные ситуации\n\nСитуация объединяет несколько связанных проблем и не доказывает общую причину.\n\nДля этого инцидента связанных ситуаций нет."
+    },
+    "lineDetail": {
+      "title": "Школа №99",
+      "text": "Школа №99\n\n—\n\n×\nЗагружаем подтверждённые сведения по линии…\nНорма\n\nПодключение работает штатно.\n\nОфициальное наименование\nШкола №99\nНомер в реестре\n—\nАдрес\nНе указано в доступных данных\nКоординаты\nКоординаты не указаны в реестре\nИсточник координат\nИсточник не указан\nИсточник записи\nИсточник записи не указан\nЛиния\nline-99-primary\nПровайдер\nProvider A\nТип подключения\nСотовая связь LTE\nРоль линии\nОсновная\nПоследнее наблюдение\n20 сент., 12:17\nСкорость загрузки\n100 Мбит/с\nСкорость отправки\n100 Мбит/с\nЗадержка\n20 мс\nДжиттер\n1 мс\nПотеря пакетов\n0 %"
+    },
+    "reports": {
+      "text": "Отчёты\n\nИсторические наблюдения в доступном вам охвате\n\nС\nПо\nРайон\nВсе районы\nАлтай\nУсть-Каменогорск Г.А.\nПровайдер\nВсе провайдеры\nProvider A\nProvider B\nЛиния\nВсе линии\nline-07-primary\nline-42-primary\nline-42-reserve\nline-99-primary\nШкола\nВсе школы\nКоммунальное государственное учреждение «Средняя школа №7» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области\nШкола №42\nШкола №99\nПоказать\nОбновить\nНаблюдения\nНаблюдения\n6\nДоступность\n100 %\nПолнота данных\n9,97 %\n\nВсе показатели основаны на сохранённых наблюдениях; текущее состояние не используется\n\nПаспорт качества\nСоответствие базовой политике\n50 %\nСоответствие договору\n50 %\nИнциденты\n2\nЦепочек наблюдений\n6\nПроисхождение\nСохранённые исторические снимки политики, договора и контекста линии\nПоследняя верификация\nНет подтверждённых данных\n\nНедостаточно данных для сопоставления периодов.\n\nОткрыть HTML-отчёт с доказательствами\n\nСервер предоставляет этот отчёт только в HTML; PDF недоступен.\n\nДинамика по дням\nПо\tНаблюдения\tДоказательная база\tДоступность\n2026-09-20\t6\t6\t50 %\nЛинии\nЛиния\tНаблюдения\tДоказательная база\tСоответствие договору\nline-99-primary\t6\t6\t50 %\nВыгрузка\nСостав\nНаблюдения\nПо линиям\nФормат\nCSV\nXLSX\nJSON\nПроверить состав\nСкачать"
+    }
+  }
+}
