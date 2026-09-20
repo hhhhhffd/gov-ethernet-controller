@@ -191,6 +191,10 @@ func createVerificationAPIIntegrationFixture(t *testing.T, db *database.DB) veri
 		},
 	}
 	now := time.Now().UTC().Truncate(time.Second)
+	// The observations below use a fixed historical window. Keep fixture
+	// configuration effective before that window so the test does not depend on
+	// the wall clock being earlier than the hard-coded observation timestamp.
+	validFrom := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
 	exec := func(query string, args ...interface{}) {
 		t.Helper()
 		if _, err := db.Pool.Exec(context.Background(), query, args...); err != nil {
@@ -211,8 +215,8 @@ func createVerificationAPIIntegrationFixture(t *testing.T, db *database.DB) veri
 		exec(`INSERT INTO lines(id,organization_id,provider_id,role,technology,status,created_at) VALUES ($1,$2,$3,'PRIMARY','FIBER','ACTIVE',$4)`, line.lineID, fixture.organizationID, fixture.providerID, now)
 		exec(`INSERT INTO monitoring_points(id,line_id,location,is_primary,created_at) VALUES ($1,$2,'integration',TRUE,$3)`, line.pointID, line.lineID, now)
 		exec(`INSERT INTO devices(id,monitoring_point_id,auth_token_hash,created_at) VALUES ($1,$2,'integration-test',$3)`, line.deviceID, line.pointID, now)
-		exec(`INSERT INTO line_context_versions(line_id,provider_id,technology,role,valid_from,version,reason,changed_by,created_at) VALUES ($1,$2,'FIBER','PRIMARY',$3,1,'verification API fixture','integration-test',$3)`, line.lineID, fixture.providerID, now)
-		exec(`INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,confirm_duration_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ('LINE',$1,$2,1,20,20,100,30,2,99,3,0,NULL,3,0,$3,'integration-test',$2)`, line.lineID, now, expires)
+		exec(`INSERT INTO line_context_versions(line_id,provider_id,technology,role,valid_from,version,reason,changed_by,created_at) VALUES ($1,$2,'FIBER','PRIMARY',$3,1,'verification API fixture','integration-test',$4)`, line.lineID, fixture.providerID, validFrom, now)
+		exec(`INSERT INTO threshold_policy_versions(scope_type,scope_id,valid_from,version,download_min,upload_min,ping_max,jitter_max,packet_loss_max,availability_min,confirm_count,confirm_minutes,confirm_duration_minutes,recovery_count,recovery_minutes,freshness_seconds,created_by,created_at) VALUES ('LINE',$1,$2,1,20,20,100,30,2,99,3,0,NULL,3,0,$3,'integration-test',$4)`, line.lineID, validFrom, expires, now)
 	}
 	return fixture
 }

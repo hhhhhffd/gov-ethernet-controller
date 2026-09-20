@@ -7,13 +7,21 @@ set -euo pipefail
 # or queue an update in the operator's database.
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 base_url="${P2_ACCEPTANCE_BASE_URL:-http://127.0.0.1:8080}"
-test_database_url="${LINKWATCH_TEST_DATABASE_URL:-postgres://linkwatch:linkwatch-dev-password@127.0.0.1:5432/linkwatch?sslmode=disable}"
+database_source_url="${P2_DATABASE_SOURCE_URL:-${LINKWATCH_TEST_DATABASE_URL:-postgres://${LINKWATCH_POSTGRES_USER:-linkwatch}:${LINKWATCH_POSTGRES_PASSWORD:-linkwatch-dev-password}@127.0.0.1:${LINKWATCH_POSTGRES_PORT:-5432}/${LINKWATCH_POSTGRES_DB:-linkwatch}?sslmode=disable}}"
+test_database_url=""
 acceptance_env="${LINKWATCH_ACCEPTANCE_ENV:-test}"
 go_path="${GOPATH:-/tmp/linkwatch-gopath}"
 go_cache="${GOCACHE:-/tmp/linkwatch-go-cache}"
 go_mod_cache="${GOMODCACHE:-$go_path/pkg/mod}"
 tmp_dir="$(mktemp -d)"
-trap 'rm -rf "$tmp_dir"' EXIT
+isolated_database_name=""
+isolated_database_created=0
+admin_database_url=""
+postgres_user=""
+postgres_password=""
+postgres_host=""
+postgres_port=""
+maintenance_database=""
 
 pass=0
 fail=0
@@ -26,6 +34,109 @@ blocked_check() {
   echo "BLOCKED_EXTERNAL $1${2:+: $2}"
 }
 
+# P2 integration tests are allowed to mutate their database: several of them
+# intentionally reset demo rows or create whole fixture graphs. Never point
+# those tests at the runtime database, even when LINKWATCH_TEST_DATABASE_URL
+# was supplied by a caller as the runtime DSN.
+parse_database_source() {
+  local target_database="$1"
+  node - "$database_source_url" "$target_database" <<'NODE'
+const source = process.argv[2];
+const targetDatabase = process.argv[3];
+const parsed = new URL(source);
+if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
+  throw new Error('P2 database source must be a PostgreSQL URL');
+}
+if (!/^[a-z][a-z0-9_]{0,62}$/.test(targetDatabase)) {
+  throw new Error('invalid generated P2 database name');
+}
+const sourceDatabase = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+if (!sourceDatabase) {
+  throw new Error('P2 database source has no database name');
+}
+const maintenanceDatabase = sourceDatabase === 'postgres' ? 'template1' : 'postgres';
+const admin = new URL(parsed.href);
+admin.pathname = `/${maintenanceDatabase}`;
+admin.password = '';
+const test = new URL(parsed.href);
+test.pathname = `/${targetDatabase}`;
+const values = [
+  admin.href,
+  test.href,
+  decodeURIComponent(parsed.username),
+  decodeURIComponent(parsed.password),
+  parsed.hostname,
+  parsed.port || '5432',
+  maintenanceDatabase,
+  sourceDatabase,
+];
+process.stdout.write(values.join('\t'));
+NODE
+}
+
+psql_exec() {
+  local database_name="$1"
+  shift
+  if command -v psql >/dev/null 2>&1; then
+    PGPASSWORD="$postgres_password" psql "$admin_database_url" -d "$database_name" "$@"
+    return
+  fi
+
+  # The repository's supported local runtime provides PostgreSQL through the
+  # Compose service. Do not silently use that path for a non-local source URL.
+  if ! command -v docker >/dev/null 2>&1 || [[ "$postgres_host" != "127.0.0.1" && "$postgres_host" != "localhost" ]]; then
+    return 127
+  fi
+  docker compose exec -T \
+    -e "PGPASSWORD=$postgres_password" \
+    -e "PGUSER=$postgres_user" \
+    postgres psql -h 127.0.0.1 -p 5432 -d "$database_name" "$@"
+}
+
+create_isolated_test_database() {
+  isolated_database_name="linkwatch_p2_$(date +%s)_${BASHPID}"
+  local source_parts
+  if ! source_parts="$(parse_database_source "$isolated_database_name")"; then
+    return 1
+  fi
+  IFS=$'\t' read -r admin_database_url test_database_url postgres_user postgres_password postgres_host postgres_port maintenance_database source_database <<< "$source_parts"
+
+  if ! psql_exec "$maintenance_database" -v ON_ERROR_STOP=1 -Atqc 'SELECT 1' >/dev/null; then
+    return 1
+  fi
+  if ! psql_exec "$maintenance_database" -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$isolated_database_name\"" >/dev/null; then
+    return 1
+  fi
+  isolated_database_created=1
+  echo "P2 isolated test database: $isolated_database_name (source: $source_database)"
+}
+
+destroy_isolated_test_database() {
+  if (( ! isolated_database_created )); then
+    return 0
+  fi
+  if [[ "$isolated_database_name" != linkwatch_p2_* ]]; then
+    return 1
+  fi
+  if ! psql_exec "$maintenance_database" -v ON_ERROR_STOP=1 -c "DROP DATABASE \"$isolated_database_name\" WITH (FORCE)" >/dev/null; then
+    return 1
+  fi
+  isolated_database_created=0
+}
+
+cleanup_on_exit() {
+  local exit_status="$?"
+  if (( isolated_database_created )); then
+    if ! destroy_isolated_test_database; then
+      echo "FAIL isolated PostgreSQL cleanup: could not drop $isolated_database_name" >&2
+      exit_status=1
+    fi
+  fi
+  rm -rf "$tmp_dir"
+  exit "$exit_status"
+}
+trap cleanup_on_exit EXIT
+
 run_go_test() {
   local label="$1"
   local package="$2"
@@ -36,6 +147,8 @@ run_go_test() {
     GOCACHE="$go_cache" \
     GOMODCACHE="$go_mod_cache" \
     LINKWATCH_TEST_DATABASE_URL="$test_database_url" \
+    LINKWATCH_DATABASE_URL="$test_database_url" \
+    DATABASE_URL="$test_database_url" \
     LINKWATCH_ENV="$acceptance_env" \
     go test -race -count=1 -run "$pattern" "$package"
   ); then
@@ -65,8 +178,10 @@ run_go_suite() {
       GOCACHE="$go_cache" \
       GOMODCACHE="$go_mod_cache" \
       LINKWATCH_TEST_DATABASE_URL="$test_database_url" \
+      LINKWATCH_DATABASE_URL="$test_database_url" \
+      DATABASE_URL="$test_database_url" \
       LINKWATCH_ENV="$acceptance_env" \
-      go test "$package"
+      go test -count=1 "$package"
     ); then
       suite_ok=0
     fi
@@ -91,9 +206,20 @@ run_cargo_test() {
 cd "$repo_dir"
 mkdir -p "$go_path" "$go_cache" "$go_mod_cache"
 
+database_ready=0
+if create_isolated_test_database; then
+  database_ready=1
+else
+  blocked_check "isolated PostgreSQL test database" "could not create a unique database without touching the runtime database"
+fi
+
 # Keep the repository-wide regression gate in this task, then give every P2
 # row its own executable evidence label below.
-run_go_suite "Go server regression suites"
+if (( database_ready )); then
+  run_go_suite "Go server regression suites"
+else
+  blocked_check "Go server regression suites" "isolated PostgreSQL database is unavailable; mutation-capable tests were not run"
+fi
 if cargo test --manifest-path agent/Cargo.toml; then
   pass_check "Rust command/config/update regression suites"
 else
@@ -105,19 +231,23 @@ else
   fail_check "frontend syntax (read-only check)"
 fi
 
-run_go_test "LIVE_VERIFY bounded command regression" ./internal/api '^TestLiveVerifySampleIsBounded$'
-run_go_test "situation comparison evidence regression" ./internal/api '^TestComparison(CompletenessPreservesNoDataAndSparseEvidence|WindowIsBoundedAndHistorical|RowsExposeEvidenceOnlyAndNoCausalClaim)$'
-run_go_test "situation merge authorization/idempotent ID regression" ./internal/api '^TestSituation(ActionIDsAreStableAndUnique|ManagementCapabilityMatchesRoleContract)$'
-run_go_test "situation split membership regression" ./internal/api '^TestSituationSplitRejectsNonMembersAndKeepsOriginalOrder$'
-run_go_test "Impact Preview immutable historical projection regression" ./internal/api '^TestImpactPreview(UsesHistoricalSnapshotsAndChangesOnlyProjection|RetainsUnknownHistoricalEvidence|RejectsEmptyOrInvalidProposal)$'
-run_go_test "configuration hierarchy regression" ./internal/api '^TestConfigurationHierarchyIsDeterministicAndPreservesUnknowns$'
-run_go_test "evidence report rendering and no-data regression" ./internal/api '^TestRenderEvidenceReport(EscapesAndUsesHistoricalSnapshots|ExplicitNoData|RejectsInvalidRenderMetadata|EscapesMetadataRole)$'
-run_go_test "JSON export allowlist/envelope regression" ./internal/api '^(TestSelectedExportFieldsRejectsUnknownAndDeduplicates|TestJSONExportEnvelopeUsesSelectedAllowlistAndPreservesNull)$'
-run_go_test "notification outbox durable delivery/retry regression" ./internal/measurements '^TestNotificationOutboxAcceptance$'
-run_go_test "provider workspace timeline/evidence/redaction regression" ./internal/api '^(TestProviderWorkspaceHTTPStateEvidenceAndRedaction|TestProviderCaseWorkspaceDetailTimeline)$'
-run_go_test "observed agent version read-only surface regression" ./internal/api '^TestAuditReadCapabilityAndObservedVersionSurfaceAreReadOnly$'
-run_go_test "remote config validation regression" ./internal/api '^TestValidateRemoteConfigRejectsUnsupportedAndUnsafeValues$'
-run_go_test "AGENT_UPDATE activation transition regression" ./internal/api '^(TestUpdateAckStatusPreservesRollback|TestUpdateHeartbeatTransitionRequiresNewBootAndExactVersion)$'
+if (( database_ready )); then
+  run_go_test "LIVE_VERIFY bounded command regression" ./internal/api '^TestLiveVerifySampleIsBounded$'
+  run_go_test "situation comparison evidence regression" ./internal/api '^TestComparison(CompletenessPreservesNoDataAndSparseEvidence|WindowIsBoundedAndHistorical|RowsExposeEvidenceOnlyAndNoCausalClaim)$'
+  run_go_test "situation merge authorization/idempotent ID regression" ./internal/api '^TestSituation(ActionIDsAreStableAndUnique|ManagementCapabilityMatchesRoleContract)$'
+  run_go_test "situation split membership regression" ./internal/api '^TestSituationSplitRejectsNonMembersAndKeepsOriginalOrder$'
+  run_go_test "Impact Preview immutable historical projection regression" ./internal/api '^TestImpactPreview(UsesHistoricalSnapshotsAndChangesOnlyProjection|RetainsUnknownHistoricalEvidence|RejectsEmptyOrInvalidProposal)$'
+  run_go_test "configuration hierarchy regression" ./internal/api '^TestConfigurationHierarchyIsDeterministicAndPreservesUnknowns$'
+  run_go_test "evidence report rendering and no-data regression" ./internal/api '^TestRenderEvidenceReport(EscapesAndUsesHistoricalSnapshots|ExplicitNoData|RejectsInvalidRenderMetadata|EscapesMetadataRole)$'
+  run_go_test "JSON export allowlist/envelope regression" ./internal/api '^(TestSelectedExportFieldsRejectsUnknownAndDeduplicates|TestJSONExportEnvelopeUsesSelectedAllowlistAndPreservesNull)$'
+  run_go_test "notification outbox durable delivery/retry regression" ./internal/measurements '^TestNotificationOutboxAcceptance$'
+  run_go_test "provider workspace timeline/evidence/redaction regression" ./internal/api '^(TestProviderWorkspaceHTTPStateEvidenceAndRedaction|TestProviderCaseWorkspaceDetailTimeline)$'
+  run_go_test "observed agent version read-only surface regression" ./internal/api '^TestAuditReadCapabilityAndObservedVersionSurfaceAreReadOnly$'
+  run_go_test "remote config validation regression" ./internal/api '^TestValidateRemoteConfigRejectsUnsupportedAndUnsafeValues$'
+  run_go_test "AGENT_UPDATE activation transition regression" ./internal/api '^(TestUpdateAckStatusPreservesRollback|TestUpdateHeartbeatTransitionRequiresNewBootAndExactVersion)$'
+else
+  blocked_check "targeted Go P2 regressions" "isolated PostgreSQL database is unavailable"
+fi
 run_cargo_test "AGENT_UPDATE native activation confirmation regression" update::tests::heartbeat_success_finalizes_only_after_matching_running_version
 run_cargo_test "AGENT_UPDATE native install/rollback regression" update::tests::install_success_stays_installing_until_activation_confirmation
 run_cargo_test "AGENT_UPDATE native rollback recovery regression" update::tests::failed_activation_restores_the_known_good_binary
@@ -232,7 +362,8 @@ try {
   const contracts = read(contractsPath);
   check('runtime line is canonical and line-scoped', lineStatus === '200' && line.line_id === 'line-42-primary' && line.latest_semantics === 'latest measurement/state; not a historical period summary');
   check('runtime configuration hierarchy has resolved historical context', contextStatus === '200' && context.line_id === 'line-42-primary' && context.resolved_context?.version !== undefined && Array.isArray(context.versions) && context.versions.length > 0);
-  check('runtime evidence report is historical and explicit', evidenceStatus === '200' && evidence.includes('evidence-report-v1') && evidence.includes('historical_only') && evidence.includes('current configuration is not used') && evidence.includes('data-state='));
+  const historicalConfiguration = /current configuration (?:is )?(?:intentionally )?not used|текущая конфигурация не используется/i.test(evidence);
+  check('runtime evidence report is historical and explicit', evidenceStatus === '200' && evidence.includes('evidence-report-v1') && evidence.includes('historical_only') && historicalConfiguration && evidence.includes('data-state='));
   check('runtime JSON preview honors requested format and allowlist', previewStatus === '200' && preview.format === 'json' && Array.isArray(preview.columns) && preview.columns.length > 0 && Array.isArray(preview.available_columns));
   check('runtime JSON export has versioned envelope and rows', exportStatus === '200' && exported.schema_version === 1 && exported.format === 'json' && Array.isArray(exported.columns) && Array.isArray(exported.rows) && exported.measurement_count >= exported.rows.length);
   check('runtime notification outbox is empty-safe and shaped', notificationsStatus === '200' && (Array.isArray(notifications) || Array.isArray(notifications.items)));
