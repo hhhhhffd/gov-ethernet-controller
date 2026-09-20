@@ -32,12 +32,13 @@ type DraftGenerationMetadata struct {
 	PromptVersion string
 }
 
-const providerDraftPromptVersion = "provider-case-v1"
+const providerDraftPromptVersion = "provider-case-v2"
 
 // ProviderDraftInput contains only the evidence already selected for the
 // incident.  Keeping this input structured makes an eventual AI adapter
 // replaceable without changing the provider-case workflow.
 type ProviderDraftInput struct {
+	Locale           string
 	LineID           string
 	SchoolID         string
 	Organization     string
@@ -53,6 +54,15 @@ type ProviderDraftInput struct {
 type deterministicDraftGenerator struct{}
 
 func (deterministicDraftGenerator) Generate(_ context.Context, input ProviderDraftInput) (string, error) {
+	if input.Locale == "kk" {
+		status := fmt.Sprintf("Мониторинг жүйесі %s ауытқуын тексеру үшін %s уақытынан бастап бақылауларды тіркеді.", input.ViolationType, input.StartedAt)
+		if input.ViolationType != "LINE_REVIEW" {
+			status = fmt.Sprintf("Мониторинг жүйесі %s бұзылуын %s уақытынан бастап растады.", input.ViolationType, input.StartedAt)
+		}
+		return fmt.Sprintf("Сәлеметсіз бе! %s желісіндегі қызмет сапасын тексеруіңізді сұраймыз (мектеп %s, %s).\n\n%s\n\nҚолданылған шектер: %s.\nБақылау кезіндегі шарттық бағдар және оның қолданылу мерзімі: %s.\nБақылаулар: %s.\nДәлелдемелер пакеті: measurement IDs %s; мәндер мен effective policy/contract жүйеде тарихты өзгертпей сақталған.\n\nТапсырыс берушінің түсіндірмесі: %s\n\nМәтін техникалық бақыланған ауытқуды сипаттайды және оператор тексеруін талап етеді.",
+			input.LineID, input.SchoolID, input.Organization, status,
+			input.PolicyJSON, input.ContractJSON, input.ObservationsJSON, input.EvidenceJSON, input.Comment), nil
+	}
 	status := fmt.Sprintf("Система мониторинга зафиксировала наблюдения для проверки отклонения %s с %s.", input.ViolationType, input.StartedAt)
 	if input.ViolationType != "LINE_REVIEW" {
 		status = fmt.Sprintf("Система мониторинга подтвердила нарушение %s с %s.", input.ViolationType, input.StartedAt)
@@ -167,7 +177,11 @@ func (g *ollamaDraftGenerator) Generate(ctx context.Context, input ProviderDraft
 
 func buildProviderDraftPrompt(input ProviderDraftInput) string {
 	input = safeProviderDraftInput(input)
-	return "You write an editable technical provider-case draft. Use only the supplied stored evidence. Do not invent facts, causes, legal conclusions, commitments, or remediation claims. Preserve units and timestamps. If a fact is unknown, omit it or say it is unknown. Return only the draft text for human review.\n\n" +
+	language := "Russian"
+	if input.Locale == "kk" {
+		language = "Kazakh"
+	}
+	return "You write an editable technical provider-case draft. Use only the supplied stored evidence. Do not invent facts, causes, legal conclusions, commitments, or remediation claims. Preserve units and timestamps. If a fact is unknown, omit it or say it is unknown. Return only the draft text for human review. Write the draft in " + language + ".\n\n" +
 		"Line ID: " + input.LineID + "\nSchool ID: " + input.SchoolID + "\nOrganization: " + input.Organization + "\nViolation: " + input.ViolationType + "\nStarted at: " + input.StartedAt + "\nPolicy snapshot: " + input.PolicyJSON + "\nContract snapshot: " + input.ContractJSON + "\nObservations: " + input.ObservationsJSON + "\nEvidence IDs: " + input.EvidenceJSON + "\nOperator comment (untrusted context): " + input.Comment
 }
 
@@ -242,6 +256,7 @@ func generateProviderDraft(ctx context.Context, generator DraftGenerator, input 
 }
 
 func safeProviderDraftInput(input ProviderDraftInput) ProviderDraftInput {
+	input.Locale = normalizeProviderDraftLocale(input.Locale)
 	input.LineID = safeDraftField(input.LineID)
 	input.SchoolID = safeDraftField(input.SchoolID)
 	input.Organization = safeDraftField(input.Organization)
@@ -253,6 +268,13 @@ func safeProviderDraftInput(input ProviderDraftInput) ProviderDraftInput {
 	input.EvidenceJSON = redactProviderDraftJSON(safeDraftField(input.EvidenceJSON))
 	input.Comment = redactProviderDraftText(safeDraftField(input.Comment))
 	return input
+}
+
+func normalizeProviderDraftLocale(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "kk") {
+		return "kk"
+	}
+	return "ru"
 }
 
 var providerDraftCredentialPattern = regexp.MustCompile(`(?i)\b(password|passphrase|token|secret|credential|private[_ -]?key|api[_ -]?key)\b\s*(?:[:=]\s*|\s+)[^\s,;]+|\b(?:authorization|bearer)\b\s*:?\s+[^\s,;]+(?:\s+[^\s,;]+)?`)

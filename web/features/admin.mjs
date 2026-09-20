@@ -226,5 +226,11 @@ export function createAdminBoundary(api) {
     async agentUpdate(payload) {
       return api.tryRequest(apiAliases("/admin/agent-updates"), { method: "POST", body: JSON.stringify(agentUpdatePayload(payload)) });
     },
+    async demoScenario(scenario) {
+      return api.tryRequest(apiAliases("/demo/replay"), { method: "POST", body: JSON.stringify({ scenario }) });
+    },
+    async resetDemo() {
+      return api.tryRequest(apiAliases("/admin/demo/reset"), { method: "POST" });
+    },
   };
 }

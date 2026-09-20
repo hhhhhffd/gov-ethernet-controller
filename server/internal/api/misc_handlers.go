@@ -498,6 +498,23 @@ func (s *Server) demoReplay(w http.ResponseWriter, r *http.Request) {
 	if !requireAdmin(w, p) {
 		return
 	}
+	var request struct {
+		Scenario string `json:"scenario"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := decodeJSON(r, &request); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid demo scenario")
+			return
+		}
+	}
+	scenario := strings.ToLower(strings.TrimSpace(request.Scenario))
+	if scenario == "" {
+		scenario = "healthy"
+	}
+	if scenario != "healthy" && scenario != "degrade" && scenario != "recover" && scenario != "outage" {
+		writeError(w, http.StatusUnprocessableEntity, "scenario must be healthy, degrade, recover or outage")
+		return
+	}
 	line, visible, lineErr := s.lineVisible(r.Context(), p, "line-42-primary")
 	if lineErr != nil {
 		writeError(w, 500, "could not query demo line")
@@ -515,18 +532,33 @@ func (s *Server) demoReplay(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "demo device not found")
 		return
 	}
-	start := time.Now().UTC().Add(-3 * time.Minute).Truncate(time.Second)
+	now := time.Now().UTC().Truncate(time.Second)
+	start := now.Add(-3 * time.Minute)
 	values := []float64{42, 39, 41}
+	upload := 44.0
+	connectionStatus := "OK"
+	if scenario == "degrade" {
+		values = []float64{3, 4, 2}
+		upload = 4
+	}
+	if scenario == "recover" {
+		start = now.Add(-2 * time.Second)
+	}
+	if scenario == "outage" {
+		values = []float64{0, 0, 0}
+		upload = 0
+		connectionStatus = "NO_INTERNET"
+	}
 	results := []interface{}{}
 	for i, value := range values {
-		result, processErr := s.Measure.Process(r.Context(), deviceID, line.ID, pointID, version, measurements.Input{ClientEventID: measurements.RandomEventID(), ObservedAt: start.Add(time.Duration(i) * time.Minute), Mode: "PERFORMANCE", Download: &value, Upload: ptrFloat(44), Ping: ptrFloat(22), Jitter: ptrFloat(7), PacketLoss: ptrFloat(.4), Availability: ptrFloat(100), ConnectionStatus: "OK", Quality: "VALID", Raw: map[string]interface{}{"source": "demo-replay"}})
+		result, processErr := s.Measure.Process(r.Context(), deviceID, line.ID, pointID, version, measurements.Input{ClientEventID: measurements.RandomEventID(), ObservedAt: start.Add(time.Duration(i) * time.Second), Mode: "PERFORMANCE", Download: &value, Upload: ptrFloat(upload), Ping: ptrFloat(22), Jitter: ptrFloat(7), PacketLoss: ptrFloat(.4), Availability: ptrFloat(100), ConnectionStatus: connectionStatus, Quality: "VALID", Raw: map[string]interface{}{"source": "demo-replay", "scenario": scenario}})
 		if processErr != nil {
 			writeError(w, 500, processErr.Error())
 			return
 		}
 		results = append(results, result)
 	}
-	writeJSON(w, 200, map[string]interface{}{"scenario": "school-42", "line_id": line.ID, "results": results})
+	writeJSON(w, 200, map[string]interface{}{"scenario": scenario, "school": line.OrganizationName, "line_id": line.ID, "results": results})
 }
 
 func ptrFloat(value float64) *float64 { return &value }

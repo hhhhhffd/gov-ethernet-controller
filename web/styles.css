@@ -597,3 +597,63 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .report-export .primary-action, .report-export .secondary-action { width: 100%; }
   .detail-drawer { width: 100%; padding: 20px; }
 }
+
+/* Operator surfaces use a comfortable desktop reading scale. */
+:root { --theme-control-size: 40px; --theme-hit-size: 48px; }
+html, body { font-size: 14px; line-height: 1.5; }
+.surface-header-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.secondary-action, .primary-action { min-height: 46px; font-size: 14px; }
+.incident-filters label, .report-filters label, .admin-toolbar label, .audit-filters label { font-size: 13px; }
+.incident-filters select, .report-filters input, .report-filters select, .admin-toolbar select, .audit-filters input, .audit-filters select { min-height: 46px; font-size: 14px; }
+.incident-detail { flex-basis: 520px; width: min(520px, 100%); padding: 24px; }
+.incident-create-panel { display: grid; gap: 18px; margin-bottom: 20px; padding: 22px; border: 1px solid var(--ref-border-soft); border-radius: var(--theme-panel-radius); background: var(--ref-surface-main); }
+.incident-create-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.incident-create-heading h2 { margin: 0; font-size: 18px; }
+.incident-create-heading p { margin: 5px 0 0; color: var(--ref-text-secondary); }
+.incident-create-form { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: 16px 20px; }
+.incident-create-form label, .admin-fields label, .credential-example { display: grid; gap: 8px; color: var(--ref-text-secondary); font-size: 13px; }
+.incident-create-form input, .incident-create-form select, .incident-create-form textarea { min-height: 46px; padding: 10px 13px; border: 1px solid var(--ref-border-soft); border-radius: 9px; background: var(--ref-surface-inset); color: var(--ref-text-primary); }
+.incident-create-form textarea { min-height: 112px; resize: vertical; }
+.incident-create-wide, .incident-create-actions { grid-column: 1 / -1; }
+.incident-create-actions { display: flex; justify-content: flex-end; gap: 12px; padding-top: 4px; }
+.closed-readonly { margin: 16px 0 0; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--ref-yellow) 35%, var(--ref-border-soft)); border-radius: 9px; background: color-mix(in srgb, var(--ref-yellow) 9%, transparent); color: var(--ref-text-secondary); }
+.provider-case-steps { margin: -6px 0 16px; color: var(--ref-text-muted); font-size: 12px; }
+.notification-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.notification-place { color: var(--ref-text-secondary) !important; }
+.admin-fields { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); grid-column: 1 / -1; gap: 16px 20px; }
+.admin-fields input, .admin-fields select, .admin-fields textarea { width: 100%; min-height: 46px; padding: 10px 13px; border: 1px solid var(--ref-border-soft); border-radius: 9px; background: var(--ref-surface-inset); color: var(--ref-text-primary); font: inherit; }
+.admin-fields textarea { min-height: 120px; resize: vertical; }
+.admin-editor { width: 100%; max-width: none; grid-template-columns: 1fr; }
+.admin-editor .form-hint { font-size: 13px; }
+.admin-preview { width: 100%; }
+.admin-credential-backdrop { position: fixed; z-index: 1500; inset: 0; display: grid; place-items: center; padding: 24px; background: rgb(0 0 0 / 46%); }
+.admin-credential-dialog { width: min(680px, 100%); max-height: min(780px, calc(100vh - 48px)); overflow: auto; padding: 26px; border: 1px solid var(--ref-border-medium); border-radius: var(--theme-panel-radius); background: var(--ref-surface-main); box-shadow: 0 18px 40px rgb(0 0 0 / 30%); }
+.admin-credential-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.admin-credential-dialog h2 { margin: 0; }
+.admin-credential-dialog header p { margin: 8px 0 0; color: var(--ref-yellow); }
+.admin-credential-dialog dl { display: grid; gap: 10px; margin: 22px 0; }
+.credential-field { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; padding: 12px 0; border-top: 1px solid var(--ref-border-soft); }
+.credential-field dt, .credential-example span, .credential-example-label { color: var(--ref-text-muted); font-size: 13px; }
+.credential-field dd { margin-top: 4px; overflow-wrap: anywhere; }
+.credential-field code, .credential-cli { color: var(--ref-text-primary); font: 13px/1.5 ui-monospace, monospace; }
+.credential-example { margin-top: 18px; }
+.credential-example textarea { min-height: 110px; padding: 12px; resize: vertical; border: 1px solid var(--ref-border-soft); border-radius: 9px; background: var(--ref-surface-inset); color: var(--ref-text-primary); font: 12px/1.5 ui-monospace, monospace; }
+.credential-example-label { margin: 20px 0 6px; }
+.credential-cli { display: block; overflow-wrap: anywhere; padding: 12px; border-radius: 9px; background: var(--ref-surface-inset); }
+.admin-credential-dialog > .primary-action { margin-top: 22px; }
+.leaflet-marker-icon.linkwatch-registry-marker { width: 22px !important; height: 22px !important; margin-left: -11px !important; margin-top: -11px !important; }
+.leaflet-marker-icon.linkwatch-registry-marker > span { width: 16px !important; height: 16px !important; }
+.leaflet-marker-icon.linkwatch-registry-cluster > span { width: 38px !important; height: 38px !important; font-size: 14px !important; }
+
+@media (max-width: 900px) {
+  .incident-create-form, .admin-fields { grid-template-columns: 1fr; }
+  .incident-create-wide, .incident-create-actions { grid-column: 1; }
+}
+
+@media (max-width: 620px) {
+  :root { --theme-hit-size: 42px; }
+  html, body { font-size: 12.5px; }
+  .incident-detail { padding: 18px; }
+  .incident-create-form, .admin-fields { grid-template-columns: 1fr; }
+  .credential-field { grid-template-columns: 1fr; }
+}

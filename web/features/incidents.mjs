@@ -49,6 +49,7 @@ export function createIncidentsBoundary(api) {
     async createProviderCaseDraft(id, payload = {}) {
       const body = {};
       if (payload.comment !== undefined) body.comment = String(payload.comment).trim();
+      if (payload.locale !== undefined) body.locale = String(payload.locale).trim();
       return api.tryRequest(apiAliases(`/incidents/${encodeURIComponent(id)}/provider-case/draft`), { method: "POST", body: JSON.stringify(body) });
     },
     async situations(filters = {}) {

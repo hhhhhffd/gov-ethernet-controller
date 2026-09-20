@@ -17,6 +17,7 @@ import (
 type providerAIDraftPayload struct {
 	Comment   string `json:"comment"`
 	RequestID string `json:"request_id"`
+	Locale    string `json:"locale"`
 }
 
 func (s *Server) providerAIDraft(w http.ResponseWriter, r *http.Request, caseID, lineID string, p *auth.Principal) {
@@ -77,6 +78,7 @@ func (s *Server) providerAIDraft(w http.ResponseWriter, r *http.Request, caseID,
 		writeError(w, http.StatusInternalServerError, "could not build provider evidence")
 		return
 	}
+	input.Locale = normalizeProviderDraftLocale(payload.Locale)
 	generator := s.DraftGenerator
 	if generator == nil {
 		generator = newOllamaDraftGeneratorFromEnv()

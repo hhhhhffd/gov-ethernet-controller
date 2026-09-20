@@ -554,6 +554,9 @@
     const fittedZoom = Number(state.map.getZoom?.());
     if (typeof state.map.setView === "function" && (!Number.isFinite(fittedZoom) || fittedZoom < targetZoom || fittedZoom <= currentZoom)) state.map.setView(center, targetZoom, { animate: false });
     rebuildRegistryClusters();
+    if (typeof window.CustomEvent === "function" && typeof window.dispatchEvent === "function") {
+      window.dispatchEvent(new window.CustomEvent("linkwatch:map-cluster-expanded"));
+    }
     return true;
   }
   function rebuildRegistryClusters() {

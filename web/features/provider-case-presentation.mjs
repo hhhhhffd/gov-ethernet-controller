@@ -17,23 +17,28 @@ function provenance(evidenceChain) {
     : "UNKNOWN";
 }
 
-const PENDING_ACTIONS = Object.freeze(new Set(["creating", "generating", "sending", "retrying"]));
+const PENDING_ACTIONS = Object.freeze(new Set(["creating", "saving", "generating", "sending", "retrying"]));
 
 export function providerCaseActions(providerCase, capabilities, actionState = "idle") {
   const status = code(providerCase?.status);
   const deliveryStatus = code(providerCase?.delivery_status);
+  const incidentStatus = code(providerCase?.incident?.status);
+  const parentClosed = incidentStatus === "CLOSED";
   const canDeliver = capabilities?.has?.("provider_case.send") === true;
+  const canDraft = capabilities?.has?.("provider_case.draft") === true;
   const retryableFailure = deliveryStatus === "FAILED" && providerCase?.delivery_retryable === true;
   const isPending = PENDING_ACTIONS.has(actionState);
   const canRetry = canDeliver && retryableFailure && !isPending;
-  const canInitialSend = canDeliver && status !== "SENT" && deliveryStatus === "PENDING" && !isPending;
+  const canInitialSend = canDeliver && !parentClosed && status !== "SENT" && deliveryStatus === "PENDING" && !isPending;
   return {
-    canPrepare: canDeliver && !isPending,
-    canGenerate: capabilities?.has?.("provider_case.draft") === true && status !== "SENT" && !isPending,
+    canPrepare: canDraft && !parentClosed && !isPending,
+    canEdit: canDraft && !parentClosed && status !== "SENT" && !isPending,
+    canGenerate: canDraft && !parentClosed && status !== "SENT" && !isPending,
     canInitialSend,
-    canRetry,
+    canRetry: canRetry && !parentClosed,
     canSend: canInitialSend || canRetry,
     isRetry: retryableFailure,
+    parentClosed,
     operation: retryableFailure ? "retry" : "send",
     isPending,
     disabled: isPending,

@@ -7,7 +7,7 @@ import { createSession } from "./core/session.mjs";
 import { createMapPresentationAdapter } from "./core/map-presentation.mjs";
 import { createThemeState } from "./core/theme.mjs";
 import { createMapIntegration } from "./integration/map-integration.mjs";
-import { adminResourceDefinition, createAdminBoundary, writableAdminPayload } from "./features/admin.mjs";
+import { createAdminBoundary, writableAdminPayload } from "./features/admin.mjs";
 import { createAuditBoundary } from "./features/audit.mjs";
 import { createIncidentsBoundary } from "./features/incidents.mjs";
 import { createLinesBoundary } from "./features/lines.mjs";
@@ -110,6 +110,7 @@ function createIncidentSurfaceState() {
     state: "idle", items: [], filters: { status: "", severity: "" }, selectedId: null, detail: null, detailState: "idle",
     situations: [], situationsState: "idle", selectedSituationId: null, situation: null, situationState: "idle",
     actionState: "idle", actionError: "", situationActionState: "idle", situationActionError: "",
+    createOpen: false, createState: "idle", createError: "", createDraft: { line_id: "", violation_type: "MANUAL_REVIEW", description: "", assignee: "" },
     providerCase: { selectedId: null, state: "idle", detail: null, actionState: "idle", actionError: "", generated: null },
   };
 }
@@ -125,12 +126,12 @@ function createNotificationsSurfaceState() {
   return {
     open: false, state: "idle", items: [], loadPromise: null, actionId: null, actionState: "idle", actionError: "", actionErrorId: null,
     seenIDs: new Set(), knownIDs: new Set(), baselineInitialized: false, storageKey: "", pollTimer: null,
-    soundMuted: readNotificationSoundMuted(globalThis.localStorage), audioContext: null, soundUnavailable: false,
+    soundMuted: readNotificationSoundMuted(browserStorage()), audioContext: null, soundUnavailable: false,
   };
 }
 
 function createAdminSurfaceState() {
-  return { state: "idle", resource: "organizations", items: [], selectedId: "", payload: "{}", mutationState: "idle", message: "", loadPromise: null, preview: null };
+  return { state: "idle", resource: "organizations", items: [], relationships: { organizations: [], providers: [], lines: [], "monitoring-points": [] }, selectedId: "", draftID: "", payload: "{}", mutationState: "idle", message: "", loadPromise: null, preview: null, credential: null, demoAction: "idle", demoError: "" };
 }
 
 function createAuditSurfaceState() {
@@ -313,7 +314,7 @@ function renderRoute(snapshot = router.getState()) {
   if (snapshot.view === "reports") loadReports();
   if (snapshot.view === "admin") loadAdminResource();
   if (snapshot.view === "audit") loadAuditLog();
-  renderIncidentsSurface();
+  renderIncidentsPreservingScroll();
   renderReportsSurface();
   renderNotificationsSurface();
   renderAdminSurface();
@@ -586,6 +587,15 @@ function mapFields(fields) {
 function popupSchoolName(school, line) { return presentation.schoolName(school, line?.school_name); }
 function popupLine(line) {
   const status = presentation.status(line.linkwatchStatus || line.status);
+  const latest = line.latest || {};
+  const metrics = [
+    ["download", latest.download, "field.download", "unit.mbps"],
+    ["upload", latest.upload, "field.upload", "unit.mbps"],
+    ["ping", latest.ping, "field.ping", "unit.ms"],
+    ["jitter", latest.jitter, "field.jitter", "unit.ms"],
+    ["loss", latest.loss ?? latest.packet_loss, "field.loss", "unit.percent"],
+  ].filter(([, value]) => value !== undefined && value !== null && value !== "");
+  const reason = status.tone !== "healthy" ? presentation.statusDescription(status.code) : "";
   return {
     title: popupSchoolName(line.registrySchool, line),
     fields: [
@@ -593,6 +603,8 @@ function popupLine(line) {
       [i18n.t("field.connectionType"), presentation.connectionType(line.technology)],
       [i18n.t("field.lineRole"), presentation.role(line.role)], [i18n.t("field.status"), status.label],
       [i18n.t("field.lastObserved"), presentation.formatDate(line.latest?.at, true)],
+      ...(reason ? [[i18n.t("field.problemReason"), reason]] : []),
+      ...(metrics.length ? [[i18n.t("field.metrics"), metrics.map(([, value, label, unit]) => presentation.formatNumber(value, i18n.t(unit)) + " · " + i18n.t(label)).join(", ")]] : []),
     ],
   };
 }
@@ -875,6 +887,37 @@ function objectPayload(payload) {
 
 function incidentSurfaceState() { return state.incidents; }
 
+function incidentCreateLines() {
+  return (Array.isArray(map.state.lines) ? map.state.lines : []).filter((line) => line?.id);
+}
+
+function renderIncidentCreateForm() {
+  const view = incidentSurfaceState();
+  if (!view.createOpen) return "";
+  const linesForCreate = incidentCreateLines();
+  if (!linesForCreate.length) {
+    return '<section class="incident-create-panel"><div><h2>' + escapeHtml(i18n.t("incidents.createTitle")) + '</h2><p class="surface-state">' + escapeHtml(i18n.t("incidents.createNoLines")) + '</p></div><button class="secondary-action" type="button" data-incident-create-cancel>' + escapeHtml(i18n.t("incidents.createCancel")) + "</button></section>";
+  }
+  const draft = view.createDraft;
+  const lineOptions = linesForCreate.map((line) => {
+    const school = line.school_name || line.organization_name || i18n.t("school.noOfficialName");
+    const label = `${school} · ${line.name || line.label || line.id}`;
+    return '<option value="' + escapeHtml(line.id) + '"' + (String(draft.line_id) === String(line.id) ? " selected" : "") + ">" + escapeHtml(label) + "</option>";
+  }).join("");
+  const busy = view.createState === "saving";
+  const error = view.createError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.createError)) + "</p>" : "";
+  return '<section class="incident-create-panel"><div class="incident-create-heading"><div><h2>' + escapeHtml(i18n.t("incidents.createTitle")) + '</h2><p>' + escapeHtml(i18n.t("incidents.subtitle")) + '</p></div><button class="icon-close" type="button" data-incident-create-cancel aria-label="' + escapeHtml(i18n.t("incidents.createCancel")) + '">×</button></div><form class="incident-create-form" data-incident-create><label>' + escapeHtml(i18n.t("incidents.createLine")) + '<select name="line_id" required' + (busy ? " disabled" : "") + ">" + lineOptions + '</select></label><label>' + escapeHtml(i18n.t("incidents.createType")) + '<select name="violation_type" required' + (busy ? " disabled" : "") + '><option value="MANUAL_REVIEW"' + (draft.violation_type === "MANUAL_REVIEW" ? " selected" : "") + '>' + escapeHtml(i18n.t("incidentType.MANUAL_REVIEW")) + '</option><option value="NO_INTERNET"' + (draft.violation_type === "NO_INTERNET" ? " selected" : "") + '>' + escapeHtml(i18n.t("incidentType.NO_INTERNET")) + '</option></select></label><label class="incident-create-wide">' + escapeHtml(i18n.t("incidents.createDescription")) + '<textarea name="description" required maxlength="4000"' + (busy ? " disabled" : "") + '>' + escapeHtml(draft.description) + '</textarea></label><label>' + escapeHtml(i18n.t("incidents.createAssignee")) + '<input name="assignee" maxlength="255" placeholder="' + escapeHtml(i18n.t("incidents.createAssigneePlaceholder")) + '" value="' + escapeHtml(draft.assignee) + '"' + (busy ? " disabled" : "") + '></label><div class="incident-create-actions"><button class="secondary-action" type="button" data-incident-create-cancel' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("incidents.createCancel")) + '</button><button class="primary-action" type="submit"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("incidents.createSubmit")) + '</button></div></form>' + error + '</section>';
+}
+
+function renderIncidentsPreservingScroll() {
+  const root = $("#incidentsSurface");
+  const detail = root?.querySelector(".incident-detail");
+  const scrollTop = detail?.scrollTop || 0;
+  renderIncidentsSurface();
+  const nextDetail = root?.querySelector(".incident-detail");
+  if (nextDetail) nextDetail.scrollTop = scrollTop;
+}
+
 function renderIncidentsSurface() {
   const root = $("#incidentsSurface");
   if (!root) return;
@@ -904,7 +947,8 @@ function renderIncidentsSurface() {
     return '<button class="incident-row' + (String(view.selectedId) === String(incident.id) ? " selected" : "") + '" type="button" data-incident-id="' + escapeHtml(incident.id) + '"><span class="incident-row-status severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.statusLabel) + "</span><span><strong>" + escapeHtml(incident.school) + "</strong><small>" + escapeHtml(incident.typeLabel) + "</small></span><span>" + escapeHtml(incident.line) + "</span><span>" + escapeHtml(incident.startedLabel) + "</span><span>" + escapeHtml(incident.durationLabel) + "</span><span>" + escapeHtml(incident.lastUpdateLabel) + "</span></button>";
   }).join("") : '<p class="surface-state">' + escapeHtml(i18n.t("incidents.empty")) + "</p>";
 
-  root.innerHTML = '<div class="incidents-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("incidents.title")) + "</h1><p>" + escapeHtml(i18n.t("incidents.subtitle")) + '</p></div><button class="secondary-action" type="button" data-incidents-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + '</button></header><div class="incident-filters">' + filters + '<span class="incident-count">' + escapeHtml(i18n.t("incidents.count", { count: items.length })) + '</span></div><div class="incidents-layout"><section class="incidents-list" aria-label="' + escapeHtml(i18n.t("incidents.title")) + '"><div class="incident-row incident-row-head" aria-hidden="true"><span>' + escapeHtml(i18n.t("field.status")) + "</span><span>" + escapeHtml(i18n.t("field.school")) + "</span><span>" + escapeHtml(i18n.t("field.line")) + "</span><span>" + escapeHtml(i18n.t("incidents.started")) + "</span><span>" + escapeHtml(i18n.t("incidents.duration")) + "</span><span>" + escapeHtml(i18n.t("incidents.lastUpdate")) + "</span></div>" + list + '</section><aside class="incident-detail" aria-live="polite">' + renderIncidentDetail() + "</aside></div></div>";
+  const canCreate = state.capabilities.has("incident.create");
+  root.innerHTML = '<div class="incidents-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("incidents.title")) + "</h1><p>" + escapeHtml(i18n.t("incidents.subtitle")) + '</p></div><div class="surface-header-actions">' + (canCreate ? '<button class="primary-action" type="button" data-incident-create-open>' + escapeHtml(i18n.t("incidents.create")) + '</button>' : "") + '<button class="secondary-action" type="button" data-incidents-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + '</button></div></header>' + renderIncidentCreateForm() + '<div class="incident-filters">' + filters + '<span class="incident-count">' + escapeHtml(i18n.t("incidents.count", { count: items.length })) + '</span></div><div class="incidents-layout"><section class="incidents-list" aria-label="' + escapeHtml(i18n.t("incidents.title")) + '"><div class="incident-row incident-row-head" aria-hidden="true"><span>' + escapeHtml(i18n.t("field.status")) + "</span><span>" + escapeHtml(i18n.t("field.school")) + "</span><span>" + escapeHtml(i18n.t("field.line")) + "</span><span>" + escapeHtml(i18n.t("incidents.started")) + "</span><span>" + escapeHtml(i18n.t("incidents.duration")) + "</span><span>" + escapeHtml(i18n.t("incidents.lastUpdate")) + "</span></div>" + list + '</section><aside class="incident-detail" aria-live="polite">' + renderIncidentDetail() + "</aside></div></div>";
   bindIncidentSurfaceEvents(root);
 }
 
@@ -934,9 +978,27 @@ function reportPercentage(value, diagnostics, field) {
   return reportAvailability(value, i18n, diagnostics, field);
 }
 
+const REPORT_COLUMN_LABELS = Object.freeze({
+  observed_at: "field.lastObserved", received_at: "field.receivedAt", line_id: "field.line", school_id: "field.school",
+  organization_name: "field.school", district: "field.district", provider: "field.provider", device_id: "field.device",
+  device_display_name: "field.device", monitoring_point_id: "admin.monitoringPoint", monitoring_point_location: "field.address",
+  mode: "field.measurementType", connection_status: "field.status", download: "field.download", upload: "field.upload",
+  ping: "field.ping", jitter: "field.jitter", packet_loss: "field.loss", availability: "reports.availability",
+  availability_status: "reports.availabilityStatus", baseline_state: "reports.baseline", contract_state: "reports.contract",
+  reason: "field.problemReason",
+});
+
+function reportColumnLabels(columns) {
+  return (Array.isArray(columns) ? columns : []).map((column) => {
+    const key = REPORT_COLUMN_LABELS[String(column || "")];
+    return key && i18n.has(key) ? i18n.t(key) : i18n.t("reports.additionalField");
+  });
+}
+
 function reportTechnicalDetails(diagnostics) {
-  if (!diagnostics.length) return "";
-  return '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(diagnostics, null, 2)) + "</pre></details>";
+  // Diagnostics are useful for logs and support, but raw field dumps do not
+  // help an operator decide what to do in the report workspace.
+  return "";
 }
 
 function reportOptions(items, selected, label, value = (item) => item) {
@@ -979,7 +1041,7 @@ function renderReportsSurface() {
   const canExport = state.capabilities.has("report.export");
   const preview = view.preview;
   const previewText = view.previewState === "error" ? i18n.t("reports.previewUnavailable") : preview ? i18n.t(preview.limited ? "reports.previewLimited" : "reports.previewRows", { count: preview.count }) : "";
-  const exportPanel = '<section class="report-panel report-export"><h2>' + escapeHtml(i18n.t("reports.export")) + (canExport ? "</h2><form data-report-export><label>" + escapeHtml(i18n.t("reports.exportKind")) + '<select name="kind"><option value="raw">' + escapeHtml(i18n.t("reports.exportRaw")) + '</option><option value="aggregate">' + escapeHtml(i18n.t("reports.exportAggregate")) + '</option></select></label><label>' + escapeHtml(i18n.t("reports.exportFormat")) + '<select name="format"><option value="csv">CSV</option><option value="xlsx">XLSX</option><option value="json">JSON</option></select></label><button class="secondary-action" type="button" data-export-preview>' + escapeHtml(i18n.t("reports.preview")) + '</button><button class="primary-action" type="submit">' + escapeHtml(i18n.t("reports.download")) + "</button></form>" + (previewText ? '<p class="surface-state' + (view.previewState === "error" ? " error" : "") + '">' + escapeHtml(previewText) + (preview?.columns?.length ? " " + escapeHtml(i18n.t("reports.previewColumns")) + ": " + escapeHtml(preview.columns.join(", ")) : "") + "</p>" : "") : '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.exportUnavailable")) + "</p>") + "</section>";
+  const exportPanel = '<section class="report-panel report-export"><h2>' + escapeHtml(i18n.t("reports.export")) + (canExport ? "</h2><form data-report-export><label>" + escapeHtml(i18n.t("reports.exportKind")) + '<select name="kind"><option value="raw">' + escapeHtml(i18n.t("reports.exportRaw")) + '</option><option value="aggregate">' + escapeHtml(i18n.t("reports.exportAggregate")) + '</select></label><label>' + escapeHtml(i18n.t("reports.exportFormat")) + '<select name="format"><option value="csv">CSV</option><option value="xlsx">XLSX</option><option value="json">JSON</option></select></label><button class="secondary-action" type="button" data-export-preview>' + escapeHtml(i18n.t("reports.preview")) + '</button><button class="primary-action" type="submit">' + escapeHtml(i18n.t("reports.download")) + "</button></form>" + (previewText ? '<p class="surface-state' + (view.previewState === "error" ? " error" : "") + '">' + escapeHtml(previewText) + (preview?.columns?.length ? " " + escapeHtml(i18n.t("reports.previewColumns")) + ": " + escapeHtml(reportColumnLabels(preview.columns).join(", ")) : "") + "</p>" : "") : '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.exportUnavailable")) + "</p>") + "</section>";
   root.innerHTML = '<div class="reports-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("reports.title")) + "</h1><p>" + escapeHtml(i18n.t("reports.subtitle")) + "</p></div></header>" + form + '<div class="report-overview">' + aggregatePanel + qualityPanel + "</div>" + analyticsPanel + exportPanel + "</div>";
   const reportDetails = reportTechnicalDetails(reportDiagnostics);
   if (reportDetails) root.querySelector(".reports-shell")?.insertAdjacentHTML("beforeend", reportDetails);
@@ -1163,9 +1225,11 @@ function renderNotificationsSurface() {
       const attempts = notification.attempts == null ? "" : '<small>' + escapeHtml(i18n.t("notification.attempts", { count: notification.attempts })) + "</small>";
       const next = notification.nextAttemptLabel ? '<small>' + escapeHtml(i18n.t("notification.nextAttempt")) + ": " + escapeHtml(notification.nextAttemptLabel) + "</small>" : "";
       const dispatch = availableNotification.actions?.canDispatch && notification.id != null ? '<button type="button" class="secondary-action" data-notification-dispatch="' + escapeHtml(notification.id) + '"' + (pending ? " disabled" : "") + '>' + escapeHtml(notificationDispatchLabel()) + "</button>" : "";
+      const openIncidentAction = notification.incidentId && state.capabilities.canRead("incident") ? '<button type="button" class="link-action notification-open-incident" data-notification-incident="' + escapeHtml(notification.incidentId) + '">' + escapeHtml(i18n.t("notification.openIncident")) + "</button>" : "";
       const actionError = String(view.actionErrorId) === String(item?.id) && view.actionError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.actionError)) + "</p>" : "";
+      const place = notification.placeLabel ? '<small class="notification-place">' + escapeHtml(notification.placeLabel) + "</small>" : "";
       const technical = notification.technical ? '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(notification.technical, null, 2)) + "</pre></details>" : "";
-      return '<article class="notification-item" data-server-read="' + String(serverRead) + '"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p><small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + dispatch + actionError + technical + '</article>';
+      return '<article class="notification-item" data-server-read="' + String(serverRead) + '"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p>' + place + '<small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + '<div class="notification-actions">' + openIncidentAction + dispatch + '</div>' + actionError + technical + '</article>';
     }).join("");
     root.innerHTML = notificationHeader(view, true) + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("notification.empty")) + "</p>");
   }
@@ -1177,6 +1241,7 @@ function renderNotificationsSurface() {
     renderNotificationsSurface();
   });
   root.querySelectorAll("[data-notification-dispatch]").forEach((button) => button.addEventListener("click", () => dispatchNotification(button.dataset.notificationDispatch)));
+  root.querySelectorAll("[data-notification-incident]").forEach((button) => button.addEventListener("click", () => openIncident(button.dataset.notificationIncident)));
 }
 
 function closeNotifications(restoreFocus = true) {
@@ -1279,20 +1344,33 @@ function adminEditorMode(resource, id = "") {
 }
 
 const ADMIN_EDITOR_FIELD_KEYS = Object.freeze({
-  id: "admin.recordId", school_id: "field.school", organization_id: "field.school", provider_id: "field.provider", line_id: "field.line",
+  id: "admin.recordId", school_id: "field.registryNumber", organization_id: "field.school", provider_id: "field.provider", line_id: "field.line",
   name: "field.officialIdentity", district: "field.district", district_id: "field.district", address: "field.address", active: "admin.status",
+  contact_name: "admin.contactName", contact_phone: "admin.contactPhone", contact_role: "admin.contactRole", contact_position: "admin.contactRole", contact_email: "admin.contactEmail", support_contact: "admin.supportContact",
   role: "field.lineRole", technology: "field.connectionType", technology_id: "field.connectionType", status: "field.status", location: "field.address",
-  is_primary: "admin.status", username: "field.username", password: "field.password", disabled: "admin.status", scopes: "field.registryProvenance",
-  display_name: "admin.identity", agent_version: "audit.version", tests_per_day: "admin.identity", performance_tests_per_day: "admin.identity",
-  jitter_minutes: "field.jitter", light_checks_between: "admin.status", scope_type: "field.registryProvenance", scope_id: "field.registryNumber",
+  is_primary: "admin.primaryPoint", username: "field.username", password: "field.password", disabled: "admin.status", scopes: "field.registryProvenance",
+  display_name: "admin.identity", agent_version: "audit.version", tests_per_day: "admin.testsPerDay", performance_tests_per_day: "admin.performanceTestsPerDay",
+  jitter_minutes: "field.jitter", light_checks_between: "admin.lightChecksBetween", scope_type: "field.registryProvenance", scope_id: "field.registryNumber", monitoring_point_id: "admin.monitoringPoint",
   version: "audit.version", valid_from: "audit.at", valid_to: "audit.at", contract_no: "field.contract", contract_date: "audit.at",
   download_min: "field.download", upload_min: "field.upload", ping_max: "field.ping", jitter_max: "field.jitter", packet_loss_max: "field.loss",
   availability_min: "field.metrics", confirm_count: "field.metrics", confirm_minutes: "field.metrics", confirm_duration_minutes: "field.metrics",
-  recovery_count: "field.metrics", recovery_minutes: "field.metrics", freshness_seconds: "field.lastObserved", reason: "field.reason",
-  recommended: "admin.status", minimum_supported: "admin.status", release_at: "audit.at", checksum: "admin.details", artifact_url: "admin.details",
+  recovery_count: "field.metrics", recovery_minutes: "field.metrics", freshness_seconds: "field.lastObserved", reason: "admin.reason",
+  recommended: "admin.recommended", minimum_supported: "admin.minimumSupported", release_at: "audit.at", checksum: "admin.checksum", artifact_url: "admin.artifactURL",
 });
 const ADMIN_EDITOR_STRUCTURED_FIELDS = new Set(["scopes", "manifest", "line_ids", "device_ids", "policy", "contract"]);
 const ADMIN_EDITOR_BOOLEAN_FIELDS = new Set(["active", "disabled", "is_primary", "recommended", "minimum_supported"]);
+const ADMIN_EDITOR_NUMBER_FIELDS = new Set(["latitude", "longitude", "tests_per_day", "performance_tests_per_day", "jitter_minutes", "download_min", "upload_min", "ping_max", "jitter_max", "packet_loss_max", "availability_min", "confirm_count", "confirm_minutes", "confirm_duration_minutes", "recovery_count", "recovery_minutes", "freshness_seconds"]);
+const ADMIN_EDITOR_INTEGER_FIELDS = new Set(["tests_per_day", "performance_tests_per_day", "jitter_minutes", "confirm_count", "confirm_minutes", "confirm_duration_minutes", "recovery_count", "recovery_minutes", "freshness_seconds"]);
+const ADMIN_EDITOR_DATETIME_FIELDS = new Set(["valid_from", "valid_to", "contract_date", "release_at"]);
+const ADMIN_EDITOR_RELATION_FIELDS = new Set(["school_id", "organization_id", "line_id", "provider_id", "monitoring_point_id"]);
+
+function adminNumberField(field, resource = state.admin.resource) {
+  return ADMIN_EDITOR_NUMBER_FIELDS.has(field) || (field === "version" && resource === "policies");
+}
+
+function adminIntegerField(field, resource = state.admin.resource) {
+  return ADMIN_EDITOR_INTEGER_FIELDS.has(field) || (field === "version" && resource === "policies");
+}
 
 function adminEditorFieldLabel(field) {
   return i18n.t(ADMIN_EDITOR_FIELD_KEYS[field] || "admin.details");
@@ -1307,6 +1385,56 @@ function adminEditorSource(view) {
   }
 }
 
+function adminGeneratedID(resource) {
+  const suffix = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return `linkwatch-${resource}-${suffix}`;
+}
+
+function adminRelationshipOptions(field, currentValue = "") {
+  const values = new Map();
+  const linesForRelations = Array.isArray(map.state.lines) ? map.state.lines : [];
+  const relationships = state.admin.relationships || {};
+  const organizations = Array.isArray(relationships.organizations) ? relationships.organizations : [];
+  const providers = Array.isArray(relationships.providers) ? relationships.providers : [];
+  const relatedLines = Array.isArray(relationships.lines) ? relationships.lines : [];
+  const monitoringPoints = Array.isArray(relationships["monitoring-points"]) ? relationships["monitoring-points"] : [];
+  if (field === "line_id") {
+    relatedLines.forEach((line) => { if (line?.id) values.set(String(line.id), `${line.organization_name || line.school_id || i18n.t("school.noOfficialName")} · ${line.id}`); });
+    linesForRelations.forEach((line) => { if (line?.id) values.set(String(line.id), `${line.school_name || line.organization_name || i18n.t("school.noOfficialName")} · ${line.name || line.label || line.id}`); });
+  } else if (field === "provider_id") {
+    providers.forEach((provider) => { if (provider?.id) values.set(String(provider.id), provider.name || String(provider.id)); });
+    linesForRelations.forEach((line) => { if (line?.provider_id) values.set(String(line.provider_id), line.provider || line.provider_name || String(line.provider_id)); });
+  } else if (field === "organization_id" || field === "school_id") {
+    organizations.forEach((organization) => {
+      const id = field === "school_id" ? organization?.school_id : organization?.id;
+      if (id) values.set(String(id), organization.name || organization.school_id || String(id));
+    });
+    linesForRelations.forEach((line) => {
+      const id = field === "school_id" ? line?.school_id : line?.organization_id;
+      if (id) values.set(String(id), line.school_name || line.organization_name || String(id));
+    });
+  } else if (field === "monitoring_point_id") {
+    monitoringPoints.forEach((point) => { if (point?.id) values.set(String(point.id), point.location ? `${point.location} · ${point.line_id}` : String(point.id)); });
+    state.admin.items.forEach((item) => { if (item?.monitoring_point_id) values.set(String(item.monitoring_point_id), item.display_name || item.hostname || String(item.monitoring_point_id)); });
+  }
+  const normalizedCurrent = String(currentValue ?? "");
+  if (normalizedCurrent && !values.has(normalizedCurrent)) values.set(normalizedCurrent, normalizedCurrent);
+  return [...values.entries()];
+}
+
+function adminScopeText(value) {
+  if (!Array.isArray(value)) return "";
+  return value.map((scope) => `${scope?.scope_type || ""}:${scope?.scope_id || ""}`).filter(Boolean).join(", ");
+}
+
+function adminDateInputValue(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
 function hydrateAdminEditorFields(root, view, definition, editorMode) {
   const payloadControl = root.querySelector("[name=payload]");
   const payloadLabel = payloadControl?.closest("label");
@@ -1314,7 +1442,7 @@ function hydrateAdminEditorFields(root, view, definition, editorMode) {
   if (!payloadControl || !payloadLabel || !form || !definition) return;
   const source = adminEditorSource(view);
   const fields = (editorMode === "register" ? definition.registrationFields : definition.writableFields)
-    .filter((field) => !(editorMode === "update" && field === "id"));
+    .filter((field) => field !== "id");
   const fieldGroup = document.createElement("div");
   fieldGroup.className = "admin-fields";
   fields.forEach((field) => {
@@ -1329,12 +1457,40 @@ function hydrateAdminEditorFields(root, view, definition, editorMode) {
       input.dataset.adminField = field;
       input.checked = value === true || value === "true";
       label.appendChild(input);
+    } else if (ADMIN_EDITOR_RELATION_FIELDS.has(field) && adminRelationshipOptions(field, value).length) {
+      const input = document.createElement("select");
+      input.dataset.adminField = field;
+      const options = adminRelationshipOptions(field, value);
+      input.appendChild(new Option(i18n.t("empty.noData"), ""));
+      options.forEach(([optionValue, optionLabel]) => input.appendChild(new Option(optionLabel, optionValue)));
+      input.value = String(value ?? "");
+      label.appendChild(input);
+    } else if (field === "scopes") {
+      const input = document.createElement("input");
+      input.dataset.adminField = field;
+      input.type = "text";
+      input.placeholder = "OBLAST:all, DISTRICT:...";
+      input.value = adminScopeText(value);
+      label.appendChild(input);
     } else if (ADMIN_EDITOR_STRUCTURED_FIELDS.has(field)) {
       const input = document.createElement("textarea");
       input.dataset.adminField = field;
       input.rows = 4;
       input.spellcheck = false;
       input.value = value === undefined || value === "" ? "" : JSON.stringify(value, null, 2);
+      label.appendChild(input);
+    } else if (adminNumberField(field, view.resource)) {
+      const input = document.createElement("input");
+      input.dataset.adminField = field;
+      input.type = "number";
+      input.step = adminIntegerField(field, view.resource) ? "1" : "any";
+      input.value = value === undefined || value === null ? "" : String(value);
+      label.appendChild(input);
+    } else if (ADMIN_EDITOR_DATETIME_FIELDS.has(field)) {
+      const input = document.createElement("input");
+      input.dataset.adminField = field;
+      input.type = "datetime-local";
+      input.value = adminDateInputValue(value);
       label.appendChild(input);
     } else {
       const input = document.createElement("input");
@@ -1357,6 +1513,22 @@ function pruneUnavailableDeviceActions(root, view) {
     const action = button.dataset.adminDeviceAction;
     if ((action === "block" && blocked) || (action === "unblock" && !blocked)) button.remove();
   });
+}
+
+function renderDeviceCredentialDialog(view) {
+  const credential = view.credential;
+  if (!credential?.deviceToken) return "";
+  const config = `LINKWATCH_SERVER_URL=${credential.serverURL}\nLINKWATCH_DEVICE_ID=${credential.deviceID}\nLINKWATCH_DEVICE_TOKEN=${credential.deviceToken}`;
+  const cli = `LINKWATCH_SERVER_URL=${credential.serverURL} LINKWATCH_DEVICE_ID=${credential.deviceID} LINKWATCH_DEVICE_TOKEN=<token> linkwatch-agent run`;
+  const field = (key, value) => '<div class="credential-field"><div><dt>' + escapeHtml(i18n.t(key)) + '</dt><dd><code>' + escapeHtml(value) + '</code></dd></div><button type="button" class="secondary-action" data-admin-copy="' + escapeHtml(value) + '">' + escapeHtml(i18n.t("admin.copy")) + '</button></div>';
+  return '<div class="admin-credential-backdrop" role="presentation"><section class="admin-credential-dialog" role="dialog" aria-modal="true" aria-labelledby="adminCredentialTitle"><header><div><h2 id="adminCredentialTitle">' + escapeHtml(i18n.t("admin.credentialsTitle")) + '</h2><p>' + escapeHtml(i18n.t("admin.credentialsWarning")) + '</p></div><button type="button" class="icon-close" data-admin-credentials-close aria-label="' + escapeHtml(i18n.t("admin.closeCredentials")) + '">×</button></header><dl>' + field("admin.deviceID", credential.deviceID) + field("admin.deviceToken", credential.deviceToken) + field("admin.serverURL", credential.serverURL) + '</dl><label class="credential-example"><span>' + escapeHtml(i18n.t("admin.configExample")) + '</span><textarea readonly>' + escapeHtml(config) + '</textarea><button type="button" class="secondary-action" data-admin-copy="' + escapeHtml(config) + '">' + escapeHtml(i18n.t("admin.copy")) + '</button></label><p class="credential-example-label">' + escapeHtml(i18n.t("admin.cliExample")) + '</p><code class="credential-cli">' + escapeHtml(cli) + '</code><button type="button" class="primary-action" data-admin-credentials-close>' + escapeHtml(i18n.t("admin.closeCredentials")) + '</button></section></div>';
+}
+
+function renderAdminDemoControls(view) {
+  if (!state.capabilities.has("admin.manage")) return "";
+  const busy = view.demoAction !== "idle";
+  const error = view.demoError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.demoError)) + "</p>" : "";
+  return '<section class="admin-demo-panel"><div><h2>' + escapeHtml(i18n.t("admin.demoTitle")) + '</h2><p>' + escapeHtml(i18n.t("admin.demoStarted")) + '</p></div><div class="admin-demo-actions"><button type="button" class="secondary-action" data-admin-demo="healthy"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoHealthy")) + '</button><button type="button" class="secondary-action" data-admin-demo="degrade"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoDegrade")) + '</button><button type="button" class="secondary-action" data-admin-demo="recover"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoRecover")) + '</button><button type="button" class="secondary-action" data-admin-demo="outage"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoOutage")) + '</button><button type="button" class="link-action" data-admin-demo-reset' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoReset")) + '</button></div>' + error + '</section>';
 }
 
 function renderAdminSurface() {
@@ -1383,6 +1555,12 @@ function renderAdminSurface() {
   const mutationBusy = view.mutationState === "saving";
   const resourceDefinition = adminResourceConfig(view.resource);
   const editorMode = adminEditorMode(view.resource, view.selectedId);
+  const supportsImpactPreview = ["policies", "contracts", "lines"].includes(view.resource);
+  const supportsAgentUpdate = ["agent-versions", "devices"].includes(view.resource);
+  const resourceContext = supportsImpactPreview ? "impact" : supportsAgentUpdate ? "agent" : "standard";
+  const generatedRecordID = editorMode === "create" && resourceDefinition?.writableFields?.includes("id")
+    ? (view.draftID || (view.draftID = adminGeneratedID(view.resource)))
+    : "";
   const rows = view.items.map((item) => {
     const id = adminRecordId(item);
     const presented = presentAdminRecord(view.resource, item, { i18n, presentation });
@@ -1390,15 +1568,15 @@ function renderAdminSurface() {
     const edit = resourceDefinition?.supportsUpdate && view.resource !== "schedule" && id ? '<button type="button" class="link-action" data-admin-edit="' + escapeHtml(String(id)) + '"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.update")) + "</button>" : "";
     const deviceDisabled = mutationBusy ? " disabled" : "";
     const deviceActions = view.resource === "devices" && id ? '<div class="admin-device-actions"><button type="button" class="link-action" data-admin-device-action="block" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.block")) + '</button><button type="button" class="link-action" data-admin-device-action="unblock" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.unblock")) + '</button><button type="button" class="link-action" data-admin-device-action="rotate-token" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.rotateToken")) + "</button></div>" : "";
-    return '<article class="admin-record"><dl class="detail-grid">' + cells + '</dl>' + edit + deviceActions + '<details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(presented.technical, null, 2)) + "</pre></details></article>";
+    const technical = '<details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(presented.technical, null, 2)) + "</pre></details>";
+    return '<article class="admin-record"><dl class="detail-grid">' + cells + '</dl>' + edit + deviceActions + technical + '</article>';
   }).join("");
   const payloadLabel = editorMode === "register" ? i18n.t("admin.registerDevice") : editorMode === "update" ? i18n.t("admin.update") : i18n.t("admin.create");
   const message = view.message ? '<p class="surface-state' + (view.mutationState === "error" ? " error" : "") + '" role="status">' + escapeHtml(i18n.t(view.message)) + "</p>" : "";
-  const impactControl = ["policies", "contracts", "lines"].includes(view.resource) ? '<button type="button" class="secondary-action" data-admin-impact' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.impactPreview")) + '</button>' : "";
-  const agentControl = ["agent-versions", "devices"].includes(view.resource) ? '<button type="button" class="secondary-action" data-admin-agent-update' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.agentUpdate")) + '</button>' : "";
-  const editor = editorMode ? '<form class="admin-editor" data-admin-editor><h2>' + escapeHtml(payloadLabel) + '</h2><label>' + escapeHtml(i18n.t("admin.recordId")) + '<input name="recordId" value="' + escapeHtml(view.selectedId) + '" placeholder="' + escapeHtml(i18n.t("empty.value")) + '"' + (editorMode === "update" ? " readonly" : "") + '></label><label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="payload" required spellcheck="false">' + escapeHtml(view.payload) + '</textarea></label><p class="form-hint">' + escapeHtml(i18n.t("admin.payloadHint")) + '</p><button type="submit" class="primary-action"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(payloadLabel) + '</button>' + impactControl + agentControl + '</form>' : '<div class="admin-editor"><p class="surface-state">' + escapeHtml(i18n.t("admin.resourceCapability")) + '</p>' + impactControl + agentControl + '</div>';
-  const preview = view.preview ? '<div class="admin-preview"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><p>' + escapeHtml(i18n.t("admin.previewReady")) + '</p><details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(view.preview, null, 2)) + '</pre></details></div>' : "";
-  root.innerHTML = '<div class="secondary-shell">' + header + '<div class="admin-toolbar"><label>' + escapeHtml(i18n.t("admin.resource")) + '<select data-admin-resource' + (mutationBusy ? " disabled" : "") + '>' + options + "</select></label></div>" + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("admin.empty")) + '</p>') + editor + message + preview + '</div>';
+  const hiddenRecordID = editorMode === "update" || generatedRecordID ? '<input type="hidden" name="recordId" value="' + escapeHtml(editorMode === "update" ? view.selectedId : generatedRecordID) + '">' : '';
+  const editor = editorMode ? '<form class="admin-editor" data-admin-editor><h2>' + escapeHtml(payloadLabel) + '</h2>' + hiddenRecordID + '<label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="payload" required spellcheck="false" hidden>' + escapeHtml(view.payload) + '</textarea></label><p class="form-hint">' + escapeHtml(i18n.t("admin.payloadHint")) + '</p><button type="submit" class="primary-action"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(payloadLabel) + '</button></form>' : '<div class="admin-editor"><p class="surface-state">' + escapeHtml(i18n.t("admin.resourceCapability")) + '</p></div>';
+  const preview = supportsImpactPreview && view.preview ? '<div class="admin-preview"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><p>' + escapeHtml(i18n.t("admin.previewReady")) + '</p><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("reports.measurements")) + '</dt><dd>' + escapeHtml(String(view.preview?.result?.measurements ?? view.preview?.input?.measurement_count ?? i18n.t("empty.noData"))) + '</dd></div><div><dt>' + escapeHtml(i18n.t("field.lines")) + '</dt><dd>' + escapeHtml(String(view.preview?.input?.line_count ?? i18n.t("empty.noData"))) + '</dd></div><div><dt>' + escapeHtml(i18n.t("admin.status")) + '</dt><dd>' + escapeHtml(presentation.status(view.preview?.status).label) + '</dd></div></dl><details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(view.preview, null, 2)) + '</pre></details></div>' : "";
+  root.innerHTML = '<div class="secondary-shell" data-admin-resource-context="' + escapeHtml(resourceContext) + '">' + header + renderAdminDemoControls(view) + '<div class="admin-toolbar"><label>' + escapeHtml(i18n.t("admin.resource")) + '<select data-admin-resource' + (mutationBusy ? " disabled" : "") + '>' + options + "</select></label></div>" + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("admin.empty")) + '</p>') + editor + message + preview + '</div>' + renderDeviceCredentialDialog(view);
   hydrateAdminEditorFields(root, view, resourceDefinition, editorMode);
   pruneUnavailableDeviceActions(root, view);
   bindAdminSurfaceEvents(root);
@@ -1408,6 +1586,7 @@ function bindAdminSurfaceEvents(root) {
   root.querySelector("[data-admin-resource]")?.addEventListener("change", (event) => {
     state.admin.resource = event.target.value;
     state.admin.selectedId = "";
+    state.admin.draftID = "";
     state.admin.payload = "{}";
     state.admin.message = "";
     loadAdminResource({ force: true });
@@ -1417,9 +1596,10 @@ function bindAdminSurfaceEvents(root) {
     const item = state.admin.items.find((candidate) => String(adminRecordId(candidate)) === String(button.dataset.adminEdit));
     if (!item) return;
     const id = String(adminRecordId(item));
-    const definition = adminResourceDefinition(state.admin.resource);
+    const definition = adminResourceConfig(state.admin.resource);
     if (!definition.supportsUpdate) return;
     state.admin.selectedId = id;
+    state.admin.draftID = "";
     state.admin.payload = JSON.stringify(writableAdminPayload(state.admin.resource, item, { id, operation: "update" }), null, 2);
     state.admin.message = "";
     renderAdminSurface();
@@ -1427,8 +1607,72 @@ function bindAdminSurfaceEvents(root) {
   }));
   root.querySelector("[data-admin-editor]")?.addEventListener("submit", submitAdminMutation);
   root.querySelectorAll("[data-admin-device-action]").forEach((button) => button.addEventListener("click", () => adminDeviceAction(button.dataset.adminDeviceId, button.dataset.adminDeviceAction)));
-  root.querySelector("[data-admin-impact]")?.addEventListener("click", runAdminImpactPreview);
-  root.querySelector("[data-admin-agent-update]")?.addEventListener("click", runAdminAgentUpdate);
+  root.querySelectorAll("[data-admin-demo]").forEach((button) => button.addEventListener("click", () => runAdminDemoScenario(button.dataset.adminDemo)));
+  root.querySelector("[data-admin-demo-reset]")?.addEventListener("click", resetAdminDemo);
+  root.querySelectorAll("[data-admin-credentials-close]").forEach((button) => button.addEventListener("click", () => {
+    state.admin.credential = null;
+    renderAdminSurface();
+  }));
+  root.querySelectorAll("[data-admin-copy]").forEach((button) => button.addEventListener("click", async () => {
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(button.dataset.adminCopy || "");
+      showToast("admin.copied");
+    } catch (error) {
+      showToast("admin.copyFailed", "warn");
+    }
+  }));
+}
+
+async function refreshAfterAdminDemo() {
+  await Promise.allSettled([
+    refreshMap(),
+    loadIncidents({ force: true }),
+    loadReports({ force: true }),
+  ]);
+}
+
+async function runAdminDemoScenario(scenario) {
+  const view = state.admin;
+  if (!scenario || view.demoAction !== "idle") return;
+  if (["degrade", "outage"].includes(scenario) && !globalThis.confirm?.(i18n.t("admin.demoConfirmDegrade"))) return;
+  view.demoAction = scenario;
+  view.demoError = "";
+  renderAdminSurface();
+  try {
+    await boundaries.admin.demoScenario(scenario);
+    await refreshAfterAdminDemo();
+    view.demoAction = "idle";
+    showToast("admin.demoStarted");
+  } catch (error) {
+    view.demoAction = "idle";
+    view.demoError = "admin.demoFailed";
+  }
+  renderAdminSurface();
+}
+
+async function resetAdminDemo() {
+  const view = state.admin;
+  if (view.demoAction !== "idle" || !globalThis.confirm?.(i18n.t("admin.demoConfirmReset"))) return;
+  view.demoAction = "reset";
+  view.demoError = "";
+  renderAdminSurface();
+  try {
+    await boundaries.admin.resetDemo();
+    view.credential = null;
+    view.selectedId = "";
+    view.draftID = "";
+    await Promise.allSettled([
+      loadAdminResource({ force: true }),
+      refreshAfterAdminDemo(),
+    ]);
+    view.demoAction = "idle";
+    showToast("admin.demoResetDone");
+  } catch (error) {
+    view.demoAction = "idle";
+    view.demoError = "admin.demoFailed";
+  }
+  renderAdminSurface();
 }
 
 async function loadAdminResource({ force = false } = {}) {
@@ -1441,7 +1685,25 @@ async function loadAdminResource({ force = false } = {}) {
   view.state = "loading";
   view.message = "";
   renderAdminSurface();
-  view.loadPromise = boundaries.admin.list(view.resource).then((items) => { view.items = Array.isArray(items) ? items : []; view.state = "ready"; }).catch(() => { view.items = []; view.state = "error"; view.message = "admin.unavailable"; }).finally(() => { view.loadPromise = null; renderAdminSurface(); });
+  const requestedResource = view.resource;
+  const relationResources = [requestedResource, "organizations", "providers", "lines", "monitoring-points"].filter((resource, index, resources) => resources.indexOf(resource) === index);
+  view.loadPromise = Promise.allSettled(relationResources.map((resource) => boundaries.admin.list(resource))).then((results) => {
+    const records = new Map(relationResources.map((resource, index) => [resource, results[index]]));
+    const current = records.get(requestedResource);
+    if (view.resource !== requestedResource) return;
+    if (current?.status !== "fulfilled") {
+      view.items = [];
+      view.state = "error";
+      view.message = "admin.unavailable";
+      return;
+    }
+    view.items = Array.isArray(current.value) ? current.value : [];
+    view.relationships = Object.fromEntries(["organizations", "providers", "lines", "monitoring-points"].map((resource) => {
+      const result = records.get(resource);
+      return [resource, result?.status === "fulfilled" && Array.isArray(result.value) ? result.value : []];
+    }));
+    view.state = "ready";
+  }).catch(() => { view.items = []; view.state = "error"; view.message = "admin.unavailable"; }).finally(() => { view.loadPromise = null; renderAdminSurface(); });
   return view.loadPromise;
 }
 
@@ -1453,7 +1715,24 @@ function parseAdminPayload(root) {
         if (field.type === "checkbox") return [field.dataset.adminField, field.checked];
         const raw = field.value.trim();
         if (!raw) return [field.dataset.adminField, undefined];
+        if (field.dataset.adminField === "scopes") {
+          const scopes = raw.split(",").map((value) => value.trim()).filter(Boolean).map((value) => {
+            const [scopeType, ...scopeID] = value.split(":");
+            return { scope_type: String(scopeType || "").trim().toUpperCase(), scope_id: scopeID.join(":").trim() };
+          }).filter((scope) => scope.scope_type && scope.scope_id);
+          return [field.dataset.adminField, scopes];
+        }
         if (ADMIN_EDITOR_STRUCTURED_FIELDS.has(field.dataset.adminField)) return [field.dataset.adminField, JSON.parse(raw)];
+        if (adminNumberField(field.dataset.adminField)) {
+          const numeric = Number(raw);
+          if (!Number.isFinite(numeric) || (adminIntegerField(field.dataset.adminField) && !Number.isInteger(numeric))) throw new Error("number expected");
+          return [field.dataset.adminField, numeric];
+        }
+        if (ADMIN_EDITOR_DATETIME_FIELDS.has(field.dataset.adminField)) {
+          const date = new Date(raw);
+          if (Number.isNaN(date.getTime())) throw new Error("date expected");
+          return [field.dataset.adminField, date.toISOString()];
+        }
         return [field.dataset.adminField, raw];
       }).filter(([, value]) => value !== undefined))
       : JSON.parse(root.querySelector("[name=payload]")?.value || "{}");
@@ -1496,8 +1775,12 @@ async function submitAdminMutation(event) {
   renderAdminSurface();
   try {
     const result = mode === "register" ? await boundaries.admin.registerDevice(payload) : await boundaries.admin.save(resource, id, normalizedPayload);
+    const resultPayload = objectPayload(result);
+    if (mode === "register" && resultPayload?.device_token) {
+      state.admin.credential = { deviceID: resultPayload.device_id || payload.device_id, deviceToken: resultPayload.device_token, serverURL: globalThis.location?.origin || "" };
+    }
     state.admin.selectedId = String(adminRecordId(result) || id || "");
-    state.admin.payload = JSON.stringify(result || payload, null, 2);
+    state.admin.payload = JSON.stringify(resultPayload || payload, null, 2);
     state.admin.mutationState = "success";
     state.admin.message = "admin.mutationSucceeded";
     await loadAdminResource({ force: true });
@@ -1517,6 +1800,9 @@ async function adminDeviceAction(id, action) {
   renderAdminSurface();
   try {
     const result = objectPayload(await boundaries.admin.deviceAction(id, action));
+    if (action === "rotate-token" && result?.device_token) {
+      state.admin.credential = { deviceID: result.device_id || id, deviceToken: result.device_token, serverURL: globalThis.location?.origin || "" };
+    }
     state.admin.payload = JSON.stringify(result || {}, null, 2);
     state.admin.mutationState = "success";
     state.admin.message = "admin.mutationSucceeded";
@@ -1577,8 +1863,10 @@ function auditMatchesSearch(item, query) {
     .filter(Boolean).join(" ").toLocaleLowerCase().includes(needle);
 }
 
-function auditTechnicalDetails(entry) {
-  return {
+function renderAuditSelection(item) {
+  if (!item) return '<aside class="audit-selection" aria-live="polite"><h2>' + escapeHtml(i18n.t("audit.title")) + '</h2><p class="surface-state">' + escapeHtml(i18n.t("audit.selectHint")) + "</p></aside>";
+  const entry = presentAuditItem(item, { i18n, presentation });
+  const technical = {
     action: entry.rawAction,
     object_type: entry.rawObjectType,
     object_id: entry.rawObject,
@@ -1586,13 +1874,8 @@ function auditTechnicalDetails(entry) {
     actor_id: entry.rawActor,
     payload: entry.payload,
   };
-}
-
-function renderAuditSelection(item) {
-  if (!item) return '<aside class="audit-selection" aria-live="polite"><h2>' + escapeHtml(i18n.t("audit.title")) + '</h2><p class="surface-state">' + escapeHtml(i18n.t("audit.selectHint")) + "</p></aside>";
-  const entry = presentAuditItem(item, { i18n, presentation });
-  const technical = auditTechnicalDetails(entry);
   return '<aside class="audit-selection" aria-live="polite"><h2>' + escapeHtml(entry.actionLabel) + '</h2><dl class="detail-grid">'
+    + '<div><dt>' + escapeHtml(i18n.t("audit.description")) + '</dt><dd>' + escapeHtml(entry.description) + '</dd></div>'
     + '<div><dt>' + escapeHtml(i18n.t("audit.action")) + '</dt><dd>' + escapeHtml(entry.actionLabel) + '</dd></div>'
     + '<div><dt>' + escapeHtml(i18n.t("audit.object")) + '</dt><dd>' + escapeHtml(entry.objectLabel) + '</dd></div>'
     + '<div><dt>' + escapeHtml(i18n.t("audit.actor")) + '</dt><dd>' + escapeHtml(entry.actorLabel) + '</dd></div>'
@@ -1669,7 +1952,7 @@ async function loadAuditLog({ force = false } = {}) {
   view.loadMoreError = "";
   view.state = "loading";
   renderAuditSurface();
-  view.loadPromise = boundaries.audit.list({ limit: "50", ...view.filters }).then((response) => {
+  view.loadPromise = boundaries.audit.list({ limit: "50", ...view.filters, search: view.search }).then((response) => {
     view.items = Array.isArray(response) ? response : (Array.isArray(response?.items) ? response.items : []);
     view.nextBeforeId = response?.next_before_id || "";
     view.hasMore = response?.has_more === true && Boolean(view.nextBeforeId);
@@ -1685,7 +1968,7 @@ async function loadMoreAudit() {
   view.loadMoreError = "";
   renderAuditSurface();
   try {
-    const response = await boundaries.audit.list({ limit: "50", ...view.filters, before_id: view.nextBeforeId });
+    const response = await boundaries.audit.list({ limit: "50", ...view.filters, search: view.search, before_id: view.nextBeforeId });
     const nextItems = Array.isArray(response) ? response : (Array.isArray(response?.items) ? response.items : []);
     const knownIDs = new Set(view.items.map((item) => String(item?.id || "")));
     view.items = view.items.concat(nextItems.filter((item) => {
@@ -1758,6 +2041,7 @@ function renderIncidentDetail() {
 
   const detail = view.detail;
   const incident = presentIncident(detail, { i18n, presentation });
+  const incidentActionsState = incidentActions(detail, state.capabilities, view.actionState);
   const recovery = presentRecovery(detail, { i18n });
   const confirmation = detail?.evidence_chain?.confirmation;
   const evidenceCount = Number(confirmation?.count);
@@ -1767,16 +2051,17 @@ function renderIncidentDetail() {
   const events = presentTimeline(detail.events, { i18n, presentation });
   const timeline = events.length ? events.map((event) => '<li><time>' + escapeHtml(event.atLabel) + '</time><div><strong>' + escapeHtml(event.label) + "</strong>" + (event.note ? '<p>' + escapeHtml(event.note) + "</p>" : "") + (event.status ? '<small>' + escapeHtml(event.status) + "</small>" : "") + (event.actor ? '<small class="timeline-actor">' + escapeHtml(event.actor) + "</small>" : "") + "</div></li>").join("") : '<p class="surface-state">' + escapeHtml(i18n.t("incidents.timelineEmpty")) + "</p>";
   const lineAvailable = Boolean(map.getLine(detail.line_id));
-  const canComment = state.capabilities.has("incident.update");
+  const canComment = incidentActionsState.canComment;
   const commentForm = canComment ? '<form class="incident-comment-form" data-incident-comment><label for="incidentComment">' + escapeHtml(i18n.t("incidents.comment")) + '</label><textarea id="incidentComment" required maxlength="4000" placeholder="' + escapeHtml(i18n.t("incidents.commentPlaceholder")) + '"></textarea><button class="secondary-action" type="submit">' + escapeHtml(i18n.t("incidents.sendComment")) + "</button></form>" : "";
-  return '<header class="incident-detail-head"><span class="severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.severityLabel) + "</span><h2>" + escapeHtml(incident.number) + "</h2><p>" + escapeHtml(incident.statusLabel) + "</p></header><section><h3>" + escapeHtml(i18n.t("incidents.what")) + "</h3><p>" + escapeHtml(incident.typeLabel) + '</p></section><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("incidents.where")) + "</dt><dd>" + escapeHtml(incident.school) + " · " + escapeHtml(incident.line) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.when")) + "</dt><dd>" + escapeHtml(incident.startedLabel) + " · " + escapeHtml(incident.durationLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.confirmed")) + "</dt><dd>" + escapeHtml(confirmed) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.recovery")) + "</dt><dd>" + escapeHtml(recovery.label) + "</dd></div>" + (detail.assignee ? "<div><dt>" + escapeHtml(i18n.t("field.assignee")) + "</dt><dd>" + escapeHtml(detail.assignee) + "</dd></div>" : "") + "</dl>" + (lineAvailable ? '<button class="secondary-action" type="button" data-incident-open-line="' + escapeHtml(detail.line_id) + '">' + escapeHtml(i18n.t("incidents.openLine")) + "</button>" : "") + '<section><h3>' + escapeHtml(i18n.t("incidents.timelineGroup")) + "</h3><ol class=\"incident-timeline\">" + timeline + "</ol>" + commentForm + "</section>" + renderIncidentActionControls(detail) + renderProviderCaseContext(detail) + renderSituationContext(detail.id);
+  const closedNotice = incidentActionsState.closed ? '<p class="closed-readonly" role="status">' + escapeHtml(i18n.t("incidents.closedReadOnly")) + "</p>" : "";
+  return '<header class="incident-detail-head"><span class="severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.severityLabel) + "</span><h2>" + escapeHtml(incident.number) + "</h2><p>" + escapeHtml(incident.statusLabel) + "</p></header>" + closedNotice + '<section><h3>' + escapeHtml(i18n.t("incidents.what")) + "</h3><p>" + escapeHtml(incident.typeLabel) + '</p></section><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("incidents.where")) + "</dt><dd>" + escapeHtml(incident.school) + " · " + escapeHtml(incident.line) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.when")) + "</dt><dd>" + escapeHtml(incident.startedLabel) + " · " + escapeHtml(incident.durationLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.confirmed")) + "</dt><dd>" + escapeHtml(confirmed) + "</dd></div><div><dt>" + escapeHtml(i18n.t("incidents.recovery")) + "</dt><dd>" + escapeHtml(recovery.label) + "</dd></div>" + (detail.assignee ? "<div><dt>" + escapeHtml(i18n.t("field.assignee")) + "</dt><dd>" + escapeHtml(detail.assignee) + "</dd></div>" : "") + "</dl>" + (lineAvailable ? '<button class="secondary-action" type="button" data-incident-open-line="' + escapeHtml(detail.line_id) + '">' + escapeHtml(i18n.t("incidents.openLine")) + "</button>" : "") + '<section><h3>' + escapeHtml(i18n.t("incidents.timelineGroup")) + "</h3><ol class=\"incident-timeline\">" + timeline + "</ol>" + commentForm + "</section>" + renderIncidentActionControls(detail) + renderProviderCaseContext(detail) + renderSituationContext(detail.id);
 }
 
 function renderProviderCaseContext(incident) {
   const view = incidentSurfaceState();
   const providerView = view.providerCase;
   const cases = Array.isArray(incident.provider_cases) ? incident.provider_cases : [];
-  const canPrepare = providerCaseActions(null, state.capabilities).canPrepare;
+  const canPrepare = providerCaseActions({ incident }, state.capabilities).canPrepare && incidentActions(incident, state.capabilities).closed !== true;
   const list = cases.length ? '<ul class="case-summary">' + cases.map((item) => {
     const current = String(providerView.selectedId) === String(item.id);
     return '<li><button class="link-action" type="button" data-provider-case-id="' + escapeHtml(item.id) + '"' + (current ? ' aria-current="true"' : "") + '>' + escapeHtml(i18n.t("field.providerCase")) + " #" + escapeHtml(item.ticket_no || item.external_ticket_no || item.id) + ' <span>' + escapeHtml(presentation.deliveryStatus(item.delivery_status)) + "</span></button></li>";
@@ -1798,11 +2083,13 @@ function renderSelectedProviderCase() {
   const actions = providerCaseActions(providerView.detail, state.capabilities);
   const metadata = '<dl class="detail-grid provider-case-fields"><div><dt>' + escapeHtml(i18n.t("providerCase.source")) + "</dt><dd>" + escapeHtml(item.sourceLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.status")) + "</dt><dd>" + escapeHtml(item.statusLabel) + " · " + escapeHtml(item.deliveryLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.createdAt")) + "</dt><dd>" + escapeHtml(item.createdAtLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.lastVerified")) + "</dt><dd>" + escapeHtml(item.lastVerifiedLabel) + "</dd></div><div><dt>" + escapeHtml(i18n.t("providerCase.provenance")) + "</dt><dd>" + escapeHtml(item.provenanceLabel) + "</dd></div>" + (item.externalReference ? "<div><dt>" + escapeHtml(i18n.t("providerCase.reference")) + "</dt><dd>" + escapeHtml(item.externalReference) + "</dd></div>" : "") + (item.status === "SENT" ? "<div><dt>" + escapeHtml(i18n.t("providerCase.sentAt")) + "</dt><dd>" + escapeHtml(item.sentAtLabel) + "</dd></div>" : "") + "</dl>";
   const automatic = providerView.generated?.provider ? '<p class="detail-muted">' + escapeHtml(i18n.t("providerCase.automaticDraft")) + "</p>" : "";
-  const draft = item.text ? '<label class="provider-case-text"><span>' + escapeHtml(i18n.t("providerCase.text")) + '</span><textarea data-provider-case-text maxlength="32768"' + (actions.canSend ? "" : " readonly") + ">" + escapeHtml(item.text) + "</textarea></label>" : '<p class="provider-case-error">' + escapeHtml(i18n.t("providerCase.textUnavailable")) + "</p>";
+  const closedNotice = actions.parentClosed ? '<p class="closed-readonly" role="status">' + escapeHtml(i18n.t("providerCase.closedReadOnly")) + "</p>" : "";
+  const draft = item.text ? '<label class="provider-case-text"><span>' + escapeHtml(i18n.t("providerCase.text")) + '</span><textarea data-provider-case-text maxlength="32768"' + (actions.canEdit ? "" : " readonly") + ">" + escapeHtml(item.text) + "</textarea></label>" : '<p class="provider-case-error">' + escapeHtml(i18n.t("providerCase.textUnavailable")) + "</p>";
   const generate = actions.canGenerate ? '<button class="secondary-action" type="button" data-provider-case-generate' + (providerView.actionState !== "idle" ? " disabled" : "") + ">" + escapeHtml(i18n.t("providerCase.prepareAutomatic")) + "</button>" : "";
+  const save = actions.canEdit && item.text ? '<button class="secondary-action" type="button" data-provider-case-save' + (providerView.actionState !== "idle" ? " disabled" : "") + ">" + escapeHtml(i18n.t("providerCase.saveDraft")) + "</button>" : "";
   const send = actions.canSend && item.text ? '<form class="provider-case-send" data-provider-case-send><label><input type="checkbox" data-provider-case-reviewed required' + (providerView.actionState !== "idle" ? " disabled" : "") + ' /> ' + escapeHtml(i18n.t("providerCase.reviewed")) + '</label><button class="primary-action" type="submit" data-provider-case-submit' + (providerView.actionState !== "idle" ? " disabled" : "") + ' disabled>' + escapeHtml(i18n.t(actions.isRetry ? "providerCase.retry" : "providerCase.send")) + "</button></form>" : "";
-  const delivery = item.deliveryError ? '<details class="provider-case-delivery"><summary>' + escapeHtml(i18n.t("providerCase.deliveryFailed")) + "</summary><p>" + escapeHtml(i18n.t("providerCase.deliveryAttempts", { count: item.deliveryAttempts })) + (item.nextAttemptLabel !== i18n.t("empty.value") ? " · " + escapeHtml(i18n.t("providerCase.nextAttempt", { at: item.nextAttemptLabel })) : "") + "</p><p>" + escapeHtml(item.deliveryError) + "</p></details>" : "";
-  return '<article class="provider-case-detail"><h4>' + escapeHtml(i18n.t("providerCase.title", { reference: item.reference })) + "</h4>" + metadata + automatic + draft + '<div class="provider-case-actions">' + generate + "</div>" + send + delivery + "</article>";
+  const delivery = item.deliveryError ? '<details class="provider-case-delivery"><summary>' + escapeHtml(i18n.t("providerCase.deliveryFailed")) + "</summary><p>" + escapeHtml(i18n.t("providerCase.deliveryAttempts", { count: item.deliveryAttempts })) + (item.nextAttemptLabel !== i18n.t("empty.value") ? " · " + escapeHtml(i18n.t("providerCase.nextAttempt", { at: item.nextAttemptLabel })) : "") + "</p><p>" + escapeHtml(i18n.t("providerCase.deliveryErrorHint")) + "</p></details>" : "";
+  return '<article class="provider-case-detail"><h4>' + escapeHtml(i18n.t("providerCase.title", { reference: item.reference })) + '</h4><p class="provider-case-steps">' + escapeHtml(i18n.t("providerCase.steps")) + '</p>' + metadata + closedNotice + automatic + draft + '<div class="provider-case-actions">' + generate + save + "</div>" + send + delivery + "</article>";
 }
 
 function renderSituationContext(incidentId) {
@@ -1958,8 +2245,66 @@ async function submitSituationAction(event) {
   renderIncidentsSurface();
 }
 
+function cancelIncidentCreate() {
+  const view = incidentSurfaceState();
+  view.createOpen = false;
+  view.createState = "idle";
+  view.createError = "";
+  view.createDraft = { line_id: "", violation_type: "MANUAL_REVIEW", description: "", assignee: "" };
+  renderIncidentsSurface();
+}
+
+async function submitIncidentCreate(event) {
+  event.preventDefault();
+  const view = incidentSurfaceState();
+  if (!state.capabilities.has("incident.create") || view.createState === "saving") return;
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  view.createDraft = {
+    line_id: String(values.line_id || ""),
+    violation_type: String(values.violation_type || "MANUAL_REVIEW"),
+    description: String(values.description || "").trim(),
+    assignee: String(values.assignee || "").trim(),
+  };
+  if (!view.createDraft.line_id || !view.createDraft.description) {
+    view.createError = "error.422";
+    renderIncidentsSurface();
+    return;
+  }
+  view.createState = "saving";
+  view.createError = "";
+  renderIncidentsSurface();
+  try {
+    const payload = { line_id: view.createDraft.line_id, violation_type: view.createDraft.violation_type, description: view.createDraft.description, source: "MANUAL" };
+    if (view.createDraft.assignee) payload.assignee = view.createDraft.assignee;
+    const created = objectPayload(await boundaries.incidents.create(payload));
+    const createdID = created?.id;
+    view.createOpen = false;
+    view.createState = "idle";
+    view.createError = "";
+    view.createDraft = { line_id: "", violation_type: "MANUAL_REVIEW", description: "", assignee: "" };
+    view.selectedId = null;
+    view.detail = null;
+    view.detailState = "idle";
+    await loadIncidents({ force: true });
+    if (createdID !== undefined && createdID !== null) await selectIncident(createdID);
+  } catch (error) {
+    view.createState = "error";
+    view.createError = "incidents.createFailed";
+    renderIncidentsSurface();
+  }
+}
+
 function bindIncidentSurfaceEvents(root) {
   root.querySelector("[data-incidents-refresh]")?.addEventListener("click", () => loadIncidents({ force: true }));
+  root.querySelector("[data-incident-create-open]")?.addEventListener("click", () => {
+    const view = incidentSurfaceState();
+    view.createOpen = true;
+    view.createError = "";
+    if (!view.createDraft.line_id) view.createDraft.line_id = incidentCreateLines()[0]?.id || "";
+    renderIncidentsSurface();
+  });
+  root.querySelectorAll("[data-incident-create-cancel]").forEach((button) => button.addEventListener("click", cancelIncidentCreate));
+  root.querySelector("[data-incident-create]")?.addEventListener("submit", submitIncidentCreate);
   root.querySelectorAll("[data-incident-filter]").forEach((control) => control.addEventListener("change", () => {
     incidentSurfaceState().filters[control.dataset.incidentFilter] = control.value;
     renderIncidentsSurface();
@@ -1974,6 +2319,7 @@ function bindIncidentSurfaceEvents(root) {
     const submit = root.querySelector("[data-provider-case-submit]");
     if (submit) submit.disabled = !event.currentTarget.checked;
   });
+  root.querySelector("[data-provider-case-save]")?.addEventListener("click", saveProviderCaseDraft);
   root.querySelector("[data-provider-case-send]")?.addEventListener("submit", sendProviderCase);
   root.querySelectorAll("[data-situation-action-form]").forEach((form) => form.addEventListener("submit", submitSituationAction));
   root.querySelector("[data-situation-back]")?.addEventListener("click", () => { const view = incidentSurfaceState(); view.selectedSituationId = null; view.situation = null; view.situationState = "idle"; view.situationActionState = "idle"; view.situationActionError = ""; renderIncidentsSurface(); });
@@ -2050,7 +2396,7 @@ async function selectProviderCase(id) {
   const view = incidentSurfaceState();
   if (!view.detail || !view.selectedId) return;
   view.providerCase = { selectedId: id, state: "loading", detail: null, actionState: "idle", actionError: "", generated: null };
-  renderIncidentsSurface();
+  renderIncidentsPreservingScroll();
   try {
     const detail = objectPayload(await boundaries.providerCases.get(id));
     if (String(view.providerCase.selectedId) !== String(id) || String(view.selectedId) !== String(view.detail?.id)) return;
@@ -2061,24 +2407,24 @@ async function selectProviderCase(id) {
     if (String(view.providerCase.selectedId) !== String(id)) return;
     view.providerCase.state = "error";
   }
-  renderIncidentsSurface();
+  renderIncidentsPreservingScroll();
 }
 
 async function createIncidentProviderCase() {
   const view = incidentSurfaceState();
-  if (!view.selectedId || !view.detail || view.providerCase.actionState !== "idle" || !providerCaseActions(null, state.capabilities).canPrepare) return;
+  if (!view.selectedId || !view.detail || view.providerCase.actionState !== "idle" || !providerCaseActions({ incident: view.detail }, state.capabilities).canPrepare) return;
   if (!globalThis.confirm?.(i18n.t("providerCase.confirmPrepare"))) return;
   view.providerCase.actionState = "creating";
   view.providerCase.actionError = "";
-  renderIncidentsSurface();
+  renderIncidentsPreservingScroll();
   try {
-    const created = objectPayload(await boundaries.incidents.createProviderCaseDraft(view.selectedId));
+    const created = objectPayload(await boundaries.incidents.createProviderCaseDraft(view.selectedId, { locale: i18n.locale }));
     await loadIncidentDetail(view.selectedId);
     await selectProviderCase(created.id);
   } catch (error) {
     view.providerCase.actionState = "idle";
     view.providerCase.actionError = "providerCase.prepareFailed";
-    renderIncidentsSurface();
+    renderIncidentsPreservingScroll();
   }
 }
 
@@ -2089,9 +2435,9 @@ async function generateProviderCaseDraft() {
   if (!globalThis.confirm?.(i18n.t("providerCase.confirmAutomatic"))) return;
   view.providerCase.actionState = "generating";
   view.providerCase.actionError = "";
-  renderIncidentsSurface();
+  renderIncidentsPreservingScroll();
   try {
-    const generated = objectPayload(await boundaries.providerCases.aiDraft(detail.id));
+    const generated = objectPayload(await boundaries.providerCases.aiDraft(detail.id, undefined, i18n.locale));
     if (String(view.providerCase.selectedId) !== String(detail.id)) return;
     view.providerCase.detail = { ...detail, ...generated };
     view.providerCase.generated = generated;
@@ -2101,7 +2447,31 @@ async function generateProviderCaseDraft() {
     view.providerCase.actionState = "idle";
     view.providerCase.actionError = "providerCase.automaticFailed";
   }
-  renderIncidentsSurface();
+  renderIncidentsPreservingScroll();
+}
+
+async function saveProviderCaseDraft() {
+  const view = incidentSurfaceState();
+  const detail = view.providerCase.detail;
+  const textControl = $("[data-provider-case-text]", $("#incidentsSurface"));
+  const draftText = textControl?.value.trim() || "";
+  const actions = providerCaseActions(detail, state.capabilities, view.providerCase.actionState);
+  if (!detail || !draftText || !actions.canEdit) return;
+  view.providerCase.actionState = "saving";
+  view.providerCase.actionError = "";
+  renderIncidentsPreservingScroll();
+  try {
+    const saved = objectPayload(await boundaries.providerCases.saveDraft(detail.id, { draft_text: draftText }));
+    if (String(view.providerCase.selectedId) !== String(detail.id)) return;
+    view.providerCase.detail = { ...detail, ...saved, draft_text: saved?.draft_text || draftText, final_text: saved?.final_text || null };
+    view.providerCase.actionState = "idle";
+    showToast("providerCase.draftSaved");
+  } catch (error) {
+    if (String(view.providerCase.selectedId) !== String(detail.id)) return;
+    view.providerCase.actionState = "idle";
+    view.providerCase.actionError = "providerCase.draftSaveFailed";
+  }
+  renderIncidentsPreservingScroll();
 }
 
 async function sendProviderCase(event) {
@@ -2115,7 +2485,7 @@ async function sendProviderCase(event) {
   const request = providerCaseDeliveryRequest(detail, { finalText, incidentId: view.selectedId, reviewed: true });
   view.providerCase.actionState = request.operation === "retry" ? "retrying" : "sending";
   view.providerCase.actionError = "";
-  renderIncidentsSurface();
+  renderIncidentsPreservingScroll();
   try {
     const delivered = request.operation === "retry"
       ? await boundaries.providerCases.retry(detail.id, request.payload)
@@ -2139,7 +2509,7 @@ async function sendProviderCase(event) {
     } catch (refreshError) {
       view.providerCase.state = "error";
     }
-    renderIncidentsSurface();
+    renderIncidentsPreservingScroll();
   }
 }
 
@@ -2173,7 +2543,7 @@ async function submitIncidentComment(event) {
   event.preventDefault();
   const view = incidentSurfaceState();
   const note = event.currentTarget.querySelector("textarea")?.value.trim();
-  if (!note || !view.selectedId || !view.detail || !state.capabilities.has("incident.update")) return;
+  if (!note || !view.selectedId || !view.detail || !incidentActions(view.detail, state.capabilities).canComment) return;
   if (!globalThis.confirm?.(i18n.t("incidents.confirmComment"))) return;
   const submit = event.currentTarget.querySelector("button[type=submit]");
   if (submit) submit.disabled = true;
@@ -2195,6 +2565,7 @@ async function submitIncidentComment(event) {
 
 async function openIncident(id) {
   if (!state.capabilities.canRead("incident")) return;
+  if (state.notifications.open) closeNotifications(false);
   router.navigate("incidents");
   await loadIncidents();
   await selectIncident(id);
@@ -2284,6 +2655,9 @@ function bindEvents() {
   $("#mapZoomOut")?.addEventListener("click", () => mapControlAction("zoomOut"));
   $("#mapReset")?.addEventListener("click", () => globalThis.LinkwatchMap?.resetView());
   document.addEventListener("keydown", (event) => { trapOverlayFocus(event); if (event.key === "Escape") { if (state.notifications.open) closeNotifications(); else if (!$("#mapPopup")?.hidden) closeMapPopup(); else if (!$("#detailDrawer")?.hidden) closeDrawer(); } });
+  globalThis.addEventListener?.("linkwatch:map-cluster-expanded", () => {
+    if (state.mapPopupContext?.kind === "registry-cluster") closeMapPopup(false);
+  });
   globalThis.LinkwatchMap?.setMarkerClickHandler((context, marker) => openMapPopup(context, marker));
 }
 

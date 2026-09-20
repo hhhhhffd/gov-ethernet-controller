@@ -52,11 +52,19 @@ export function createProviderCaseBoundary(api) {
     async create(payload) {
       return api.tryRequest(apiAliases("/provider-cases"), { method: "POST", body: JSON.stringify(payload) });
     },
-    async aiDraft(id, idempotencyKey = `linkwatch-ai-${id}-${Date.now()}`) {
+    async aiDraft(id, idempotencyKey = `linkwatch-ai-${id}-${Date.now()}`, locale = "ru") {
       return api.tryRequest(apiAliases(providerCasePath(id, "/ai-draft")), {
         method: "POST",
         headers: { "Idempotency-Key": idempotencyKey },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ locale }),
+      });
+    },
+    async saveDraft(id, payload = {}) {
+      const draftText = String(payload.draft_text ?? payload.text ?? "").trim();
+      if (!draftText) throw Object.assign(new Error("Черновик не может быть пустым"), { status: 422, code: "draft_required" });
+      return api.tryRequest(apiAliases(providerCasePath(id, "/draft")), {
+        method: "PATCH",
+        body: JSON.stringify({ draft_text: draftText }),
       });
     },
     async send(id, payload = {}) {

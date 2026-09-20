@@ -37,7 +37,7 @@ const ADMIN_FIELD_LABEL_KEYS = Object.freeze({
   district: "field.district",
   address: "field.address",
   active: "admin.status",
-  support_contact: "field.provider",
+  support_contact: "admin.supportContact",
   organization_name: "field.school",
   provider_name: "field.provider",
   role: "field.lineRole",
@@ -51,10 +51,10 @@ const ADMIN_FIELD_LABEL_KEYS = Object.freeze({
   agent_version: "audit.version",
   last_seen: "audit.lastSeen",
   blocked: "admin.status",
-  tests_per_day: "admin.identity",
-  performance_tests_per_day: "admin.identity",
+  tests_per_day: "admin.testsPerDay",
+  performance_tests_per_day: "admin.performanceTestsPerDay",
   jitter_minutes: "field.jitter",
-  light_checks_between: "admin.status",
+  light_checks_between: "admin.lightChecksBetween",
   scope_type: "field.registryProvenance",
   version: "audit.version",
   valid_from: "audit.at",
@@ -67,8 +67,8 @@ const ADMIN_FIELD_LABEL_KEYS = Object.freeze({
   jitter_max: "field.jitter",
   packet_loss_max: "field.loss",
   availability_min: "field.metrics",
-  recommended: "admin.status",
-  minimum_supported: "admin.status",
+  recommended: "admin.recommended",
+  minimum_supported: "admin.minimumSupported",
   release_at: "audit.at",
 });
 
@@ -92,6 +92,8 @@ function humanEventLabel(value, { i18n, presentation }) {
   const action = presentation.action(value);
   if (action !== i18n.t("action.unknown")) return action;
   const normalized = String(value).trim().toLowerCase().replace(/_/g, ".");
+  const aliases = { "incident.created.manual": "event.manual.created", "provider.case.draft.updated": "event.provider.draft.created" };
+  if (aliases[normalized] && i18n.has(aliases[normalized])) return i18n.t(aliases[normalized]);
   const suffix = normalized.replace(/^(incident|notification)\./, "");
   if (i18n.has(`event.${suffix}`)) return i18n.t(`event.${suffix}`);
   return presentation.event(value);
@@ -132,9 +134,15 @@ function adminFieldLabel(key, i18n) {
 
 function adminFieldValue(key, value, { i18n, presentation }) {
   if (value === null || value === undefined || value === "") return i18n.t("empty.noData");
-  if (typeof value === "boolean") return value ? i18n.t("status.ATTENTION") : i18n.t("status.OK");
+  if (typeof value === "boolean") {
+    if (key === "active") return presentation.lineState(value ? "ACTIVE" : "INACTIVE");
+    if (key === "disabled") return i18n.t(value ? "admin.disabled" : "admin.enabled");
+    if (key === "blocked") return i18n.t(value ? "admin.blocked" : "admin.unblocked");
+    return i18n.t(value ? "admin.yes" : "admin.no");
+  }
   if (key === "technology") return presentation.connectionType(value);
   if (key === "scope_type") return humanScopeLabel(value, i18n);
+  if (key === "status" && i18n.has("lineState." + code(value))) return presentation.lineState(value);
   if (/status|state|active|blocked|recommended|supported|disabled|primary/i.test(key)) return presentation.status(value).label;
   if (key === "role") return presentation.role(value);
   if (/created_at|updated_at|last_seen|release_at|valid_from|valid_to|contract_date/i.test(key)) return presentation.formatDate(value, true);
@@ -158,16 +166,22 @@ export function presentNotification(item, { i18n, presentation, capabilities, pe
   const source = item?.source_type || item?.event_type || item?.type;
   const message = localizedMessage(item, { i18n });
   const rawMessage = typeof item?.message === "string" ? item.message : "";
+  const status = code(item?.status);
+  const deliveryFailed = status === "FAILED" || status === "DELIVERY_FAILED" || item?.delivery_retryable === true;
+  const incidentID = item?.incident_id || (code(source) === "INCIDENT" && /^\d+$/.test(String(item?.source_id || "")) ? item.source_id : "");
+  const place = item?.school_name || item?.organization_name || item?.line_name || item?.provider_name || "";
   return {
     id: item?.id,
-    status: code(item?.status),
+    status,
     message: message.value,
     messageIsLocalized: message.localized,
     sourceLabel: humanNotificationSource(source, i18n),
     deliveryLabel: presentation.deliveryStatus(item?.status),
     generatedLabel: presentation.formatDate(item?.generated_at || item?.created_at, true),
-    nextAttemptLabel: item?.next_attempt_at ? presentation.formatDate(item.next_attempt_at, true) : "",
+    nextAttemptLabel: deliveryFailed && item?.next_attempt_at ? presentation.formatDate(item.next_attempt_at, true) : "",
     attempts: item?.delivery_attempts,
+    incidentId: incidentID,
+    placeLabel: place,
     scopeAvailable: Boolean(item?.line_id || item?.organization_id || item?.school_id || item?.incident_id),
     actions: capabilities ? notificationActions(item, capabilities, pending) : null,
     rawSource: source || "",
@@ -185,13 +199,14 @@ export function presentAuditItem(item, { i18n, presentation }) {
     id: item?.id,
     actionLabel: humanEventLabel(action, { i18n, presentation }),
     objectLabel: humanObjectLabel(item?.object_type, i18n),
-    actorLabel: actorName?.trim() || (actorType === "SYSTEM" ? i18n.t("event.unknown") : i18n.t("empty.noData")),
+    actorLabel: actorName?.trim() || (actorType === "SYSTEM" ? i18n.t("audit.systemActor") : i18n.t("empty.noData")),
     atLabel: presentation.formatDate(item?.created_at || item?.at, true),
     rawAction: item?.action || item?.event_type || "",
     rawObjectType: item?.object_type || "",
     rawObject: item?.object_id || "",
     rawActorType: item?.actor_type || "",
     rawActor: item?.actor_id || "",
+    description: [humanEventLabel(action, { i18n, presentation }), humanObjectLabel(item?.object_type, i18n)].filter(Boolean).join(" · "),
     payload: item?.metadata || item?.after || item?.before || null,
   };
 }

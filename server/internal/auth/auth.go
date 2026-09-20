@@ -39,11 +39,13 @@ func EffectiveCapabilities(p *Principal) []string {
 	capabilities := []string{"line.read", "incident.read", "report.read", "report.export", "notification.read"}
 	switch p.Role {
 	case "ADMIN":
-		capabilities = append(capabilities, "audit.read", "admin.manage", "admin.users", "admin.devices", "admin.policies", "notification.dispatch", "incident.create", "incident.update", "situation.manage", "provider_case.draft", "provider_case.send")
+		capabilities = append(capabilities, "audit.read", "admin.manage", "admin.users", "admin.devices", "admin.policies", "notification.dispatch", "incident.create", "incident.update", "incident.comment", "incident.assign", "incident.status", "incident.provider_fixed", "incident.send_to_provider", "situation.manage", "provider_case.draft", "provider_case.prepare", "provider_case.edit", "provider_case.send")
 	case "OBLAST", "DISTRICT":
-		capabilities = append(capabilities, "audit.read", "incident.create", "incident.update", "situation.manage", "provider_case.draft", "provider_case.send")
+		capabilities = append(capabilities, "audit.read", "incident.create", "incident.update", "incident.comment", "incident.assign", "incident.status", "incident.provider_fixed", "incident.send_to_provider", "situation.manage", "provider_case.draft", "provider_case.prepare", "provider_case.edit", "provider_case.send")
 	case "PROVIDER":
-		capabilities = append(capabilities, "incident.update", "provider_case.draft", "provider_case.send")
+		capabilities = append(capabilities, "incident.update", "incident.comment", "incident.status", "incident.provider_fixed", "provider_case.draft", "provider_case.prepare", "provider_case.edit", "provider_case.send")
+	case "SCHOOL":
+		capabilities = append(capabilities, "incident.comment")
 	}
 	return capabilities
 }
@@ -324,7 +326,11 @@ func RoleAllows(p *Principal, action string) bool {
 	switch action {
 	case "comment":
 		return true
-	case "provider_fixed", "send_to_provider", "provider_send":
+	case "provider_fixed":
+		return p.Role == "OBLAST" || p.Role == "DISTRICT" || p.Role == "PROVIDER"
+	case "send_to_provider":
+		return p.Role == "OBLAST" || p.Role == "DISTRICT"
+	case "provider_send":
 		return p.Role == "OBLAST" || p.Role == "DISTRICT" || p.Role == "PROVIDER"
 	case "assign":
 		return p.Role == "OBLAST" || p.Role == "DISTRICT"

@@ -12,20 +12,32 @@ function capability(capabilities, name) {
   return capabilities?.has?.(name) === true;
 }
 
+function actionCapability(capabilities, explicit, fallback) {
+  // Older development servers only expose incident.update. Keep that contract
+  // readable while preferring the server's per-action capabilities whenever
+  // they are available.
+  return capability(capabilities, explicit) || (!capabilities?.has?.(explicit) && capability(capabilities, fallback));
+}
+
 function pending(actionState) {
   return Boolean(actionState && actionState !== "idle");
 }
 
 export function incidentActions(incident, capabilities, actionState = "idle") {
-  const canUpdate = capability(capabilities, "incident.update");
   const closed = code(incident?.status) === "CLOSED";
   const isPending = pending(actionState);
+  const canComment = actionCapability(capabilities, "incident.comment", "incident.update");
+  const canAssign = actionCapability(capabilities, "incident.assign", "incident.update");
+  const canChangeStatus = actionCapability(capabilities, "incident.status", "incident.update");
+  const canMarkProviderFixed = actionCapability(capabilities, "incident.provider_fixed", "incident.update");
+  const canSendToProvider = actionCapability(capabilities, "incident.send_to_provider", "incident.update");
   return {
-    canComment: canUpdate && !isPending,
-    canMarkProviderFixed: canUpdate && !closed && !isPending,
-    canSendToProvider: canUpdate && !isPending,
-    canAssign: canUpdate && !isPending,
-    canChangeStatus: canUpdate && !isPending,
+    canComment: canComment && !closed && !isPending,
+    canMarkProviderFixed: canMarkProviderFixed && !closed && !isPending,
+    canSendToProvider: canSendToProvider && !closed && !isPending,
+    canAssign: canAssign && !closed && !isPending,
+    canChangeStatus: canChangeStatus && !closed && !isPending,
+    closed,
     isPending,
     pendingState: actionState,
   };

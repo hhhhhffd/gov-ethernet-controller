@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -300,6 +301,12 @@ func (s *Server) createManualIncident(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 422, "invalid incident payload")
 		return
 	}
+	payload.LineID = strings.TrimSpace(payload.LineID)
+	payload.Description = strings.TrimSpace(payload.Description)
+	if payload.LineID == "" || payload.Description == "" || len(payload.Description) > 4000 {
+		writeError(w, http.StatusUnprocessableEntity, "line_id and description are required; description must contain at most 4000 characters")
+		return
+	}
 	line, visible, lineErr := s.lineVisible(r.Context(), p, payload.LineID)
 	if lineErr != nil {
 		writeError(w, 500, "could not query line")
@@ -403,6 +410,10 @@ func (s *Server) incidentEvent(w http.ResponseWriter, r *http.Request, item inci
 	if !requireRole(w, p, payload.EventType) {
 		return
 	}
+	if strings.EqualFold(item.Status, "CLOSED") {
+		writeError(w, http.StatusConflict, "closed incident is read-only")
+		return
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	switch payload.EventType {
 	case "provider_fixed":
@@ -488,13 +499,20 @@ func (s *Server) providerDraft(w http.ResponseWriter, r *http.Request, item inci
 	if !requireRole(w, p, "provider_send") {
 		return
 	}
+	if strings.EqualFold(item.Status, "CLOSED") {
+		writeError(w, http.StatusConflict, "closed incident provider case is read-only")
+		return
+	}
 	var payload struct {
 		Comment string `json:"comment"`
+		Locale  string `json:"locale"`
 	}
 	if r.Body != nil {
 		if err := decodeJSON(r, &payload); err != nil {
-			writeError(w, http.StatusUnprocessableEntity, "invalid provider draft payload")
-			return
+			if !errors.Is(err, io.EOF) {
+				writeError(w, http.StatusUnprocessableEntity, "invalid provider draft payload")
+				return
+			}
 		}
 	}
 	opening := decodeJSONBytes(item.Opening)
@@ -552,7 +570,7 @@ func (s *Server) providerDraft(w http.ResponseWriter, r *http.Request, item inci
 		LineID: item.LineID, SchoolID: item.SchoolID, Organization: item.OrganizationName,
 		ViolationType: item.ViolationType, StartedAt: item.StartedAt.UTC().Format(time.RFC3339),
 		PolicyJSON: string(policyJSON), ContractJSON: string(contractJSON),
-		ObservationsJSON: string(observationsJSON), EvidenceJSON: evidenceJSON, Comment: payload.Comment,
+		ObservationsJSON: string(observationsJSON), EvidenceJSON: evidenceJSON, Comment: payload.Comment, Locale: normalizeProviderDraftLocale(payload.Locale),
 	})
 	var id int64
 	err = s.DB.Pool.QueryRow(r.Context(), `INSERT INTO provider_cases(incident_id,draft_text,status,delivery_status,created_by,created_at) VALUES ($1,$2,'DRAFT','PENDING',$3,$4) RETURNING id`, item.ID, draft, p.ID, time.Now().UTC().Truncate(time.Second)).Scan(&id)
@@ -668,8 +686,61 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		incidentID = *incidentIDValue
 	}
 	_ = sourceContext
+	if incidentID != 0 {
+		var incidentStatus string
+		if err := s.DB.Pool.QueryRow(r.Context(), `SELECT status FROM incidents WHERE id=$1`, incidentID).Scan(&incidentStatus); err != nil {
+			writeError(w, http.StatusNotFound, "provider case not found")
+			return
+		}
+		if strings.EqualFold(incidentStatus, "CLOSED") && (parts[1] == "draft" || parts[1] == "send" || parts[1] == "retry" || parts[1] == "ai-draft") {
+			writeError(w, http.StatusConflict, "closed incident provider case is read-only")
+			return
+		}
+	}
 	if parts[1] == "ai-draft" && r.Method == http.MethodPost {
 		s.providerAIDraft(w, r, strconv.FormatInt(id, 10), lineID, p)
+		return
+	}
+	if parts[1] == "draft" && (r.Method == http.MethodPatch || r.Method == http.MethodPut) {
+		if !requireRole(w, p, "provider_send") {
+			return
+		}
+		var payload struct {
+			DraftText string `json:"draft_text"`
+			Text      string `json:"text"`
+		}
+		if err := decodeJSON(r, &payload); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "invalid provider draft payload")
+			return
+		}
+		draft := strings.TrimSpace(payload.DraftText)
+		if draft == "" {
+			draft = strings.TrimSpace(payload.Text)
+		}
+		if draft == "" || len(draft) > 32768 {
+			writeError(w, http.StatusUnprocessableEntity, "draft_text must contain 1-32768 characters")
+			return
+		}
+		var status string
+		if err := s.DB.Pool.QueryRow(r.Context(), `SELECT status FROM provider_cases WHERE id=$1`, id).Scan(&status); err != nil {
+			writeError(w, http.StatusNotFound, "provider case not found")
+			return
+		}
+		if status == "SENT" {
+			writeError(w, http.StatusConflict, "sent provider case is read-only")
+			return
+		}
+		if _, err := s.DB.Pool.Exec(r.Context(), `UPDATE provider_cases SET draft_text=$1,final_text=NULL,status='DRAFT',delivery_status='PENDING',delivery_error=NULL,delivery_retryable=FALSE,next_attempt_at=NULL WHERE id=$2`, draft, id); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not save provider draft")
+			return
+		}
+		writeAudit(r.Context(), s, p, "provider_case.draft.updated", "provider_case", fmt.Sprint(id), nil, map[string]interface{}{"draft_saved": true})
+		item, err := s.providerCaseByID(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "could not read provider draft")
+			return
+		}
+		writeJSON(w, http.StatusOK, item)
 		return
 	}
 	if !requireRole(w, p, "provider_send") {

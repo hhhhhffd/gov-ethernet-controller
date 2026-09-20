@@ -175,6 +175,14 @@ func (s *Server) audit(w http.ResponseWriter, r *http.Request) {
 	addText("ae.object_id=", strings.TrimSpace(r.URL.Query().Get("object_id")))
 	addText("ae.scope_type=", strings.TrimSpace(r.URL.Query().Get("scope_type")))
 	addText("ae.scope_id=", strings.TrimSpace(r.URL.Query().Get("scope_id")))
+	if search := strings.TrimSpace(r.URL.Query().Get("search")); search != "" {
+		if len(search) > 200 {
+			search = search[:200]
+		}
+		params = append(params, "%"+search+"%")
+		placeholder := "$" + strconv.Itoa(len(params))
+		filters = append(filters, "(ae.action ILIKE "+placeholder+" OR ae.object_type ILIKE "+placeholder+" OR ae.object_id ILIKE "+placeholder+" OR ae.actor_id ILIKE "+placeholder+")")
+	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("before_id")); raw != "" {
 		before, parseErr := strconv.ParseInt(raw, 10, 64)
 		if parseErr != nil || before < 1 {

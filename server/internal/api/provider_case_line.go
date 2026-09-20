@@ -16,6 +16,7 @@ import (
 // roots. Exactly one root is accepted; all identity fields are checked against
 // the server-side line/incident context when supplied by a client.
 type providerCaseCreatePayload struct {
+	Locale                 string  `json:"locale"`
 	IncidentID             *int64  `json:"incident_id"`
 	LineID                 string  `json:"line_id"`
 	PeriodFrom             string  `json:"period_from"`
@@ -129,6 +130,7 @@ func (s *Server) createLineProviderCase(w http.ResponseWriter, r *http.Request, 
 		}
 		return
 	}
+	input.Locale = normalizeProviderDraftLocale(payload.Locale)
 	draft := generateProviderDraft(r.Context(), deterministicDraftGenerator{}, input)
 	if s.DraftGenerator != nil {
 		if generated, generationErr := s.DraftGenerator.Generate(r.Context(), input); generationErr == nil {
@@ -283,6 +285,7 @@ func (s *Server) createProviderCase(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "could not build provider evidence")
 		return
 	}
+	input.Locale = normalizeProviderDraftLocale(payload.Locale)
 	draft := generateProviderDraft(r.Context(), deterministicDraftGenerator{}, input)
 	if s.DraftGenerator != nil {
 		if generated, generationErr := s.DraftGenerator.Generate(r.Context(), input); generationErr == nil {
