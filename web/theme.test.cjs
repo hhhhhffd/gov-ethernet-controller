@@ -58,7 +58,12 @@ test("THEME-003 Theme persists reload", async () => {
 });
 
 test("THEME-004 Map presentation adapter preserves canonical basemap and locale state", async () => {
-  const { CANONICAL_DARK_MAP_STYLE, LIGHT_MAP_FALLBACK, createMapPresentationAdapter } = await import("./core/map-presentation.mjs");
+  const {
+    CANONICAL_DARK_MAP_STYLE,
+    CANONICAL_LIGHT_MAP_STYLE,
+    LIGHT_MAP_FALLBACK,
+    createMapPresentationAdapter,
+  } = await import("./core/map-presentation.mjs");
   const adapter = createMapPresentationAdapter({ theme: "dark", locale: "ru" });
   const dark = adapter.snapshot();
   const light = adapter.setTheme("light");
@@ -66,11 +71,13 @@ test("THEME-004 Map presentation adapter preserves canonical basemap and locale 
   const mapSource = fs.readFileSync("web/map.js", "utf8");
   assert.equal(dark.style, CANONICAL_DARK_MAP_STYLE);
   assert.equal(dark.fallback, null);
-  assert.equal(light.style, CANONICAL_DARK_MAP_STYLE);
+  assert.equal(light.style, CANONICAL_LIGHT_MAP_STYLE);
   assert.equal(light.fallback, LIGHT_MAP_FALLBACK);
   assert.equal(kk.locale, "kk");
   assert.equal(Object.hasOwn(light, "tileUrl"), false, "adapter must not invent a light provider URL");
+  assert.equal(CANONICAL_LIGHT_MAP_STYLE, "alidade-smooth");
   assert.match(mapSource, /alidade_smooth_dark/);
+  assert.match(mapSource, /alidade_smooth/);
   assert.match(mapSource, /Stadia Maps/);
   assert.match(mapSource, /setMapPresentation/);
 });

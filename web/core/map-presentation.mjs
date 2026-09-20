@@ -1,5 +1,9 @@
 export const CANONICAL_DARK_MAP_STYLE = "alidade-smooth-dark";
-export const LIGHT_MAP_FALLBACK = "preserve-canonical-dark-basemap";
+export const CANONICAL_LIGHT_MAP_STYLE = "alidade-smooth";
+
+// Kept as a compatibility export for consumers of the previous adapter shape.
+// Light mode now has its own canonical style, so there is no fallback.
+export const LIGHT_MAP_FALLBACK = null;
 
 function supportedTheme(theme) {
   return theme === "light" ? "light" : "dark";
@@ -9,20 +13,18 @@ function supportedLocale(locale) {
   return locale === "kk" ? "kk" : "ru";
 }
 
-// Stadia's verified Alidade Smooth Dark URL and attribution remain owned by
-// web/map.js. A confirmed light provider has not been supplied, so this
-// adapter deliberately never fabricates a light tile URL.
+// Tile URLs and attribution remain owned by web/map.js. This adapter exposes
+// only the agreed canonical style names and presentation state.
 export function createMapPresentationAdapter({ theme = "dark", locale = "ru" } = {}) {
   let currentTheme = supportedTheme(theme);
   let currentLocale = supportedLocale(locale);
 
   function snapshot() {
-    const isLight = currentTheme === "light";
     return Object.freeze({
       theme: currentTheme,
       locale: currentLocale,
-      style: CANONICAL_DARK_MAP_STYLE,
-      fallback: isLight ? LIGHT_MAP_FALLBACK : null,
+      style: currentTheme === "light" ? CANONICAL_LIGHT_MAP_STYLE : CANONICAL_DARK_MAP_STYLE,
+      fallback: null,
       labels: "application-presentation",
     });
   }
