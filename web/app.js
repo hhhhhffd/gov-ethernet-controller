@@ -1190,9 +1190,11 @@ async function previewReportExport(root) {
 
 async function downloadReportExport(event) {
   event.preventDefault();
-  const request = reportExportQuery(event.currentTarget);
+  const form = event.currentTarget;
+  const request = reportExportQuery(form);
   if (request.error || !state.capabilities.has("report.export")) return;
-  try { await triggerDownload(await reports.exportData(request.query), `linkwatch-report.${event.currentTarget.elements.format.value}`); }
+  const filename = `linkwatch-report.${form.elements.format.value}`;
+  try { await triggerDownload(await reports.exportData(request.query), filename); }
   catch (error) { showToast("reports.exportFailed", "warn"); }
 }
 
