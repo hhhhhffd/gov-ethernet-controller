@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 
 function layerGroup() {
-  return { items: [], addLayer(item) { this.items.push(item); return this; }, clearLayers() { this.items = []; return this; } };
+  return { items: [], addLayer(item) { this.items.push(item); return this; }, clearLayers() { this.items = []; return this; }, getLayers() { return this.items.slice(); } };
 }
 
 function marker(latLng, options) {

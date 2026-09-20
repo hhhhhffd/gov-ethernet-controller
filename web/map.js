@@ -3,6 +3,7 @@
   "use strict";
 
   const MAP_FIT_PADDING_PIXELS = 24;
+  const POPUP_VIEWPORT_MARGIN_PIXELS = 16;
   const DEFAULT_CLUSTER_MAX_MEMBERS = 12;
   const DEFAULT_MAP_CONFIG = Object.freeze({
     tileUrl: "https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}{r}.png",
@@ -48,9 +49,13 @@
     const markerId = context?.registryId ?? context?.school?.registryId ?? context?.school?.registry_id;
     return markerId !== undefined && markerId !== null && String(markerId) === String(registryId);
   }
+  function layerItems(layer) {
+    if (typeof layer?.getLayers === "function") return layer.getLayers();
+    return Array.isArray(layer?.items) ? layer.items : [];
+  }
   function renderedMarkers() {
-    const registry = state.layers?.registryClusters?.items || [];
-    const monitoring = state.layers?.monitoring?.items || [];
+    const registry = layerItems(state.layers?.registryClusters);
+    const monitoring = layerItems(state.layers?.monitoring);
     return [...monitoring, ...registry];
   }
   function allKnownMarkers() {
@@ -154,6 +159,24 @@
   function popupIsOpen(popup) {
     return Boolean(popup && popup.hidden !== true && !popup.classList?.contains?.("hidden"));
   }
+  function constrainPopupToViewport() {
+    const popup = state.popupElement;
+    if (!popupIsOpen(popup) || !popup?.style) return;
+    const container = document.getElementById?.("mapWrap") || document.getElementById?.("leafletMap");
+    // The fixed map workspace must not become a scroll container when focus moves into the popup.
+    if (container && Number(container.scrollTop) !== 0) container.scrollTop = 0;
+    const popupRect = popup.getBoundingClientRect?.();
+    const popupTop = Number(popupRect?.top);
+    if (!Number.isFinite(popupTop)) return;
+    const containerRect = container?.getBoundingClientRect?.();
+    const containerBottom = Number(containerRect?.bottom);
+    const viewportBottom = Number.isFinite(containerBottom) ? containerBottom : Number(window.innerHeight);
+    if (!Number.isFinite(viewportBottom)) return;
+    const availableHeight = Math.max(0, Math.floor(viewportBottom - popupTop - POPUP_VIEWPORT_MARGIN_PIXELS));
+    popup.style.boxSizing = "border-box";
+    popup.style.maxHeight = `${availableHeight}px`;
+    popup.style.overflowY = "auto";
+  }
   function registryMarkerForId(registryId) {
     return allKnownMarkers().find((marker) => markerMatchesId(marker, registryId)) || null;
   }
@@ -174,6 +197,7 @@
     if (open) {
       state.popupOpen = true;
       syncOpenPopupMarker();
+      constrainPopupToViewport();
       return;
     }
     if (!state.popupOpen && !state.activeMarker && !state.popupFocusDescriptor) return;
@@ -497,12 +521,13 @@
     state.tileLayer.addTo(state.map);
     state.layers = { registryMarkers: [], registryClusters: layerGroup(), monitoringMarkers: [], monitoring: layerGroup() };
     observePopup();
+    window.addEventListener?.("resize", constrainPopupToViewport);
     if (typeof state.map.on === "function") state.map.on("zoomend", rebuildRegistryClusters);
     if (typeof window.ResizeObserver === "function") { state.resizeObserver = new window.ResizeObserver(refreshSize); state.resizeObserver.observe(container); }
     return state.map;
   }
   function refreshSize() {
-    if (!state.map) return; const refresh = () => state.map.invalidateSize({ pan: false });
+    if (!state.map) return; const refresh = () => { state.map.invalidateSize({ pan: false }); constrainPopupToViewport(); };
     if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(refresh); else window.setTimeout(refresh, 0);
   }
   function render(context = {}) {

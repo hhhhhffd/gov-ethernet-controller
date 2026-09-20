@@ -7,6 +7,7 @@ function createLayer() {
     items: [],
     addLayer(layer) { this.items.push(layer); return this; },
     clearLayers() { this.items = []; return this; },
+    getLayers() { return this.items.slice(); },
   };
 }
 
@@ -67,6 +68,8 @@ const popupListeners = {};
 let popupObserverCallback = null;
 const popup = {
   hidden: true,
+  style: {},
+  getBoundingClientRect() { return { top: 154 }; },
   classList: {
     values: new Set(["hidden"]),
     contains(value) { return this.values.has(value); },
@@ -76,6 +79,7 @@ const popup = {
   addEventListener(name, callback) { (popupListeners[name] ||= []).push(callback); },
   dispatchEvent(event) { (popupListeners[event.type] || []).forEach((callback) => callback(event)); },
 };
+const mapWrap = { scrollTop: 138, getBoundingClientRect() { return { bottom: 600 }; } };
 const window = {
   L: {
     map() { return map; },
@@ -98,6 +102,7 @@ const document = {
   getElementById(id) {
     if (id === "mapTileStatus") return tileStatus;
     if (id === "mapPopup") return popup;
+    if (id === "mapWrap") return mapWrap;
     return container;
   },
 };
@@ -160,6 +165,10 @@ assert.ok(map.bounds.bounds.some(([latitude, longitude]) => latitude === 50.30 &
 mapApi.setMarkerClickHandler(() => setPopupOpen(true));
 registryCluster.trigger("click");
 assert.ok(map.zoom > 7, "cluster click must advance the viewport zoom");
+assert.equal(popup.style.boxSizing, "border-box", "open map popup must use viewport-safe sizing");
+assert.equal(popup.style.maxHeight, "430px", "open map popup must reserve a bottom viewport margin");
+assert.equal(popup.style.overflowY, "auto", "long cluster member lists must scroll inside the popup");
+assert.equal(mapWrap.scrollTop, 0, "popup focus must not scroll the fixed map workspace");
 assert.equal(map.bounds.bounds.length, clusterContext.members.length, "cluster click must fit exactly the member coordinates");
 assert.deepEqual(Array.from(map.bounds.options.padding), [24, 24], "cluster click must retain bounded viewport padding");
 assert.ok(map.bounds.options.maxZoom <= mapApi.getConfig().maxZoom, "cluster click must respect the configured maximum zoom");
