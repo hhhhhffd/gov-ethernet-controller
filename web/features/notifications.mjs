@@ -2,7 +2,7 @@ import { apiAliases, unwrapCollection } from "../core/api.mjs";
 
 const NOTIFICATION_FILTERS = Object.freeze(new Set(["source_type", "status", "before_id", "limit"]));
 const DISPATCHABLE_STATUSES = Object.freeze(new Set(["PENDING", "GENERATED", "FAILED"]));
-export const NOTIFICATION_POLL_INTERVAL_MS = 30_000;
+export const NOTIFICATION_POLL_INTERVAL_MS = 5_000;
 export const NOTIFICATION_SEEN_STORAGE_KEY = "linkwatch.notifications.seen";
 export const NOTIFICATION_SOUND_STORAGE_KEY = "linkwatch.notifications.sound-muted";
 

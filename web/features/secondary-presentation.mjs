@@ -23,6 +23,13 @@ const OBJECT_LABEL_KEYS = Object.freeze({
   threshold_policy: "admin.resources.policies",
   contract_version: "admin.resources.contracts",
   agent_version: "admin.resources.agent-versions",
+  agent_release: "admin.resources.agent-versions",
+  agent_schedule: "admin.resources.schedule",
+  district: "admin.resources.districts",
+  technology: "admin.resources.technologies",
+  export: "reports.export",
+  impact_preview: "admin.impactPreview",
+  agent_command: "admin.resources.devices",
 });
 
 const NOTIFICATION_SOURCE_KEYS = Object.freeze({
@@ -33,10 +40,22 @@ const NOTIFICATION_SOURCE_KEYS = Object.freeze({
 });
 
 const ADMIN_FIELD_LABEL_KEYS = Object.freeze({
+  id: "admin.recordId",
+  school_id: "field.registryNumber",
+  organization_id: "field.school",
+  provider_id: "field.provider",
+  line_id: "field.line",
   name: "field.officialIdentity",
   district: "field.district",
+  district_id: "field.district",
   address: "field.address",
-  active: "admin.status",
+  latitude: "field.latitude",
+  longitude: "field.longitude",
+  active: "admin.monitoringState",
+  contact_name: "admin.contactName",
+  contact_phone: "admin.contactPhone",
+  contact_role: "admin.contactRole",
+  contact_email: "admin.contactEmail",
   support_contact: "admin.supportContact",
   organization_name: "field.school",
   provider_name: "field.provider",
@@ -49,6 +68,7 @@ const ADMIN_FIELD_LABEL_KEYS = Object.freeze({
   disabled: "admin.status",
   display_name: "admin.identity",
   agent_version: "audit.version",
+  device_id: "admin.deviceID",
   last_seen: "audit.lastSeen",
   blocked: "admin.status",
   tests_per_day: "admin.testsPerDay",
@@ -70,6 +90,20 @@ const ADMIN_FIELD_LABEL_KEYS = Object.freeze({
   recommended: "admin.recommended",
   minimum_supported: "admin.minimumSupported",
   release_at: "audit.at",
+  technology_id: "field.connectionType",
+  contact_position: "admin.contactRole",
+  scopes: "field.registryProvenance",
+  monitoring_point_id: "admin.monitoringPoint",
+  confirm_count: "field.metrics",
+  recovery_count: "field.metrics",
+  freshness_seconds: "field.lastObserved",
+  reason: "admin.reason",
+  checksum: "admin.checksum",
+  artifact_url: "admin.artifactURL",
+  ticket_no: "providerCase.reference",
+  external_ticket_no: "providerCase.reference",
+  delivery_channel: "notification.source",
+  attempts: "notification.attemptsFailed",
 });
 
 const SCOPE_LABEL_KEYS = Object.freeze({
@@ -92,7 +126,7 @@ function humanEventLabel(value, { i18n, presentation }) {
   const action = presentation.action(value);
   if (action !== i18n.t("action.unknown")) return action;
   const normalized = String(value).trim().toLowerCase().replace(/_/g, ".");
-  const aliases = { "incident.created.manual": "event.manual.created", "provider.case.draft.updated": "event.provider.draft.created" };
+  const aliases = { "incident.created.manual": "event.manual.created", "provider.case.draft": "event.provider.draft.created", "provider.case.draft.updated": "event.provider.draft.created" };
   if (aliases[normalized] && i18n.has(aliases[normalized])) return i18n.t(aliases[normalized]);
   const suffix = normalized.replace(/^(incident|notification)\./, "");
   if (i18n.has(`event.${suffix}`)) return i18n.t(`event.${suffix}`);
@@ -150,6 +184,29 @@ function adminFieldValue(key, value, { i18n, presentation }) {
   return String(value);
 }
 
+function auditSnapshot(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function auditValueText(key, value, context) {
+  if (value === undefined) return context.i18n.t("empty.noData");
+  const text = adminFieldValue(key, value, context);
+  return text.length > 120 ? text.slice(0, 117) + "…" : text;
+}
+
+function auditChanges(item, context) {
+  const before = auditSnapshot(item?.before);
+  const after = auditSnapshot(item?.after);
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((key) => !["password", "token", "secret", "request_id", "created_at", "updated_at"].includes(key));
+  return keys.filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key])).slice(0, 12).map((key) => ({
+    key,
+    label: adminFieldLabel(key, context.i18n),
+    before: auditValueText(key, before[key], context),
+    after: auditValueText(key, after[key], context),
+  }));
+}
+
 export function presentAdminRecord(resource, item, { i18n, presentation }) {
   const definition = adminResourceDefinition(resource);
   const fields = definition.displayFields
@@ -195,10 +252,18 @@ export function presentAuditItem(item, { i18n, presentation }) {
   const actorName = [item?.actor_username, item?.actor_name, item?.actor_label]
     .find((value) => typeof value === "string" && value.trim());
   const actorType = code(item?.actor_type);
+  const context = { i18n, presentation };
+  const changes = auditChanges(item, context);
+  const after = auditSnapshot(item?.after);
+  const before = auditSnapshot(item?.before);
+  const identity = after.name || after.organization_name || after.display_name || after.username || before.name || before.organization_name || before.display_name || before.username || item?.object_id || "";
+  const objectLabel = humanObjectLabel(item?.object_type, i18n);
+  const actionLabel = humanEventLabel(action, { i18n, presentation });
+  const changeText = changes.length ? changes.map((change) => `${change.label}: ${change.before} → ${change.after}`).join("; ") : i18n.t("audit.noFieldChanges");
   return {
     id: item?.id,
-    actionLabel: humanEventLabel(action, { i18n, presentation }),
-    objectLabel: humanObjectLabel(item?.object_type, i18n),
+    actionLabel,
+    objectLabel,
     actorLabel: actorName?.trim() || (actorType === "SYSTEM" ? i18n.t("audit.systemActor") : i18n.t("empty.noData")),
     atLabel: presentation.formatDate(item?.created_at || item?.at, true),
     rawAction: item?.action || item?.event_type || "",
@@ -206,7 +271,8 @@ export function presentAuditItem(item, { i18n, presentation }) {
     rawObject: item?.object_id || "",
     rawActorType: item?.actor_type || "",
     rawActor: item?.actor_id || "",
-    description: [humanEventLabel(action, { i18n, presentation }), humanObjectLabel(item?.object_type, i18n)].filter(Boolean).join(" · "),
+    description: `${actionLabel}: ${objectLabel}${identity ? ` «${identity}»` : ""}. ${changeText}`,
+    changes,
     payload: item?.metadata || item?.after || item?.before || null,
   };
 }
