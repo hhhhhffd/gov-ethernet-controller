@@ -134,7 +134,7 @@ function createAdminSurfaceState() {
 }
 
 function createAuditSurfaceState() {
-  return { state: "idle", tab: "log", items: [], filters: { action: "", object_type: "" }, search: "", nextBeforeId: "", hasMore: false, loadingMore: false, selectedId: "", versionsState: "idle", versions: [], selectedVersion: "", devicesState: "idle", devices: [], loadPromise: null };
+  return { state: "idle", tab: "log", items: [], filters: { action: "", object_type: "" }, search: "", nextBeforeId: "", hasMore: false, loadingMore: false, loadMoreError: "", selectedId: "", versionsState: "idle", versions: [], selectedVersion: "", devicesState: "idle", devices: [], loadPromise: null };
 }
 
 function actionCopy(key) {
@@ -1577,6 +1577,29 @@ function auditMatchesSearch(item, query) {
     .filter(Boolean).join(" ").toLocaleLowerCase().includes(needle);
 }
 
+function auditTechnicalDetails(entry) {
+  return {
+    action: entry.rawAction,
+    object_type: entry.rawObjectType,
+    object_id: entry.rawObject,
+    actor_type: entry.rawActorType,
+    actor_id: entry.rawActor,
+    payload: entry.payload,
+  };
+}
+
+function renderAuditSelection(item) {
+  if (!item) return '<aside class="audit-selection" aria-live="polite"><h2>' + escapeHtml(i18n.t("audit.title")) + '</h2><p class="surface-state">' + escapeHtml(i18n.t("audit.selectHint")) + "</p></aside>";
+  const entry = presentAuditItem(item, { i18n, presentation });
+  const technical = auditTechnicalDetails(entry);
+  return '<aside class="audit-selection" aria-live="polite"><h2>' + escapeHtml(entry.actionLabel) + '</h2><dl class="detail-grid">'
+    + '<div><dt>' + escapeHtml(i18n.t("audit.action")) + '</dt><dd>' + escapeHtml(entry.actionLabel) + '</dd></div>'
+    + '<div><dt>' + escapeHtml(i18n.t("audit.object")) + '</dt><dd>' + escapeHtml(entry.objectLabel) + '</dd></div>'
+    + '<div><dt>' + escapeHtml(i18n.t("audit.actor")) + '</dt><dd>' + escapeHtml(entry.actorLabel) + '</dd></div>'
+    + '<div><dt>' + escapeHtml(i18n.t("audit.at")) + '</dt><dd>' + escapeHtml(entry.atLabel) + '</dd></div></dl>'
+    + '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(technical, null, 2)) + '</pre></details></aside>';
+}
+
 function renderAuditSurface() {
   const root = $("#auditSurface");
   if (!root) return;
@@ -1591,9 +1614,18 @@ function renderAuditSurface() {
   } else {
     const actionOptions = [...new Set(view.items.map((item) => item?.action || item?.event_type).filter(Boolean))].map((value) => '<option value="' + escapeHtml(value) + '"' + (view.filters.action === value ? " selected" : "") + '>' + escapeHtml(presentation.action(value)) + "</option>").join("");
     const objectOptions = [...new Set(view.items.map((item) => item?.object_type).filter(Boolean))].map((value) => { const object = presentAuditItem({ object_type: value }, { i18n, presentation }); return '<option value="' + escapeHtml(value) + '"' + (view.filters.object_type === value ? " selected" : "") + '>' + escapeHtml(object.objectLabel) + "</option>"; }).join("");
-    const rows = view.items.filter((item) => auditMatchesSearch(item, view.search)).map((item) => { const entry = presentAuditItem(item, { i18n, presentation }); const technical = { action: entry.rawAction, object_type: entry.rawObjectType, object_id: entry.rawObject, actor_type: entry.rawActorType, actor_id: entry.rawActor, payload: entry.payload }; return '<article class="audit-record"><div class="audit-record-head"><strong>' + escapeHtml(entry.actionLabel) + '</strong><span>' + escapeHtml(entry.atLabel) + '</span></div><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("audit.object")) + '</dt><dd>' + escapeHtml(entry.objectLabel) + '</dd></div><div><dt>' + escapeHtml(i18n.t("audit.actor")) + '</dt><dd>' + escapeHtml(entry.actorLabel) + '</dd></div></dl>' + (entry.rawAction || entry.rawObjectType || entry.rawObject || entry.rawActorType || entry.rawActor || entry.payload ? '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(technical, null, 2)) + '</pre></details>' : "") + '</article>'; }).join("");
+    const filteredItems = view.items.filter((item) => auditMatchesSearch(item, view.search));
+    const selected = filteredItems.find((item) => String(item?.id) === String(view.selectedId)) || null;
+    const rows = filteredItems.map((item) => {
+      const entry = presentAuditItem(item, { i18n, presentation });
+      const selectedClass = String(view.selectedId) === String(entry.id) ? " selected" : "";
+      return '<article class="audit-record' + selectedClass + '"><button type="button" class="audit-record-trigger" data-audit-select="' + escapeHtml(entry.id) + '" aria-pressed="' + String(String(view.selectedId) === String(entry.id)) + '"><span class="audit-record-head"><strong>' + escapeHtml(entry.actionLabel) + '</strong><span>' + escapeHtml(entry.atLabel) + '</span></span><span class="audit-record-summary"><span>' + escapeHtml(i18n.t("audit.object")) + ': ' + escapeHtml(entry.objectLabel) + '</span><span>' + escapeHtml(i18n.t("audit.actor")) + ': ' + escapeHtml(entry.actorLabel) + '</span></span><span class="audit-record-open">' + escapeHtml(i18n.t("audit.openDetails")) + '</span></button></article>';
+    }).join("");
     const content = view.state === "loading" ? '<p class="surface-state" role="status">' + escapeHtml(i18n.t("audit.loading")) + '</p>' : view.state === "error" ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t("audit.unavailable")) + '</p>' : rows || '<p class="surface-state">' + escapeHtml(i18n.t(view.search ? "audit.noSearchResults" : "audit.empty")) + '</p>';
-    root.innerHTML = '<div class="secondary-shell">' + header + tabs + '<form class="audit-filters" data-audit-filters><label>' + escapeHtml(i18n.t("audit.action")) + '<select name="action"><option value="">' + escapeHtml(i18n.t("audit.anyAction")) + '</option>' + actionOptions + '</select></label><label>' + escapeHtml(i18n.t("audit.object")) + '<select name="object_type"><option value="">' + escapeHtml(i18n.t("audit.anyObject")) + '</option>' + objectOptions + '</select></label><button type="submit" class="secondary-action">' + escapeHtml(i18n.t("admin.refresh")) + '</button></form><div class="audit-records">' + content + '</div></div>';
+    const loadMore = view.hasMore ? '<button type="button" class="secondary-action audit-load-more" data-audit-load-more' + (view.loadingMore ? " disabled" : "") + '>' + escapeHtml(i18n.t(view.loadingMore ? "audit.loadingMore" : "audit.loadMore")) + '</button>' : "";
+    const loadMoreError = view.loadMoreError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.loadMoreError)) + '</p>' : "";
+    const filterForm = '<form class="audit-filters" data-audit-filters><label>' + escapeHtml(i18n.t("audit.search")) + '<input type="search" name="search" value="' + escapeHtml(view.search) + '" placeholder="' + escapeHtml(i18n.t("audit.searchPlaceholder")) + '" /></label><label>' + escapeHtml(i18n.t("audit.action")) + '<select name="action"><option value="">' + escapeHtml(i18n.t("audit.anyAction")) + '</option>' + actionOptions + '</select></label><label>' + escapeHtml(i18n.t("audit.object")) + '<select name="object_type"><option value="">' + escapeHtml(i18n.t("audit.anyObject")) + '</option>' + objectOptions + '</select></label><button type="submit" class="secondary-action">' + escapeHtml(i18n.t("admin.refresh")) + '</button></form>';
+    root.innerHTML = '<div class="secondary-shell">' + header + tabs + filterForm + '<div class="audit-workspace"><div><div class="audit-records">' + content + '</div>' + loadMoreError + loadMore + '</div>' + renderAuditSelection(selected) + '</div></div>';
   }
   bindAuditSurfaceEvents(root);
 }
@@ -1609,7 +1641,20 @@ function renderAuditDevices() {
 function bindAuditSurfaceEvents(root) {
   root.querySelector("[data-audit-refresh]")?.addEventListener("click", () => state.audit.tab === "versions" ? loadAgentVersions({ force: true }) : loadAuditLog({ force: true }));
   root.querySelectorAll("[data-audit-tab]").forEach((button) => button.addEventListener("click", () => { state.audit.tab = button.dataset.auditTab; if (state.audit.tab === "versions") loadAgentVersions(); else loadAuditLog(); }));
-  root.querySelector("[data-audit-filters]")?.addEventListener("submit", (event) => { event.preventDefault(); state.audit.filters = Object.fromEntries(new FormData(event.currentTarget)); loadAuditLog({ force: true }); });
+  root.querySelector("[data-audit-filters]")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    state.audit.search = String(values.search || "");
+    state.audit.filters = { action: String(values.action || ""), object_type: String(values.object_type || "") };
+    state.audit.selectedId = "";
+    loadAuditLog({ force: true });
+  });
+  root.querySelectorAll("[data-audit-select]").forEach((button) => button.addEventListener("click", () => {
+    state.audit.selectedId = button.dataset.auditSelect || "";
+    renderAuditSurface();
+    root.querySelector("[data-audit-select][aria-pressed=\"true\"]")?.focus();
+  }));
+  root.querySelector("[data-audit-load-more]")?.addEventListener("click", () => loadMoreAudit());
   root.querySelectorAll("[data-audit-version]").forEach((button) => button.addEventListener("click", () => loadVersionDevices(button.dataset.auditVersion)));
 }
 
@@ -1618,10 +1663,43 @@ async function loadAuditLog({ force = false } = {}) {
   if (!session.authenticated || !state.capabilities.has("audit.read") || router.getState().view !== "audit") return;
   if (view.state === "loading") return view.loadPromise;
   if (view.state === "ready" && !force) { renderAuditSurface(); return; }
+  view.nextBeforeId = "";
+  view.hasMore = false;
+  view.loadingMore = false;
+  view.loadMoreError = "";
   view.state = "loading";
   renderAuditSurface();
-  view.loadPromise = boundaries.audit.list({ limit: "50", ...view.filters }).then((response) => { view.items = Array.isArray(response) ? response : (Array.isArray(response?.items) ? response.items : []); view.nextBeforeId = response?.next_before_id || ""; view.state = "ready"; }).catch(() => { view.items = []; view.state = "error"; }).finally(() => { view.loadPromise = null; renderAuditSurface(); });
+  view.loadPromise = boundaries.audit.list({ limit: "50", ...view.filters }).then((response) => {
+    view.items = Array.isArray(response) ? response : (Array.isArray(response?.items) ? response.items : []);
+    view.nextBeforeId = response?.next_before_id || "";
+    view.hasMore = response?.has_more === true && Boolean(view.nextBeforeId);
+    view.state = "ready";
+  }).catch(() => { view.items = []; view.state = "error"; }).finally(() => { view.loadPromise = null; renderAuditSurface(); });
   return view.loadPromise;
+}
+
+async function loadMoreAudit() {
+  const view = state.audit;
+  if (!session.authenticated || !state.capabilities.has("audit.read") || router.getState().view !== "audit" || !view.hasMore || !view.nextBeforeId || view.loadingMore) return;
+  view.loadingMore = true;
+  view.loadMoreError = "";
+  renderAuditSurface();
+  try {
+    const response = await boundaries.audit.list({ limit: "50", ...view.filters, before_id: view.nextBeforeId });
+    const nextItems = Array.isArray(response) ? response : (Array.isArray(response?.items) ? response.items : []);
+    const knownIDs = new Set(view.items.map((item) => String(item?.id || "")));
+    view.items = view.items.concat(nextItems.filter((item) => {
+      const id = String(item?.id || "");
+      return id && !knownIDs.has(id);
+    }));
+    view.nextBeforeId = response?.next_before_id || "";
+    view.hasMore = response?.has_more === true && Boolean(view.nextBeforeId);
+  } catch (error) {
+    view.loadMoreError = "audit.unavailable";
+  } finally {
+    view.loadingMore = false;
+    renderAuditSurface();
+  }
 }
 
 async function loadAgentVersions({ force = false } = {}) {

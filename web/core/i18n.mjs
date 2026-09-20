@@ -78,7 +78,7 @@ const PRODUCT_RU = Object.freeze({
   "incidents.timelineGroup": "Хронология", "incidents.statusGroup": "Статус инцидента", "incidents.assigneeGroup": "Ответственный", "incidents.actionsGroup": "Действия",
   "reports.evidencePreview": "Открыть отчёт с доказательствами", "reports.evidenceHtmlOnly": "Отчёт откроется в новой вкладке.",
   "notification.close": "Закрыть уведомления", "notification.new": "Новых уведомлений: {count}", "notification.soundMute": "Выключить звук", "notification.soundUnmute": "Включить звук", "notification.soundMuted": "Звук выключен", "notification.soundEnabled": "Звук включён",
-  "audit.search": "Поиск", "audit.searchPlaceholder": "Действие, объект или исполнитель", "audit.noSearchResults": "По этому запросу записей нет.", "audit.loadMore": "Загрузить ещё", "audit.loadingMore": "Загружаем ещё записи…",
+  "audit.search": "Поиск", "audit.searchPlaceholder": "Действие, объект или исполнитель", "audit.noSearchResults": "По этому запросу записей нет.", "audit.loadMore": "Загрузить ещё", "audit.loadingMore": "Загружаем ещё записи…", "audit.selectHint": "Выберите запись, чтобы увидеть подробности.", "audit.openDetails": "Открыть событие",
 });
 
 const PRODUCT_KK = Object.freeze({
@@ -86,7 +86,7 @@ const PRODUCT_KK = Object.freeze({
   "incidents.timelineGroup": "Хронология", "incidents.statusGroup": "Оқиға күйі", "incidents.assigneeGroup": "Жауапты", "incidents.actionsGroup": "Әрекеттер",
   "reports.evidencePreview": "Дәлелдемелері бар есепті ашу", "reports.evidenceHtmlOnly": "Есеп жаңа қойындыда ашылады.",
   "notification.close": "Хабарландыруларды жабу", "notification.new": "Жаңа хабарландырулар: {count}", "notification.soundMute": "Дыбысты өшіру", "notification.soundUnmute": "Дыбысты қосу", "notification.soundMuted": "Дыбыс өшірулі", "notification.soundEnabled": "Дыбыс қосулы",
-  "audit.search": "Іздеу", "audit.searchPlaceholder": "Әрекет, нысан немесе орындаушы", "audit.noSearchResults": "Бұл сұрау бойынша жазбалар жоқ.", "audit.loadMore": "Тағы жүктеу", "audit.loadingMore": "Қосымша жазбалар жүктелуде…",
+  "audit.search": "Іздеу", "audit.searchPlaceholder": "Әрекет, нысан немесе орындаушы", "audit.noSearchResults": "Бұл сұрау бойынша жазбалар жоқ.", "audit.loadMore": "Тағы жүктеу", "audit.loadingMore": "Қосымша жазбалар жүктелуде…", "audit.selectHint": "Толық мәліметті көру үшін жазбаны таңдаңыз.", "audit.openDetails": "Оқиғаны ашу",
 });
 
 export const MESSAGES = Object.freeze({ ru: Object.freeze({ ...RU, ...REPORT_RU, ...SECONDARY_RU, ...PRODUCT_RU }), kk: Object.freeze({ ...KK, ...REPORT_KK, ...SECONDARY_KK, ...PRODUCT_KK }) });

@@ -208,7 +208,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .surface-header p { margin: 3px 0 0; color: var(--ref-text-secondary); font-size: 10px; }
 .admin-toolbar, .audit-filters { align-items: end; justify-content: flex-start; width: 100%; max-width: 100%; margin: 0 0 18px; padding: 16px 18px; border: 1px solid var(--ref-border-soft); border-radius: var(--theme-panel-radius); background: var(--ref-surface-secondary); }
 .admin-toolbar label, .audit-filters label { display: grid; min-width: 220px; gap: 7px; color: var(--ref-text-muted); font-size: 12px; }
-.admin-toolbar select, .audit-filters select, .admin-editor input, .admin-editor textarea { min-width: 190px; height: 44px; padding: 0 12px; border: 1px solid var(--ref-border-soft); border-radius: 9px; background: var(--ref-surface-inset); color: var(--ref-text-primary); }
+.admin-toolbar select, .audit-filters input, .audit-filters select, .admin-editor input, .admin-editor textarea { min-width: 190px; height: 44px; padding: 0 12px; border: 1px solid var(--ref-border-soft); border-radius: 9px; background: var(--ref-surface-inset); color: var(--ref-text-primary); }
 .admin-toolbar span { color: var(--ref-text-muted); font-size: 12px; }
 .admin-records, .audit-records { display: flex; width: 100%; flex-direction: column; gap: 0; }
 .admin-record, .audit-record { width: 100%; min-width: 0; padding: 18px 0; border: 0; border-top: 1px solid var(--ref-border-soft); border-radius: 0; background: transparent; }
@@ -231,6 +231,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .audit-record-head { display: flex; justify-content: space-between; gap: 14px; margin-bottom: 9px; }
 .audit-record-head strong { color: var(--ref-text-primary); }
 .audit-record-head span { color: var(--ref-text-muted); font-size: 11px; }
+.audit-workspace { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, .65fr); align-items: start; gap: 24px; }
+.audit-selection { position: sticky; top: 0; min-height: 220px; padding: 20px; border: 1px solid var(--ref-border-soft); border-radius: var(--theme-panel-radius); background: var(--ref-surface-main); }
+.audit-selection h2 { margin: 0 0 16px; }
+.audit-record-trigger { display: block; width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.audit-record-trigger:focus-visible { outline: 2px solid var(--ref-blue); outline-offset: 4px; }
+.audit-record.selected { padding-inline: 12px; border-radius: 9px; background: var(--ref-surface-secondary); }
+.audit-record-summary { display: flex; flex-wrap: wrap; gap: 12px; color: var(--ref-text-secondary); font-size: 12px; }
+.audit-record-open { display: inline-block; margin-top: 11px; color: var(--ref-blue); font-size: 12px; }
+.audit-load-more { margin-top: 16px; }
 .audit-device-list { display: grid; gap: 9px; margin: 12px 0 0; padding: 0; list-style: none; }
 .audit-device-list li { display: grid; gap: 4px; padding-top: 9px; border-top: 1px solid var(--ref-border-soft); }
 .audit-device-list span, .audit-device-list time { color: var(--ref-text-muted); font-size: 11px; }
@@ -489,6 +498,8 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .incident-row span:nth-child(n+4), .incident-row-head span:nth-child(n+4) { display: none; }
   .admin-records, .audit-records { width: 100%; }
   .admin-editor, .admin-preview { align-self: stretch; width: 100%; max-width: none; }
+  .audit-workspace { grid-template-columns: 1fr; }
+  .audit-selection { position: static; }
 }
 
 @media (max-width: 620px) {
@@ -517,7 +528,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .incident-row span:nth-child(3) { display: none; }
   .incident-timeline li { grid-template-columns: 1fr; }
   .admin-toolbar, .audit-filters { align-items: stretch; flex-direction: column; }
-  .admin-toolbar select, .audit-filters select { width: 100%; }
+  .admin-toolbar select, .audit-filters input, .audit-filters select { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -576,7 +587,7 @@ dd { margin: 0; overflow-wrap: anywhere; }
   .incidents-header { align-items: stretch; flex-direction: column; }
   .incident-filters, .report-filters, .admin-toolbar, .audit-filters { align-items: stretch; flex-direction: column; }
   .incident-filters label, .report-filters label, .admin-toolbar label, .audit-filters label { width: 100%; min-width: 0; }
-  .incident-filters select, .report-filters input, .report-filters select, .admin-toolbar select, .audit-filters select { width: 100%; }
+  .incident-filters select, .report-filters input, .report-filters select, .admin-toolbar select, .audit-filters input, .audit-filters select { width: 100%; }
   .incident-count { margin-left: 0; padding-bottom: 0; }
   .incident-row { grid-template-columns: 96px minmax(0, 1fr); }
   .incident-row span:nth-child(3), .incident-row span:nth-child(n+4) { display: none; }

@@ -84,6 +84,9 @@ test("ADMIN-001 and AUDIT-001 keep secondary routes capability-gated", () => {
   assert.match(app, /object_type: entry\.rawObjectType/);
   assert.match(app, /actor_id: entry\.rawActor/);
   assert.match(app, /notification\.technical/);
+  assert.match(app, /data-audit-select/);
+  assert.match(app, /loadMoreAudit/);
+  assert.match(app, /audit\.selectHint/);
 });
 
 test("REPORT-003 invalid numeric values use human fallback and retain technical diagnostics", () => {
