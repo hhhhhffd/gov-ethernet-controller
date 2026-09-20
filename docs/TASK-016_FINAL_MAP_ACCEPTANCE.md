@@ -24,8 +24,11 @@ Truth statement for the eventual demo:
 > которые проходят через настоящую бизнес-логику LINKWATCH.
 
 The current checkout has the map/import implementation, the real VKO registry
-handoff, `org-07 → registry 16856`, deterministic fixture evidence, and the
-remaining AI/provider/P0 environment blockers.
+handoff, deterministic test-fixture evidence, and an explicit production
+mapping boundary with no bundled operational organization mapping. A real
+backend organization export is still required before monitored schools can be
+joined operationally; the remaining AI/provider/P0 environment blockers are
+separate.
 
 ## Evidence and ownership
 
@@ -36,7 +39,7 @@ remaining AI/provider/P0 environment blockers.
 | TASK-003 | `6a4da86`, `9c818ff`, source adapters and Overpass POST/GET fallback tests | PASS |
 | TASK-004 | `2152ab9`, deterministic matching/coordinate/dedupe tests | PASS |
 | TASK-005 | `54a532e`, `dcedeaf`, artifact/report/review/override generator and tests | PASS; real registry/report/review artifacts generated |
-| TASK-006 | `8f2f372`, `5e1f5f2`, `web/data/organization-school-map.json`, 9/9 tests | PASS; `org-07 → registry 16856`, remaining seed organizations explicit `UNMAPPED` |
+| TASK-006 | mapping generator, production-boundary validation, `web/data/organization-school-map.json`, mapping tests | PASS for deterministic mapping and provenance guards; committed production artifact is `NOT_PROVIDED`, while the demo organization input remains test-fixture-only |
 | TASK-007 | `c3139c1`, registry/LINKWATCH model tests | PASS |
 | TASK-008 | `e2a4518`, map marker/map-layer tests | PASS |
 | TASK-009 | `8c42ff4`, popup/drawer tests | PASS |
@@ -48,10 +51,12 @@ remaining AI/provider/P0 environment blockers.
 | TASK-015 | fresh exact-command run and isolated browser rerun recorded below | BLOCKED_EXTERNAL for importer inputs, repo-local Playwright, AI/provider browser gates, and P0 environment |
 | TASK-016 | this document and final audit commit | BLOCKED_EXTERNAL |
 
-The generated mapping explicitly records the real registry as available, one
-mapped backend organization, two synthetic backend organizations as `UNMAPPED`,
-and synthetic seed coordinates as `synthetic-only`; registry coordinates are
-kept separate and authoritative.
+The committed production mapping explicitly records the real registry as
+available, contains zero organization entries, and marks
+`operational_mapping_status: NOT_PROVIDED`. The demo organization input and
+its synthetic coordinates remain available only through explicit fixture tests;
+they are rejected by production validation and cannot overwrite the committed
+production artifact. Registry coordinates are kept separate and authoritative.
 `web/data/vko-schools.json`, `artifacts/vko-schools-import-report.json`, and
 `artifacts/vko-schools-review.csv` were generated and checked from official
 sources. No raw source dump or credential was committed.
@@ -73,9 +78,9 @@ sources. No raw source dump or credential was committed.
 | 10 | Numeric/current-VKO boundary validation; no invalid marker coordinate | coordinate validation tests | PASS |
 | 11 | OSM node/way/relation dedupe and deterministic ordering | dedupe fixtures and deterministic rerun tests | PASS |
 | 12 | Registry/report/review artifacts, provenance, counters, no hardcoded total | `dcedeaf`; importer `--check`; report counters | PASS |
-| 13 | Deterministic organization ↔ registry mapping; no browser fuzzy matching | `8f2f372`, `5e1f5f2`; mapping 9/9 | PASS |
+| 13 | Deterministic organization ↔ registry mapping; no browser fuzzy matching | mapping generator and production-boundary tests | PASS |
 | 14 | Registry-only neutral layer, canonical LINKWATCH layer, KPI separation | `c3139c1`; data-model tests | PASS |
-| 15 | Organization → line → monitoring point → device chain and demo disclosure | mapping artifact chain/provenance | PASS for real registry handoff; synthetic backend organizations remain explicitly unmapped |
+| 15 | Organization → line → monitoring point → device chain and demo disclosure | mapping artifact chain/provenance | PASS for explicit fixture chain and production boundary; no synthetic organization is bundled as operational mapping |
 | 16 | Registry and monitored marker layers with missing-coordinate omission | `e2a4518`; map tests | PASS |
 | 17 | Status priority, screen-distance clustering, no permanent labels, current-VKO fit bounds | `e2a4518`, `d9f8fb0`; map implementation/tests | PASS by deterministic local contract; registry clusters open a neutral member list |
 | 18 | Registry/monitored popup fields, null metrics, multiple lines, drawer bridge | `8c42ff4`; popup tests; browser run | PASS; live popup/drawer paths executed |
@@ -90,9 +95,9 @@ sources. No raw source dump or credential was committed.
 | 27 | Browser MAP-001..MAP-013 executable acceptance | `e56c025`, `f146346`, `d9f8fb0`; isolated Playwright/Chromium evidence | BLOCKED_EXTERNAL: MAP-001..MAP-012 = 12/12; MAP-013 final repeat blocked by Docker |
 | 28 | Generated report metadata, counters, review CSV, controlled overrides | `dcedeaf`; importer `--check` | PASS |
 | 29 | One real modern-VKO import with official identities and preserved provenance | `dcedeaf`; `docs/TASK-013_VKO_IMPORT.md` | PASS |
-| 30 | 15-step hackathon demo on real map/schools with synthetic-measurement disclosure | TASK-016 manual path below | BLOCKED_EXTERNAL only for external AI/provider gates; browser path and real `org-07 → 16856` mapping are evidenced |
+| 30 | 15-step hackathon demo on real map/schools with synthetic-measurement disclosure | TASK-016 manual path below | BLOCKED until an explicit real organization export is supplied; fixture browser evidence remains clearly synthetic |
 | 31 | Exact regression commands and no hidden external skips | TASK-015 command matrix below | PASS for browser/web checks; P0 environment remains external |
-| 32 | Final system invariant: real registry → real geography → mapping → canonical truth | TASK-006/007/013/016 evidence | PASS for registry/geography/mapping handoff; browser demo remains external-blocked |
+| 32 | Final system invariant: real registry → real geography → mapping → canonical truth | TASK-006/007/013/016 evidence | PASS for registry/geography and guarded mapping handoff; operational join remains explicitly unavailable until real organization data is supplied |
 | 33 | 100% traceability, no invented scope, final decision and actionable blockers | this document + final acceptance matrix | BLOCKED_EXTERNAL only for remaining external gates |
 
 No source requirement is silently marked complete by fixture data. There are no
@@ -175,8 +180,9 @@ under `/tmp/vko-official-scNQ3W/` reached the public Overpass request but that
 endpoint was unavailable in the environment; `--check` therefore did not write
 or alter the committed artifacts. The artifact checks above still show the
 committed handoff contains 370 schools, 370 official coordinates, consistent
-counters, and `org-07 → registry 16856` with two explicit unmapped synthetic
-backend organizations.
+counters, and a production mapping artifact with zero organization entries and
+370 explicit registry-only schools. No synthetic organization or seed
+coordinate is included in that artifact.
 
 The P0 raw `fail=1` is an environment write-permission failure while Docker
 tries to update `/home/amblackrust/.docker/buildx/activity`; it is not promoted
@@ -190,8 +196,8 @@ BuildKit can write its activity directory.
 | 1 | Open real VKO map with Stadia Maps Alidade Smooth Dark | PASS in isolated browser; Stadia tile requests mocked |
 | 2 | See real VKO schools across the region | PASS; current official registry loads 370 rows |
 | 3 | Select `Только в контуре LINKWATCH` | PASS in live browser coverage control |
-| 4 | Only monitored schools remain | PASS; current mapped organization count is 1 |
-| 5 | Select a real mapped school | PASS; `org-07 → registry 16856` |
+| 4 | Only monitored schools remain | BLOCKED until an explicit real organization export is installed; the committed mapping has no operational entries |
+| 5 | Select a real mapped school | BLOCKED by the same missing production organization export; fixture-only mappings are not presented as production |
 | 6 | Popup shows provider/state/latest metrics | PASS in live browser popup path |
 | 7 | Open existing line drawer | PASS in live browser line-detail path |
 | 8 | Show evidence | PASS for existing bounded LINKWATCH demo evidence; not attached to a real VKO school |

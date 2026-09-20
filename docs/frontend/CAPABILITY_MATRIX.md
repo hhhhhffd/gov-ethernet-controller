@@ -37,7 +37,7 @@ response. Исключения, где frontend сейчас вызывает т
 | `audit.read` | `ADMIN`, `OBLAST`, `DISTRICT`; `PROVIDER` и `SCHOOL` получают 403. |
 | `incident.create` | `ADMIN`, `OBLAST`, `DISTRICT`; UI показывает ручное создание только при capability. |
 | `incident.update` | `ADMIN`, `OBLAST`, `DISTRICT`, `PROVIDER`; конкретные event types дополнительно проверяются через `RoleAllows`. |
-| `situation.manage` | `ADMIN`, `OBLAST`, `DISTRICT`, `PROVIDER`; merge/split доступны только в допустимом состоянии. |
+| `situation.manage` | `ADMIN`, `OBLAST`, `DISTRICT`; merge/split/live-verify доступны только в допустимом состоянии и видимой области. |
 | `provider_case.draft` | `ADMIN`, `OBLAST`, `DISTRICT`, `PROVIDER`. |
 | `provider_case.send` | `ADMIN`, `OBLAST`, `DISTRICT`, `PROVIDER`; UI требует human review перед send. |
 | `notification.dispatch` | Только `ADMIN` в admin handler. |
@@ -49,13 +49,13 @@ response. Исключения, где frontend сейчас вызывает т
 |---|---|---|---|---|---|
 | Login modal (`web/app.js:134-162`) | `POST B/login`, `POST B/auth/login`; также `B1/login`, `B1/auth/login` | `{username|login,password}` → `200 {token,token_type:"Bearer",expires_at,user:{id,username,role,role_label,scopes,capabilities}}`; token хранится в `localStorage.vko_token`. | Public; rate limited. | `400` invalid JSON, `401` invalid credentials, `429` с `Retry-After`, `503` auth unavailable, `500` session failure. | Mutation: creates server session. UI has login only; no destructive confirmation. Реальные алиасы соответствуют `server.go:87-98`, `auth_handlers.go:15-89`. |
 | Profile bootstrap / auth state | `GET B/auth/me` / `GET B1/auth/me` | No body → current `Principal` with server-authoritative `capabilities`, scopes, role label. | Bearer session. | `200`; `401` missing, invalid, expired or revoked session. | Read. `web/app.js:164-180` also tries `B/me` and `B1/me`; those are dead legacy paths. |
-| Logout/session revocation | `POST B/auth/logout`, `POST B1/auth/logout` | No body → `{revoked:true}`; current bearer session is revoked and audit entry written. | Bearer session. | `200`; `401` auth; `500` revoke/audit failure. | Mutation; should be explicit confirmation only if a future UI presents “logout all”, but current UI has no logout control. `auth_handlers.go:99-115`. |
+| Logout/session revocation | `POST B/auth/logout`, `POST B1/auth/logout` | No body → `{revoked:true}`; current bearer session is revoked and audit entry written. | Bearer session. | `200`; `401` auth; `500` revoke/audit failure. | Mutation; current UI exposes logout and clears its local bearer token after the request, including the fail-safe local-clear path. `auth_handlers.go:99-115`, `web/core/session.mjs`. |
 
 ## Operational overview, map, registry and line/device reads
 
 | Назначение / surface | Method + path | Request → UI response | Доступ | Результат / ошибки | Read или mutation; подтверждение |
 |---|---|---|---|---|---|
-| KPI overview cards | `GET B/overview`, `GET B1/overview` | Optional scope/filter query → counts (`schools`, `lines`, `devices`, `active_devices`, `fresh_measurements`, `problem_lines`), averages, completeness/data completeness. | `line.read`; scope-filtered. | `200`; `500` database/read failure. | Read. `catalog.go:11-55`. |
+| Overview read route (not persistent map KPI surface) | `GET B/overview`, `GET B1/overview` | Optional scope/filter query → counts (`schools`, `lines`, `devices`, `active_devices`, `fresh_measurements`, `problem_lines`), averages, completeness/data completeness. | `line.read`; scope-filtered. | `200`; `500` database/read failure. | Read. The current map shell does not render these as a separate KPI-card surface. `catalog.go:11-55`. |
 | Current operational map points | `GET B/map/points`, `GET B1/map/points` | No body; optional normal auth scope → line points with org/school/provider, lat/lon, role, `state` (`data_state`, `connection_state`, `contract_state`, `recovery_state`, `effective_since`, `updated_at`, `reason`, `evidence_ids`), `status_mode:"CURRENT_OPERATIONAL"`, `period_summary_available:false`. | `line.read`; scope-filtered. | `200`; `500`. | Read. Real route, but current frontend map calls `GET /lines` and joins local registry data instead of this endpoint (`web/app.js:243-280`, `catalog.go:57-104`). |
 | Organization registry read | `GET B/organizations`, `GET B1/organizations` | No body → scoped organizations: id, school_id, name, district/district_id, address, coordinates, contacts, active, created_at. | `line.read`; organizations with visible non-deleted lines. | `200`; `500`. | Read. Real route; not directly called by current frontend. |
 | Provider registry read | `GET B/providers`, `GET B1/providers` | No body → distinct scoped providers: id, name, support_contact, active, created_at. | `line.read`; scoped through lines. | `200`; `500`. | Read. Real route; not directly called by current frontend. |
@@ -65,7 +65,7 @@ response. Исключения, где frontend сейчас вызывает т
 | Measurement history | `GET B/lines/{line_id}/measurements`, `GET B1/lines/{line_id}/measurements` | Query `limit`, `offset` → array or `{items,offset,limit,has_more,next_offset}` with measurement/evaluation/evidence fields. | `line.read` + visibility. | `200`; `422` bad pagination; `404`; `500`. | Read; real route. Current detail already carries measurements, while `История →` is an unbound frontend control (`web/app.js:702-727`, `web/index.html:80`). |
 | State transition history | `GET B/lines/{line_id}/states`, `GET B1/lines/{line_id}/states` | No body → previous/current states, reason, timestamps, evidence ids, config snapshot. | `line.read` + visibility. | `200`; `404`/`500`. | Read; real route, no current direct frontend call. |
 | Device detail | `GET B/devices/{device_id}`, `GET B1/devices/{device_id}` | Query `limit` (1..200), `offset` → device identity, point/line/org/school/provider, current state, latest measurement, history and pagination. | `line.read` + `HasLineScope`. | `200`; `404` missing/out of scope; `422` pagination; `500`. | Read. `web/app.js:806-810`, `line_handlers.go:655+`. |
-| Local school/organization registry join | No backend route; `web/data/vko-schools.json`, `web/data/organization-school-map.json`, `web/data-model.js` | Static local assets feed display/map joins; backend `/lines` remains operational source. | Frontend-only. | Asset load/shape failure is a frontend error, not a server capability. | Read-only frontend state; no confirmation. |
+| Local school/organization registry join | No backend route; `web/data/vko-schools.json`, `web/data/organization-school-map.json`, `web/data-model.js` | `vko-schools.json` is the authoritative registry. The committed mapping artifact is a registry-only boundary with `operational_mapping_status: NOT_PROVIDED`; a validated real organization export is required before operational joins are present. Backend `/lines` remains the operational source. | Frontend-only. | Asset load/shape failure and an absent mapping are explicit frontend states, not substitute demo data. The explicit `scripts/fixtures/organization-school-map/demo-organizations.json` fixture is test-only. | Read-only frontend state; no confirmation. |
 
 ## Incidents and situations
 
@@ -78,7 +78,7 @@ response. Исключения, где frontend сейчас вызывает т
 | Situations list | `GET B/situations`, `GET B1/situations` | No body; open situations whose members are visible → id/title/status/provider/district/violation/affected count/incidents/start/reason/severity. | Bearer; member line scope. | `200`; `500`. | Read. |
 | Situation detail | `GET B/situations/{id}`, `GET B1/situations/{id}` | No body → `read_only:true`, projection, `correlation_only:true`, `causal_claim:false`, factors/evidence/grouping, lifecycle, incidents, and server-generated `actions` for merge/split. | Bearer; visible members. | `200`; `404` missing/out of scope/empty; `500`. | Read. The UI must not present correlation as causal evidence. |
 | Historical comparison | `GET B/situations/{id}/comparison`, `GET B1/situations/{id}/comparison` | Query `window_minutes` (15..10080) or `from/to` → historical-only controls/treatment rows, measurements, evidence and completeness; `correlation_only:true`. | Bearer; scoped situation. | `200`; `404`; `422` period; `500`. | Read. `web/app.js:775-805`. |
-| Live verify | `POST B/situations/{id}/live-verify`, `POST B1/situations/{id}/live-verify` | No body → `202 {status:"REQUESTED",sample_size}` or `200 {status:"NO_ELIGIBLE_DEVICES"}`; creates agent commands for up to four active scoped devices. | Bearer + eligible line scope; handler does not explicitly require `situation.manage`. | `200/202`; `404` situation; `500`. | Mutation/operational action; UI exposes button to all detail viewers, so capability semantics are an implementation unknown. `live_verify.go:24+`. |
+| Live verify | `POST B/situations/{id}/live-verify`, `POST B1/situations/{id}/live-verify` | No body → `202 {status:"REQUESTED",sample_size}` or `200 {status:"NO_ELIGIBLE_DEVICES"}`; creates agent commands for up to four active scoped devices. | Bearer + `situation.manage` + eligible line scope; `PROVIDER` and `SCHOOL` do not receive the capability. | `403` without `situation.manage`; `200/202`; `404` situation; `500`. | Mutation/operational action; the backend is authoritative for the capability boundary, while the current frontend does not render a separate live-verify action. `live_verify.go:24+`, `auth.go:35-47`. |
 | Merge situation | `POST B/situations/{id}/merge`, `POST B1/situations/{id}/merge` | `{situation_ids?,incident_ids?,expected_updated_at?,reason}` plus required `Idempotency-Key` or `X-Request-ID` → `201` action result, replay `200`. | `situation.manage`; visible scope. | `403`; `404`; `409` stale/conflict; `422` missing reason/key or invalid set; `500`. | Mutation; destructive/restructuring, explicit confirmation required. UI uses reason prompt. |
 | Split situation | `POST B/situations/{id}/split`, `POST B1/situations/{id}/split` | Same request/idempotency contract → action result. | `situation.manage`; visible scope. | `403`; `404`; `409`; `422`; `500`. | Mutation; explicit confirmation required. `situation_actions.go:34-58`. |
 
@@ -89,7 +89,7 @@ response. Исключения, где frontend сейчас вызывает т
 | Aggregate report / map historical summary | `GET B/reports/aggregate`, `GET B1/reports/aggregate` | Query period/from/to and filters `line_id`, `district`, `provider`, `device_id`, `organization_id`, `role`, `technology`, `status` → period, measurement count, aggregate min/max/avg, by-line/org/school/district/provider, availability, completeness and durations. | `report.read`; scoped filters. | `200`; `422` period/filter; `500`. | Read. `report_handlers.go:372-493`. |
 | Analytics | `GET B/reports/analytics`, `GET B1/reports/analytics` | Query period + filters, `limit`; default 50. JSON → historical-only ranking/time-of-day/trend/comparison, `current_state_used:false`; `format=csv` → attachment. | `report.read`; scoped. | `200`; `413` observation guard; `422`; `500`. | Read/download; no destructive confirmation. `report_analytics.go:153+`. |
 | Quality passport | `GET B/reports/quality-passport`, `GET B1/reports/quality-passport` | Query period and optional line → measurements expected/received, completeness, baseline/contract compliance, incident counts/duration/recurrence/recovery narrative, evidence chain/dynamics, availability threshold/status and `sufficient_data`. | `report.read`; scoped. | `200`; `422`; `500`. | Read. |
-| Evidence report | `GET B/reports/quality-passport/evidence`, `GET B1/reports/quality-passport/evidence`; alias `B/reports/evidence-report` and `B1/...` | Query period/filter → inline `text/html` evidence-chain report named `linkwatch-evidence-report.html`. | `report.read`; scoped. | `200`; `422`; `500`. | Read/export-like download. Frontend label “PDF-ready”, but response is HTML; no PDF endpoint exists (`evidence_report.go:129+`). |
+| Evidence report | `GET B/reports/quality-passport/evidence`, `GET B1/reports/quality-passport/evidence`; alias `B/reports/evidence-report` and `B1/...` | Query period/filter → inline `text/html` evidence-chain report named `linkwatch-evidence-report.html`; `Accept-Language: kk` selects Kazakh human labels, otherwise Russian is the safe default. | `report.read`; scoped. | `200`; `422`; `500`. | Read/export-like download. The primary table is human/localized; raw state/snapshot payloads are behind technical disclosure blocks. Frontend label “PDF-ready”, but response is HTML; no PDF endpoint exists (`evidence_report.go:129+`). |
 | Export preview | `GET B/exports/preview`, `GET B1/exports/preview` | Same export query/body fields → `{kind,format,from,to,count,measurement_count,limited,columns,available_columns,schools,devices}`. | `report.export`; scoped. | `200`; `422` invalid kind/format/fields/period; `500`. | Read-only preview; no confirmation. |
 | Export data | `GET B/exports`, `POST B/exports`; `B1` aliases | GET query or POST body: `kind/type` (`raw|aggregate`), `format` (`csv|xlsx|json`), period, line/district/provider/device/org/status/role/technology, `device_ids`, `fields/columns`, from/to → attachment (or JSON response). | `report.export`; scoped. | `200`; `413` row limit; `422` validation; `500`. | Read/download; no destructive confirmation. Frontend uses GET with `B` then `B1` fallback (`web/app.js:841-847`). |
 
@@ -97,7 +97,7 @@ response. Исключения, где frontend сейчас вызывает т
 
 | Назначение / surface | Method + path | Request → response relevant to UI | Доступ | Результат / ошибки | Read или mutation; подтверждение |
 |---|---|---|---|---|---|
-| Notification outbox list | `GET B/notifications`, `GET B1/notifications` | Query `source_type`, `status`, `before_id`, `limit` (default 50, max 100) → items with id/source/channel/recipient scope/message/delivery `status`, attempts/errors/retryable/next attempt, generated/sent, `read_at`, line/org/school/district/provider and incident ids. | `notification.read`; scope-filtered. | `200`; `422` bad cursor; `500`. | Read. `web/app.js:543-564` displays delivery status, not read status. |
+| Notification outbox list | `GET B/notifications`, `GET B1/notifications` | Query `source_type`, `status`, `before_id`, `limit` (default 50, max 100) → items with id/source/channel/recipient scope/message/delivery `status`, attempts/errors/retryable/next attempt, generated/sent, `read_at`, line/org/school/district/provider and incident ids. Confirmed-incident `message` is concise human-facing fallback text; raw evaluator diagnostics remain in incident/evidence data, not the primary notification copy. | `notification.read`; scope-filtered. | `200`; `422` bad cursor; `500`. | Read. `web/app.js:543-564` displays delivery status, not read status; raw delivery errors/codes remain technical response fields. |
 | Dispatch notification | `POST B/admin/notifications/{id}/dispatch`, `POST B1/admin/notifications/{id}/dispatch` (handler currently lacks an explicit method guard) | No body → `200 SENT`; dispatches through provider and audits. | Exact `ADMIN` only. | `404` already delivered/not found; `502` delivery failure (retryable); auth/permission errors; `500`. | Mutation with external side effect; explicit confirmation required. Not exposed in current frontend admin tabs. `misc_handlers.go:466-488`. |
 | Unread count / mark read | No route exists. | DB has `notifications.read_at` (`001_initial.sql:252-265`), and list returns it; there is no count endpoint and no mark-read mutation. | N/A. | `read_at == null` is the only raw-data interpretation, not a server-maintained user unread counter. Delivery `status` is not read state. | Unsupported frontend capability: current UI has no unread badge, read action or read persistence. |
 
@@ -170,8 +170,8 @@ request/response contracts are implemented for `agent/`, not `web/`.
 
 | State | Frontend surface / storage | Backend path | Semantics |
 |---|---|---|---|
-| Locale | `html lang="ru"` (`web/index.html:1`) and Russian strings in templates. | None. | No locale selector, locale API or persisted locale state. |
-| Theme | `meta name="theme-color"`; map uses a fixed Stadia dark tile configuration (`web/map.js:5-12`). | None. | No theme control, preference or backend capability. |
+| Locale | `html lang="ru"` by default; `web/core/i18n.mjs` and compact header control support Russian/Kazakh and persist `linkwatch_locale`. | None. | Frontend-only presentation state; it does not change backend authorization or data semantics. |
+| Theme | `meta name="theme-color"`; `web/core/theme.mjs` and compact header control persist `linkwatch_theme` for the dark/light shell while the map keeps its configured basemap. | None. | Frontend-only presentation state; no backend capability. |
 | Viewport | Leaflet map center/zoom, zoom in/out/reset controls; default center `[49.95,82.62]`, zoom `7`, limits 3..18. | None. | Viewport lives in Leaflet memory; no URL/localStorage persistence or viewport API (`web/map.js:205-240`). |
 | Filters and view | `search`, district/provider/technology/status/period/date filters, list/map mode, coverage mode, selected line/incident/case, admin resource/editing state. | None directly; filters become query parameters on read routes. | Local UI state; reload resets it. |
 | Overlays | Map popup, drawer, incident/provider modal, toast, login modal, loading/error/empty classes. | None. | DOM visibility and selected IDs only; no server-side overlay/session state. |
@@ -200,8 +200,9 @@ request/response contracts are implemented for `agent/`, not `web/`.
 
 ### Controls without a supported backend action
 
-- No logout button, unread badge, mark-read action, locale selector, theme
-  selector, persisted map viewport or PDF evidence endpoint.
+- No unread badge, mark-read action, persisted map viewport or PDF evidence
+  endpoint. Logout, locale, and theme controls are present; locale/theme are
+  frontend-only state.
 - The line drawer’s `История →` button is not wired to a handler; history APIs
   exist, but this control does not invoke them.
 - Provider modal “Сохранить как черновик” closes without saving; draft creation
@@ -210,8 +211,9 @@ request/response contracts are implemented for `agent/`, not `web/`.
   without a confirmation prompt, although they are disruptive/destructive
   mutations and this matrix requires confirmation.
 - Frontend has a `?demo=1` explicit demo escape hatch and local demo fallback
-  paths; production failure is not silently converted to demo data. Demo reset
-  is a real admin route but is not an ordinary operator capability.
+  paths; production failure is not silently converted to demo data. The
+  committed production mapping artifact cannot be generated from that fixture.
+  Demo reset is a real admin route but is not an ordinary operator capability.
 
 ## Coverage, unknowns and verification notes
 
@@ -223,11 +225,10 @@ audit and observed agent versions; every current and additional exposed admin
 resource; agent transport boundary; `/api` and `/api/v1` aliases; and
 frontend-only locale/theme/viewport/overlay state.
 
-Known implementation uncertainties that should not be guessed into UI:
+Resolved implementation boundaries:
 
-- `live-verify` checks authentication and eligible line scope but does not
-  explicitly call `situation.manage`; this differs from merge/split capability
-  gating and should be resolved before tightening UI permissions.
+- `live-verify` now enforces `situation.manage` before creating agent commands;
+  merge and split use the same capability boundary.
 - Provider-case list/detail response fields are implemented in handlers but are
   not all rendered by the current frontend; consumers should rely on the actual
   handler response, not modal labels.

@@ -4,9 +4,12 @@ import test from "node:test";
 
 import {
   buildOrganizationSchoolMap,
+  generateMappingArtifact,
+  main,
   MappingInputError,
   normalizeExactText,
   validateMappingArtifact,
+  validateProductionMappingArtifact,
 } from "./map-organizations-to-schools.mjs";
 
 const demoOrganizations = {
@@ -149,4 +152,54 @@ test("validator rejects a fabricated registry id or coordinate on an unmapped or
   const artifact = buildOrganizationSchoolMap({ organizations: demoOrganizations, registry: [], provenance: { registry_available: false } });
   assert.throws(() => validateMappingArtifact({ ...artifact, entries: [{ ...artifact.entries[0], registry_id: "fabricated" }] }, []), /not present/);
   assert.throws(() => validateMappingArtifact({ ...artifact, entries: [{ ...artifact.entries[0], coordinate: { latitude: 50, longitude: 82 } }] }, []), /has coordinates/);
+});
+
+test("production validation rejects an explicit synthetic fixture", () => {
+  const fixture = buildOrganizationSchoolMap({
+    organizations: demoOrganizations,
+    registry: exactRegistry,
+    provenance: { registry_available: true, fixture_only: true, organizations_input: "scripts/fixtures/organization-school-map/demo-organizations.json" },
+  });
+  assert.throws(
+    () => validateProductionMappingArtifact(fixture, exactRegistry.schools),
+    (error) => error instanceof MappingInputError && error.code === "PRODUCTION_FIXTURE",
+  );
+});
+
+test("production boundary accepts only an explicit real export without seed coordinates", () => {
+  const artifact = buildOrganizationSchoolMap({
+    organizations: { source: "backend-export-2026-09-20", organizations: [{ organization_id: "org-real", name: "Школа №42" }] },
+    registry: exactRegistry,
+    provenance: {
+      registry_available: true,
+      fixture_only: false,
+      organizations_input: "artifacts/organization-export.json",
+      organization_source: "backend organization export",
+    },
+  });
+  assert.doesNotThrow(() => validateProductionMappingArtifact(artifact, exactRegistry.schools));
+});
+
+test("mapping generation fails closed without an explicit organization source", async () => {
+  await assert.rejects(
+    () => generateMappingArtifact({ registryPath: "web/data/vko-schools.json", outputPath: "/tmp/linkwatch-mapping-not-written.json" }),
+    (error) => error instanceof MappingInputError && error.code === "PRODUCTION_SOURCE_REQUIRED",
+  );
+});
+
+test("fixture CLI cannot write the production mapping artifact", async () => {
+  await assert.rejects(
+    () => main(["--fixture"]),
+    (error) => error instanceof MappingInputError && error.code === "PRODUCTION_FIXTURE",
+  );
+});
+
+test("checked production artifact contains registry truth but no bundled operational fixture", async () => {
+  const artifact = JSON.parse(await readFile(new URL("../web/data/organization-school-map.json", import.meta.url), "utf8"));
+  const registry = JSON.parse(await readFile(new URL("../web/data/vko-schools.json", import.meta.url), "utf8"));
+  assert.doesNotThrow(() => validateProductionMappingArtifact(artifact, registry.schools));
+  assert.equal(artifact.entries.length, 0);
+  assert.equal(artifact.provenance.fixture_only, false);
+  assert.equal(artifact.provenance.operational_mapping_status, "NOT_PROVIDED");
+  assert.equal(artifact.counters.registry_only_unmonitored, registry.schools.length);
 });

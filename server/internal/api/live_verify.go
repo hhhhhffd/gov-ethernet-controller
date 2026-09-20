@@ -26,6 +26,10 @@ func (s *Server) issueLiveVerify(w http.ResponseWriter, r *http.Request, rawID s
 	if !ok {
 		return
 	}
+	if !situationManageAllowed(p) {
+		writeError(w, http.StatusForbidden, "situation management capability required")
+		return
+	}
 	situationID, err := strconv.ParseInt(rawID, 10, 64)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "situation not found")

@@ -5,13 +5,14 @@ import { dirname, resolve } from "node:path";
 import process from "node:process";
 
 export const DEFAULT_REGISTRY_PATH = "web/data/vko-schools.json";
-export const DEFAULT_ORGANIZATIONS_PATH = "scripts/fixtures/organization-school-map/demo-organizations.json";
+export const DEFAULT_ORGANIZATIONS_PATH = null;
+export const DEFAULT_FIXTURE_ORGANIZATIONS_PATH = "scripts/fixtures/organization-school-map/demo-organizations.json";
 export const DEFAULT_OUTPUT_PATH = "web/data/organization-school-map.json";
 export const MAPPING_SCHEMA_VERSION = 1;
 
 const DEFAULT_DISCLOSURE = {
   geography_status: "registry-not-available",
-  measurements_status: "synthetic-development-fixture",
+  measurements_status: "not-provided",
   registry_coordinates_are_authoritative: true,
   synthetic_seed_coordinates_must_not_be_used_as_registry_coordinates: true,
   synthetic_measurements_must_not_be_presented_as_live_or_official: true,
@@ -273,7 +274,26 @@ export function validateMappingArtifact(artifact, registryRecords = []) {
   return artifact;
 }
 
+export function validateProductionMappingArtifact(artifact, registryRecords = []) {
+  validateMappingArtifact(artifact, registryRecords);
+  const provenance = artifact.provenance ?? {};
+  if (provenance.fixture_only === true || provenance.operational_mapping_status === "TEST_FIXTURE_ONLY") {
+    throw new MappingInputError("PRODUCTION_FIXTURE", "synthetic mapping fixtures cannot be used as production operational mapping");
+  }
+  const organizationsInput = String(provenance.organizations_input ?? "").replaceAll("\\", "/").toLowerCase();
+  if (organizationsInput.includes("/fixtures/") || organizationsInput.includes("demo-organizations")) {
+    throw new MappingInputError("PRODUCTION_FIXTURE", "production mapping must be generated from an explicit organization export, not a fixture");
+  }
+  for (const entry of artifact.entries) {
+    if (entry.synthetic_seed_coordinates) {
+      throw new MappingInputError("PRODUCTION_FIXTURE", `entry ${entry.organization_id} contains synthetic seed coordinates`);
+    }
+  }
+  return artifact;
+}
+
 export function buildOrganizationSchoolMap({ organizations, registry, provenance = {} } = {}) {
+  const fixtureOnly = provenance.fixture_only === true;
   const organizationRecords = recordsFromPayload(organizations, "organizations", "organizations input")
     .map((record, index) => normalizeRecord(record, "organization", index));
   const registryRecords = recordsFromPayload(registry ?? [], "schools", "registry input")
@@ -286,6 +306,7 @@ export function buildOrganizationSchoolMap({ organizations, registry, provenance
     registryIds.add(record.registry_id);
   }
   const registryAvailable = provenance.registry_available ?? registryRecords.length > 0;
+  const organizationSource = provenance.organization_source ?? (fixtureOnly ? "explicit test fixture" : "explicit production organization export required");
   const entries = organizationRecords
     .map((organization) => buildEntry(organization, registryRecords, registryAvailable))
     .sort((left, right) => sortById(left.organization_id, right.organization_id));
@@ -329,12 +350,14 @@ export function buildOrganizationSchoolMap({ organizations, registry, provenance
     mapping_semantics: "import-time-only; browser rendering must not fuzzy-match",
     generated_by: "scripts/map-organizations-to-schools.mjs",
     provenance: {
-      organizations_input: provenance.organizations_input ?? DEFAULT_ORGANIZATIONS_PATH,
+      organizations_input: provenance.organizations_input ?? (fixtureOnly ? DEFAULT_FIXTURE_ORGANIZATIONS_PATH : "not-provided"),
       registry_input: provenance.registry_input ?? DEFAULT_REGISTRY_PATH,
       registry_available: registryAvailable,
       registry_schema_version: provenance.registry_schema_version ?? (registryAvailable ? 1 : null),
       registry_source: registryAvailable ? "vko-schools-import-artifact" : "unavailable; no official generated registry artifact",
-      organization_source: provenance.organization_source ?? "backend organization/API payload",
+      organization_source: organizationSource,
+      fixture_only: fixtureOnly,
+      operational_mapping_status: fixtureOnly ? "TEST_FIXTURE_ONLY" : (entries.length > 0 ? "AVAILABLE" : "NOT_PROVIDED"),
       generated_at: "omitted to keep artifact deterministic",
     },
     match_policy: {
@@ -346,7 +369,9 @@ export function buildOrganizationSchoolMap({ organizations, registry, provenance
     disclosure: {
       ...DEFAULT_DISCLOSURE,
       geography_status: registryAvailable ? "registry-backed-or-review" : "registry-not-available",
-      organizations_source: provenance.organization_source ?? "backend organization/API payload",
+      measurements_status: fixtureOnly ? "synthetic-development-fixture" : "not-provided",
+      organizations_source: organizationSource,
+      production_operational_mapping_required: true,
     },
     counters,
     entries,
@@ -383,19 +408,28 @@ async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-export async function generateMappingArtifact({ organizationsPath = DEFAULT_ORGANIZATIONS_PATH, registryPath = DEFAULT_REGISTRY_PATH, outputPath = DEFAULT_OUTPUT_PATH } = {}) {
-  const organizations = await readJson(organizationsPath, "organizations input");
+export async function generateMappingArtifact({ organizationsPath = DEFAULT_ORGANIZATIONS_PATH, registryPath = DEFAULT_REGISTRY_PATH, outputPath = DEFAULT_OUTPUT_PATH, fixtureOnly = false } = {}) {
+  const selectedOrganizationsPath = fixtureOnly ? (organizationsPath ?? DEFAULT_FIXTURE_ORGANIZATIONS_PATH) : organizationsPath;
+  if (!selectedOrganizationsPath) {
+    throw new MappingInputError("PRODUCTION_SOURCE_REQUIRED", "organizations input must be supplied explicitly; the demo fixture is test-only");
+  }
+  if (fixtureOnly && resolve(outputPath) === resolve(DEFAULT_OUTPUT_PATH)) {
+    throw new MappingInputError("PRODUCTION_FIXTURE", "a test fixture cannot be written to the production mapping output");
+  }
+  const organizations = await readJson(selectedOrganizationsPath, "organizations input");
   const registry = await readOptionalRegistry(registryPath);
   const artifact = buildOrganizationSchoolMap({
     organizations,
     registry: registry.payload,
     provenance: {
-      organizations_input: organizationsPath,
+      organizations_input: selectedOrganizationsPath,
       registry_input: registryPath,
       registry_available: registry.available,
       organization_source: organizations.source ?? "backend organization/API payload",
+      fixture_only: fixtureOnly,
     },
   });
+  if (!fixtureOnly) validateProductionMappingArtifact(artifact, recordsFromPayload(registry.payload ?? [], "schools", "registry input"));
   await writeJson(outputPath, artifact);
   return artifact;
 }
@@ -414,6 +448,8 @@ async function checkArtifact(path, expected) {
 export async function main(argv = process.argv.slice(2)) {
   const options = {
     organizationsPath: DEFAULT_ORGANIZATIONS_PATH,
+    fixturePath: null,
+    emptyProductionMapping: false,
     registryPath: DEFAULT_REGISTRY_PATH,
     outputPath: DEFAULT_OUTPUT_PATH,
     check: false,
@@ -426,27 +462,49 @@ export async function main(argv = process.argv.slice(2)) {
       const key = { "--organizations": "organizationsPath", "--registry": "registryPath", "--output": "outputPath" }[argument];
       options[key] = value;
       index += 1;
+    } else if (argument === "--fixture") {
+      const next = argv[index + 1];
+      if (next && !next.startsWith("--")) {
+        options.fixturePath = next;
+        index += 1;
+      } else {
+        options.fixturePath = DEFAULT_FIXTURE_ORGANIZATIONS_PATH;
+      }
+    } else if (argument === "--empty-production-mapping") {
+      options.emptyProductionMapping = true;
     } else if (argument === "--check") {
       options.check = true;
     } else if (argument === "--help") {
-      process.stdout.write("Usage: node scripts/map-organizations-to-schools.mjs [--organizations FILE] [--registry FILE] [--output FILE] [--check]\n");
+      process.stdout.write("Usage: node scripts/map-organizations-to-schools.mjs --organizations FILE [--registry FILE] [--output FILE] [--check]\n       node scripts/map-organizations-to-schools.mjs --fixture [FILE] [--registry FILE] [--output FILE]\n       node scripts/map-organizations-to-schools.mjs --empty-production-mapping [--registry FILE] [--output FILE] [--check]\n");
       return;
     } else {
       throw new MappingInputError("ARGUMENT", `unknown argument ${argument}`);
     }
   }
-  const organizations = await readJson(options.organizationsPath, "organizations input");
+  const modes = Number(Boolean(options.organizationsPath)) + Number(Boolean(options.fixturePath)) + Number(options.emptyProductionMapping);
+  if (modes !== 1) {
+    throw new MappingInputError("PRODUCTION_SOURCE_REQUIRED", "choose exactly one of --organizations, --fixture, or --empty-production-mapping");
+  }
+  if (options.fixturePath && resolve(options.outputPath) === resolve(DEFAULT_OUTPUT_PATH)) {
+    throw new MappingInputError("PRODUCTION_FIXTURE", "a test fixture cannot be written to the production mapping output");
+  }
+  const fixtureOnly = Boolean(options.fixturePath);
+  const organizations = options.emptyProductionMapping
+    ? { source: "not bundled; explicit production backend export required", organizations: [] }
+    : await readJson(options.fixturePath ?? options.organizationsPath, "organizations input");
   const registry = await readOptionalRegistry(options.registryPath);
   const artifact = buildOrganizationSchoolMap({
     organizations,
     registry: registry.payload,
     provenance: {
-      organizations_input: options.organizationsPath,
+      organizations_input: options.emptyProductionMapping ? "not-provided" : (options.fixturePath ?? options.organizationsPath),
       registry_input: options.registryPath,
       registry_available: registry.available,
       organization_source: organizations.source ?? "backend organization/API payload",
+      fixture_only: fixtureOnly,
     },
   });
+  if (!fixtureOnly) validateProductionMappingArtifact(artifact, recordsFromPayload(registry.payload ?? [], "schools", "registry input"));
   if (options.check) await checkArtifact(options.outputPath, artifact);
   else await writeJson(options.outputPath, artifact);
   process.stdout.write(`${JSON.stringify(artifact.counters)}\n`);

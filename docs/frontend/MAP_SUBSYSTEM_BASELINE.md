@@ -1,11 +1,12 @@
 # Map subsystem baseline
 
-Status: `BASELINE RECORDED`
+Status: `BASELINE RECORDED; PROVENANCE BOUNDARY UPDATED 2026-09-20`
 
 This document freezes the current map subsystem before the frontend rebuild. It
-records observed behavior and boundaries; it is not a redesign proposal. This
-task changes documentation only. No runtime code, map data, coordinates, or
-frontend behavior was changed.
+records observed behavior and boundaries; it is not a redesign proposal. The
+original freeze was documentation-only. This provenance amendment records the
+current production data boundary; it does not change map identity, coordinates,
+or frontend behavior.
 
 ## Runtime shape
 
@@ -85,36 +86,53 @@ silently enable demo lines.
 
 ## Organization-to-school mapping
 
-The second production artifact is
+The second browser artifact is
 `web/data/organization-school-map.json`, served at
-`/static/data/organization-school-map.json`. Its current counters are:
+`/static/data/organization-school-map.json`. The committed artifact is a safe
+production boundary: it contains no operational organization mapping until an
+explicit real backend organization export is supplied. Its current counters
+are:
 
 | Counter | Value |
 | --- | ---: |
-| organizations | 3 |
-| auto-mapped | 1 |
+| organizations | 0 |
+| auto-mapped | 0 |
 | review-required | 0 |
-| unmapped | 2 |
+| unmapped | 0 |
 | registry schools | 370 |
-| registry-only unmonitored | 369 |
+| registry-only unmonitored | 370 |
 
-The artifact identifies `scripts/fixtures/organization-school-map/demo-organizations.json`
-as the organization input, `web/data/vko-schools.json` as the registry input,
-and `server/internal/admin/seed.go` as the organization source. Its disclosure
-states that registry coordinates are authoritative and synthetic seed
-coordinates/measurements are not official or live.
+The artifact identifies `web/data/vko-schools.json` as the registry input and
+records `organizations_input: not-provided`,
+`organization_source: not bundled; explicit production backend export required`,
+`fixture_only: false`, and
+`operational_mapping_status: NOT_PROVIDED`. Its disclosure states that
+registry coordinates are authoritative, measurements are not provided, and a
+production operational mapping is required. The real registry artifact is not
+deleted or replaced: all 370 official schools remain in
+`web/data/vko-schools.json` and appear as neutral registry-only rows here.
+
+`scripts/fixtures/organization-school-map/demo-organizations.json` remains an
+explicit test fixture only. It is available through the mapping generator's
+`--fixture` mode for fixture tests, but that mode is rejected when its output
+would overwrite the production artifact. Production generation fails closed
+unless an explicit organization export is supplied; no synthetic seed
+coordinates can pass production validation.
 
 Mapping is deterministic and import-time-only. Allowed match methods are exact
 identifier, exact name/locality/address, exact name/locality, and exact
 name/address. Fuzzy matching is disabled; ambiguity remains
 `REVIEW_REQUIRED` with no registry id, and an unknown registry id is rejected.
 
-At runtime, `buildFrontendModel()` indexes mapping entries by
+At runtime, `buildFrontendModel()` indexes validated mapping entries by
 `organization_id`, resolves `registry_id` against the registry, and attaches
-the resolved school and its registry coordinate to each backend line. A line's
-operational status remains sourced from `backend.line_state`. A missing,
-invalid, or unavailable join stays explicit and has no coordinate. Registry-
-only schools are neutral `NOT_MONITORED` rows with no operational status.
+the resolved school and its registry coordinate to each backend line when a
+real mapping artifact is available. With the committed `NOT_PROVIDED`
+boundary, the join is explicitly absent; it does not manufacture an
+organization, coordinate, or operational marker. A line's operational status
+remains sourced from `backend.line_state`. A missing, invalid, or unavailable
+join stays explicit and has no coordinate. Registry-only schools are neutral
+`NOT_MONITORED` rows with no operational status.
 
 ## Marker identity and layers
 
@@ -266,8 +284,11 @@ preserve these invariants:
    370 official coordinates, its load path, and its import provenance. No
    synthetic or legacy screen coordinate may supplement it in the browser.
 3. `organization-school-map.json` remains deterministic and import-time-only.
-   Browser fuzzy matching, pseudo-schools, unknown registry joins, and
-   pseudo-coordinates remain forbidden.
+   Its production artifact must be generated from an explicit real
+   organization export; the committed `NOT_PROVIDED` boundary is valid and
+   must not be silently replaced with the test fixture. Browser fuzzy matching,
+   pseudo-schools, unknown registry joins, and pseudo-coordinates remain
+   forbidden.
 4. Registry identity is `registry_id`; monitoring identity is the joined
    registry school; multiple lines remain available under one monitoring
    marker; backend `LineState` remains the current operational truth.

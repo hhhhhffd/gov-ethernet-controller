@@ -5,12 +5,14 @@
   "mapping_semantics": "import-time-only; browser rendering must not fuzzy-match",
   "generated_by": "scripts/map-organizations-to-schools.mjs",
   "provenance": {
-    "organizations_input": "scripts/fixtures/organization-school-map/demo-organizations.json",
+    "organizations_input": "not-provided",
     "registry_input": "web/data/vko-schools.json",
     "registry_available": true,
     "registry_schema_version": 1,
     "registry_source": "vko-schools-import-artifact",
-    "organization_source": "server/internal/admin/seed.go",
+    "organization_source": "not bundled; explicit production backend export required",
+    "fixture_only": false,
+    "operational_mapping_status": "NOT_PROVIDED",
     "generated_at": "omitted to keep artifact deterministic"
   },
   "match_policy": {
@@ -26,194 +28,22 @@
   },
   "disclosure": {
     "geography_status": "registry-backed-or-review",
-    "measurements_status": "synthetic-development-fixture",
+    "measurements_status": "not-provided",
     "registry_coordinates_are_authoritative": true,
     "synthetic_seed_coordinates_must_not_be_used_as_registry_coordinates": true,
     "synthetic_measurements_must_not_be_presented_as_live_or_official": true,
-    "organizations_source": "server/internal/admin/seed.go"
+    "organizations_source": "not bundled; explicit production backend export required",
+    "production_operational_mapping_required": true
   },
   "counters": {
-    "organizations": 3,
-    "auto_mapped": 1,
+    "organizations": 0,
+    "auto_mapped": 0,
     "review_required": 0,
-    "unmapped": 2,
+    "unmapped": 0,
     "registry_schools": 370,
-    "registry_only_unmonitored": 369
+    "registry_only_unmonitored": 370
   },
-  "entries": [
-    {
-      "organization_id": "org-07",
-      "registry_id": "16856",
-      "confidence": 0.95,
-      "match_method": "exact_name_address",
-      "match_status": "AUTO_MATCH",
-      "review_required": false,
-      "evidence": [
-        "name",
-        "address"
-      ],
-      "candidate_registry_ids": [
-        "16856"
-      ],
-      "organization": {
-        "school_id": "school-07",
-        "name": "Коммунальное государственное учреждение «Средняя школа №7» отдела образования по городу Усть-Каменогорску управления образования Восточно-Казахстанской области",
-        "district": "Усть-Каменогорск Г.А.",
-        "locality": null,
-        "address": "Восточно-Казахстанская область,город Усть-Каменогорск,Бульвар Гагарина,8"
-      },
-      "coordinate": {
-        "latitude": 49.972508,
-        "longitude": 82.586298
-      },
-      "coordinate_provenance": "official_registry",
-      "backend_chain": {
-        "organization_id": "org-07",
-        "school_id": "school-07",
-        "canonical_status_source": "backend",
-        "lines": [
-          {
-            "line_id": "line-07-primary",
-            "canonical_status_source": "backend.line_state",
-            "monitoring_points": [
-              {
-                "monitoring_point_id": "point-07-primary",
-                "line_id": "line-07-primary",
-                "devices": [
-                  {
-                    "device_id": "device-07-primary",
-                    "monitoring_point_id": "point-07-primary",
-                    "line_id": "line-07-primary"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "synthetic_seed_coordinates": {
-        "latitude": 49.972508,
-        "longitude": 82.586298,
-        "provenance": "server/internal/admin/seed.go",
-        "status": "synthetic-only"
-      }
-    },
-    {
-      "organization_id": "org-42",
-      "registry_id": null,
-      "confidence": 0,
-      "match_method": "no_exact_match",
-      "match_status": "UNMAPPED",
-      "review_required": false,
-      "evidence": [],
-      "candidate_registry_ids": [],
-      "organization": {
-        "school_id": "school-42",
-        "name": "Школа №42",
-        "district": "Алтай",
-        "locality": null,
-        "address": "ул. Центральная, 42"
-      },
-      "coordinate": null,
-      "coordinate_provenance": "none_until_registry_mapping",
-      "backend_chain": {
-        "organization_id": "org-42",
-        "school_id": "school-42",
-        "canonical_status_source": "backend",
-        "lines": [
-          {
-            "line_id": "line-42-primary",
-            "canonical_status_source": "backend.line_state",
-            "monitoring_points": [
-              {
-                "monitoring_point_id": "point-42-primary",
-                "line_id": "line-42-primary",
-                "devices": [
-                  {
-                    "device_id": "device-42-primary",
-                    "monitoring_point_id": "point-42-primary",
-                    "line_id": "line-42-primary"
-                  }
-                ]
-              }
-            ]
-          },
-          {
-            "line_id": "line-42-reserve",
-            "canonical_status_source": "backend.line_state",
-            "monitoring_points": [
-              {
-                "monitoring_point_id": "point-42-reserve",
-                "line_id": "line-42-reserve",
-                "devices": [
-                  {
-                    "device_id": "device-42-reserve",
-                    "monitoring_point_id": "point-42-reserve",
-                    "line_id": "line-42-reserve"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "synthetic_seed_coordinates": {
-        "latitude": 50.35,
-        "longitude": 82.62,
-        "provenance": "server/internal/admin/seed.go",
-        "status": "synthetic-only"
-      }
-    },
-    {
-      "organization_id": "org-99",
-      "registry_id": null,
-      "confidence": 0,
-      "match_method": "no_exact_match",
-      "match_status": "UNMAPPED",
-      "review_required": false,
-      "evidence": [],
-      "candidate_registry_ids": [],
-      "organization": {
-        "school_id": "school-99",
-        "name": "Школа №99",
-        "district": "Алтай",
-        "locality": null,
-        "address": "ул. Школьная, 1"
-      },
-      "coordinate": null,
-      "coordinate_provenance": "none_until_registry_mapping",
-      "backend_chain": {
-        "organization_id": "org-99",
-        "school_id": "school-99",
-        "canonical_status_source": "backend",
-        "lines": [
-          {
-            "line_id": "line-99-primary",
-            "canonical_status_source": "backend.line_state",
-            "monitoring_points": [
-              {
-                "monitoring_point_id": "point-99-primary",
-                "line_id": "line-99-primary",
-                "devices": [
-                  {
-                    "device_id": "device-99-primary",
-                    "monitoring_point_id": "point-99-primary",
-                    "line_id": "line-99-primary"
-                  }
-                ]
-              }
-            ]
-          }
-        ]
-      },
-      "synthetic_seed_coordinates": {
-        "latitude": 50.31,
-        "longitude": 82.59,
-        "provenance": "server/internal/admin/seed.go",
-        "status": "synthetic-only"
-      }
-    }
-  ],
+  "entries": [],
   "registry_only": [
     {
       "registry_id": "16270",
@@ -589,6 +419,12 @@
     },
     {
       "registry_id": "16854",
+      "monitoring_status": "UNMONITORED",
+      "coordinate": null,
+      "coordinate_provenance": "registry_artifact_only"
+    },
+    {
+      "registry_id": "16856",
       "monitoring_status": "UNMONITORED",
       "coordinate": null,
       "coordinate_provenance": "registry_artifact_only"

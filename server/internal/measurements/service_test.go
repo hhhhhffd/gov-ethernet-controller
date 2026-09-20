@@ -206,3 +206,15 @@ func TestValidateInputRejectsInvalidMeasurements(t *testing.T) {
 }
 
 func floatPtr(value float64) *float64 { return &value }
+
+func TestConfirmedIncidentNotificationMessageExcludesTechnicalDiagnostics(t *testing.T) {
+	message := confirmedIncidentNotificationMessage()
+	if message == "" {
+		t.Fatal("confirmed incident notification message must not be empty")
+	}
+	for _, forbidden := range []string{"BASELINE_", "CONTRACT_", "DURATION", "operator", "line-"} {
+		if bytes.Contains([]byte(message), []byte(forbidden)) {
+			t.Fatalf("notification message contains technical diagnostic %q: %q", forbidden, message)
+		}
+	}
+}

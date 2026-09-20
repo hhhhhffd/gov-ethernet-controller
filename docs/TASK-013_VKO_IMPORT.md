@@ -13,9 +13,11 @@ snapshots. No API key or credential was used:
 {"official_schools_total":370,"vko_schools":370,"official_coordinates":370,"matched_osm":0,"osm_only":189,"ambiguous":0,"review_required":0,"unmatched":370,"without_coordinates":0,"duplicates_removed":2,"invalid_or_outside_coordinates":0,"review_queue":0}
 ```
 
-The production registry, import report, review CSV, and organization mapping
-were generated from those sources. The fixture and `testdata/importer-vko`
-inputs remain test-only and were not used for production artifacts.
+The production registry, import report, and review CSV were generated from
+those sources. The organization mapping is deliberately not bundled as an
+operational production mapping until an explicit real backend organization
+export is supplied. The fixture and `testdata/importer-vko` inputs remain
+test-only and were not used for production registry artifacts.
 
 ## Safe source checks
 
@@ -42,5 +44,6 @@ or raw source dump was committed.
 - Abai exclusion — 0 rows after current-VKO filtering.
 - Artifact `--check` — pass with the same official inputs and Overpass snapshot.
 - Byte identity — temporary and repository artifacts match exactly.
-- Mapping generator — 3 synthetic backend organizations remain explicitly
-  unmapped; 370 registry-only schools remain unmonitored.
+- Mapping boundary — the committed production artifact contains no
+  organization entries and 370 registry-only schools remain unmonitored;
+  synthetic demo organizations are accepted only by explicit fixture tests.

@@ -881,7 +881,13 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Tim
 			return nil
 		}
 		generatedAt := time.Now().UTC().Truncate(time.Second)
-		message := "Подтверждено нарушение линии " + lineID + ": " + result.Reason
+		// notifications.message is the existing human-facing fallback field. It
+		// deliberately does not contain the evaluator reason: that value can be a
+		// raw rule/metric diagnostic and has no recipient-locale contract. The
+		// incident and its evidence retain the complete reason for authorized
+		// technical inspection; the notification surface receives only concise
+		// operator copy.
+		message := confirmedIncidentNotificationMessage()
 		var notificationID int64
 		if err := tx.QueryRow(ctx, `INSERT INTO notifications(source_type,source_id,channel,recipient_scope,message,status,generated_at) VALUES ('INCIDENT',$1,'WEB',$2,$3,'PENDING',$4) RETURNING id`, strconv.FormatInt(incidentID, 10), lineID, message, generatedAt).Scan(&notificationID); err != nil {
 			return err
@@ -935,6 +941,10 @@ func applyState(ctx context.Context, tx pgx.Tx, lineID, mode string, at time.Tim
 		return err
 	}
 	return updateRecovery(ctx, tx, lineID, incidentMode, at, recent, recoveryPolicy)
+}
+
+func confirmedIncidentNotificationMessage() string {
+	return "Подтверждено нарушение линии мониторинга."
 }
 
 type pendingNotification struct {

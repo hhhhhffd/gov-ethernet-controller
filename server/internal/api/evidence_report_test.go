@@ -28,6 +28,14 @@ func TestRenderEvidenceReportEscapesAndUsesHistoricalSnapshots(t *testing.T) {
 			t.Fatalf("report does not contain %q", want)
 		}
 	}
+	for _, want := range []string{"lang=\"ru\"", "Есть отклонение от базовой политики", "Не соответствует договору", "Технические данные", "Техническая нагрузка доказательств"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("localized human presentation does not contain %q", want)
+		}
+	}
+	if strings.Contains(content, "<td>VIOLATION</td>") || strings.Contains(content, "<td>DEVIATES</td>") {
+		t.Fatal("raw evidence states leaked into the primary table")
+	}
 	if strings.Contains(content, "line<unsafe>&1") || !strings.Contains(content, "line&lt;unsafe&gt;&amp;1") {
 		t.Fatal("untrusted line identifier was not escaped")
 	}
@@ -38,8 +46,37 @@ func TestRenderEvidenceReportExplicitNoData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(content, `data-state="NO_DATA"`) || !strings.Contains(content, "UNKNOWN") || !strings.Contains(content, `name="historical_only" content="true"`) {
+	if !strings.Contains(content, `data-state="NO_DATA"`) || !strings.Contains(content, "Данных за период нет") || !strings.Contains(content, "Состояние исторической цепочки доказательств не удалось определить") || !strings.Contains(content, `name="historical_only" content="true"`) {
 		t.Fatal("NO_DATA/UNKNOWN state is not explicit")
+	}
+}
+
+func TestRenderEvidenceReportUsesKazakhHumanPresentation(t *testing.T) {
+	content, err := renderEvidenceReport([]reportRow{testEvidenceRow()}, evidenceReportMetadata{
+		From: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC), GeneratedAt: time.Date(2026, 1, 3, 1, 0, 0, 0, time.UTC), TemplateVersion: evidenceReportTemplateVersion, Locale: "kk-KZ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"lang=\"kk\"", "Тарихи дәлелдемелер есебі", "Негізгі саясаттан ауытқу", "Шартқа сәйкес емес"} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("Kazakh report does not contain %q", want)
+		}
+	}
+}
+
+func TestEvidenceReportLocaleAcceptsSupportedLanguageHeaders(t *testing.T) {
+	for _, test := range []struct {
+		header string
+		want   string
+	}{
+		{header: "kk-KZ,ru;q=0.8", want: "kk"},
+		{header: "ru-RU,kk;q=0.8", want: "ru"},
+		{header: "en-US", want: "ru"},
+	} {
+		if got := evidenceReportLocale(test.header); got != test.want {
+			t.Fatalf("evidenceReportLocale(%q) = %q, want %q", test.header, got, test.want)
+		}
 	}
 }
 
