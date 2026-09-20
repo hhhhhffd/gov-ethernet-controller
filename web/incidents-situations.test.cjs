@@ -26,6 +26,7 @@ test("incident detail presents types, recovery, duration, and timeline without r
   assert.equal(incident.typeLabel, "Подтверждённое отсутствие интернета");
   assert.equal(incident.severityLabel, "Критический");
   assert.equal(incident.durationLabel, "2 ч 5 мин");
+  assert.equal(incident.line, "Линия");
   assert.doesNotMatch(incident.typeLabel, /NO_INTERNET|CRITICAL/);
   assert.equal(formatIncidentDuration(15, i18n), "15 мин");
   assert.equal(presentRecovery({ recovery_state: "OBSERVED" }, { i18n }).label, "Восстановление наблюдается; ждём подтверждения");
@@ -34,6 +35,48 @@ test("incident detail presents types, recovery, duration, and timeline without r
   assert.equal(timeline[0].status, "Устранён; ожидает проверки");
   assert.equal(timeline[0].actor, "");
   assert.doesNotMatch(timeline[0].label, /PROVIDER_REPORTED_FIXED/);
+});
+
+test("incident and situation actions are capability-gated and pending-aware", async () => {
+  const { incidentActions, situationActions } = await import("./features/incidents-presentation.mjs");
+  const manager = { has: (name) => name === "incident.update" || name === "situation.manage" };
+
+  assert.equal(incidentActions({ status: "IN_PROGRESS" }, manager).canMarkProviderFixed, true);
+  assert.equal(incidentActions({ status: "CLOSED" }, manager).canMarkProviderFixed, false);
+  assert.equal(incidentActions({ status: "IN_PROGRESS" }, manager, "saving").canComment, false);
+  assert.equal(situationActions({ status: "OPEN" }, manager).canLiveVerify, true);
+  assert.equal(situationActions({ status: "OPEN" }, manager).canMerge, true);
+  assert.equal(situationActions({ status: "OPEN" }, manager, "merging").canMerge, false);
+  assert.equal(situationActions({ status: "OPEN" }, { has: () => false }).readOnly, true);
+});
+
+test("incident and situation boundaries keep request payloads within backend actions", async () => {
+  const { createIncidentsBoundary, incidentEventPayload, situationActionPayload } = await import("./features/incidents.mjs");
+  const calls = [];
+  const api = {
+    async tryRequest(paths, options) {
+      calls.push({ paths, options });
+      return { ok: true };
+    },
+  };
+  const boundary = createIncidentsBoundary(api);
+
+  assert.deepEqual(incidentEventPayload("comment", { note: "  уточнение  ", internal: "drop" }), {
+    event_type: "comment",
+    note: "уточнение",
+  });
+  await boundary.addEvent(12, { event_type: "comment", note: "уточнение", internal: "drop" });
+  assert.deepEqual(JSON.parse(calls[0].options.body), { event_type: "comment", note: "уточнение" });
+
+  assert.deepEqual(situationActionPayload("merge", { reason: "  объединение  ", situation_ids: ["5", "5"], idempotencyKey: "req-1", internal: "drop" }), {
+    reason: "объединение",
+    situation_ids: ["5"],
+  });
+  await boundary.manageSituation(5, "merge", { reason: "объединение", situation_ids: ["6"], idempotencyKey: "req-1", internal: "drop" });
+  assert.equal(calls[1].paths[0], "/api/situations/5/merge");
+  assert.equal(calls[1].options.headers["Idempotency-Key"], "req-1");
+  assert.deepEqual(JSON.parse(calls[1].options.body), { reason: "объединение", situation_ids: ["6"] });
+  await assert.rejects(() => boundary.manageSituation(5, "split", { incident_ids: ["1"] }), (error) => error.code === "situation_reason_required");
 });
 
 test("situations stay contextual and localized in Kazakh", async () => {

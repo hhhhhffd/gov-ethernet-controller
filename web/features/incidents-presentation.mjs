@@ -8,6 +8,44 @@ function label(i18n, prefix, value) {
   return i18n.has(`${prefix}.${normalized}`) ? i18n.t(`${prefix}.${normalized}`) : i18n.t(`${prefix}.UNKNOWN`);
 }
 
+function capability(capabilities, name) {
+  return capabilities?.has?.(name) === true;
+}
+
+function pending(actionState) {
+  return Boolean(actionState && actionState !== "idle");
+}
+
+export function incidentActions(incident, capabilities, actionState = "idle") {
+  const canUpdate = capability(capabilities, "incident.update");
+  const closed = code(incident?.status) === "CLOSED";
+  const isPending = pending(actionState);
+  return {
+    canComment: canUpdate && !isPending,
+    canMarkProviderFixed: canUpdate && !closed && !isPending,
+    canSendToProvider: canUpdate && !isPending,
+    canAssign: canUpdate && !isPending,
+    canChangeStatus: canUpdate && !isPending,
+    isPending,
+    pendingState: actionState,
+  };
+}
+
+export function situationActions(situation, capabilities, actionState = "idle") {
+  const canManage = capability(capabilities, "situation.manage");
+  const isOpen = code(situation?.status || "OPEN") === "OPEN";
+  const isPending = pending(actionState);
+  return {
+    canLiveVerify: canManage && !isPending,
+    canMerge: canManage && isOpen && !isPending,
+    canSplit: canManage && isOpen && !isPending,
+    hasMutation: canManage,
+    readOnly: !canManage,
+    isPending,
+    pendingState: actionState,
+  };
+}
+
 export function incidentStatusValues(items) {
   return [...new Set(items.map((item) => code(item?.status)).filter(Boolean))].sort();
 }
@@ -49,7 +87,8 @@ export function presentIncident(item, { i18n, presentation, now = Date.now() }) 
     type,
     typeLabel: label(i18n, "incidentType", type),
     school: item?.school_name || item?.organization_name || i18n.t("school.noOfficialName"),
-    line: item?.line_id || i18n.t("empty.value"),
+    line: item?.line_name || item?.line_label || (item?.line_id ? i18n.t("field.line") : i18n.t("empty.value")),
+    lineId: item?.line_id || "",
     startedAt: item?.started_at,
     startedLabel: presentation.formatDate(item?.started_at, true),
     durationLabel: formatIncidentDuration(item?.duration_minutes, i18n),
@@ -68,13 +107,15 @@ export function presentTimeline(events, { i18n, presentation }) {
     const payload = event?.payload && typeof event.payload === "object" ? event.payload : {};
     const status = payload.status ? presentation.incidentStatus(payload.status) : "";
     const note = typeof payload.note === "string" && payload.note.trim() ? payload.note.trim() : "";
-    const actor = typeof event?.actor === "string" && event.actor.trim() && !/^system$/i.test(event.actor.trim()) ? event.actor.trim() : "";
+    const actor = [event?.actor_name, event?.actor_username, event?.actor_label]
+      .find((value) => typeof value === "string" && value.trim())?.trim() || "";
     return {
       id: event?.id,
       label: presentation.event(event?.event_type),
       note,
       status,
       actor,
+      rawActor: event?.actor || "",
       at: event?.created_at || event?.at,
       atLabel: presentation.formatDate(event?.created_at || event?.at, true),
     };
@@ -88,8 +129,9 @@ export function relatedSituations(situations, incidentId) {
   );
 }
 
-export function presentSituation(situation, { i18n, presentation }) {
+export function presentSituation(situation, { i18n, presentation, capabilities, actionState = "idle" }) {
   const type = code(situation?.violation_type);
+  const actions = situationActions(situation, capabilities, actionState);
   return {
     id: situation?.id,
     title: i18n.t("situation.untitled") + " #" + String(situation?.id ?? ""),
@@ -98,5 +140,6 @@ export function presentSituation(situation, { i18n, presentation }) {
     severityLabel: label(i18n, "severity", situation?.severity),
     affectedCount: Number(situation?.affected_count) || 0,
     startedLabel: presentation.formatDate(situation?.started_at || situation?.start_at, true),
+    actions,
   };
 }

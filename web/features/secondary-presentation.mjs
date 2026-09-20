@@ -1,50 +1,79 @@
-const ADMIN_RESOURCES = Object.freeze([
-  { key: "organizations", capability: "admin.manage", mutable: true },
-  { key: "providers", capability: "admin.manage", mutable: true },
-  { key: "lines", capability: "admin.manage", mutable: true },
-  { key: "monitoring-points", capability: "admin.manage", mutable: true },
-  { key: "users", capability: "admin.users", mutable: true },
-  { key: "devices", capability: "admin.devices", mutable: true },
-  { key: "schedule", capability: "admin.manage", mutable: true },
-  { key: "policies", capability: "admin.policies", mutable: true },
-  { key: "contracts", capability: "admin.policies", mutable: true },
-  { key: "districts", capability: "admin.manage", mutable: true },
-  { key: "technologies", capability: "admin.manage", mutable: true },
-  { key: "agent-versions", capability: "admin.manage", mutable: true },
-]);
+import { adminResourceDefinition, adminResourceDefinitions } from "./admin.mjs";
+import { notificationActions } from "./notifications.mjs";
 
-export function adminResourceDefinitions() {
-  return ADMIN_RESOURCES.map((resource) => ({ ...resource }));
-}
+export { adminResourceDefinitions };
 
-export function presentNotification(item, { i18n, presentation }) {
-  const source = item?.source_type || item?.event_type || item?.type;
-  const sourceLabel = source ? humanEventLabel(source, { i18n, presentation }) : i18n.t("empty.noData");
-  return {
-    id: item?.id,
-    message: item?.message || i18n.t("notification.messageUnavailable"),
-    sourceLabel,
-    deliveryLabel: presentation.deliveryStatus(item?.status),
-    generatedLabel: presentation.formatDate(item?.generated_at || item?.created_at, true),
-    nextAttemptLabel: item?.next_attempt_at ? presentation.formatDate(item.next_attempt_at, true) : "",
-    attempts: item?.delivery_attempts,
-    scopeAvailable: Boolean(item?.line_id || item?.organization_id || item?.school_id || item?.incident_id),
-    rawSource: source || "",
-  };
-}
+const OBJECT_LABEL_KEYS = Object.freeze({
+  incident: "nav.incidents",
+  incidents: "nav.incidents",
+  notification: "notification.title",
+  notifications: "notification.title",
+  line: "field.line",
+  organization: "admin.resources.organizations",
+  provider: "admin.resources.providers",
+  provider_case: "field.providerCase",
+  providercase: "field.providerCase",
+  device: "admin.resources.devices",
+  monitoring_point: "admin.resources.monitoring-points",
+  monitoringpoint: "admin.resources.monitoring-points",
+  situation: "situation.detailTitle",
+  user: "admin.resources.users",
+  measurement: "field.metrics",
+  measurement_verification: "field.metrics",
+  threshold_policy: "admin.resources.policies",
+  contract_version: "admin.resources.contracts",
+  agent_version: "admin.resources.agent-versions",
+});
 
-export function presentAuditItem(item, { i18n, presentation }) {
-  const action = item?.action || item?.event_type;
-  return {
-    id: item?.id,
-    actionLabel: humanEventLabel(action, { i18n, presentation }),
-    objectLabel: item?.object_type || i18n.t("empty.noData"),
-    actorLabel: item?.actor_username || item?.actor_id || i18n.t("empty.noData"),
-    atLabel: presentation.formatDate(item?.created_at || item?.at, true),
-    rawAction: item?.action || item?.event_type || "",
-    rawObject: item?.object_id || "",
-    payload: item?.metadata || item?.after || item?.before || null,
-  };
+const NOTIFICATION_SOURCE_KEYS = Object.freeze({
+  INCIDENT: "nav.incidents",
+  PROVIDER_CASE: "field.providerCase",
+  LINE: "field.line",
+  MEASUREMENT: "field.metrics",
+});
+
+const ADMIN_FIELD_LABEL_KEYS = Object.freeze({
+  name: "field.officialIdentity",
+  district: "field.district",
+  address: "field.address",
+  active: "admin.status",
+  support_contact: "field.provider",
+  organization_name: "field.school",
+  provider_name: "field.provider",
+  role: "field.lineRole",
+  technology: "field.connectionType",
+  status: "field.status",
+  location: "field.address",
+  is_primary: "admin.status",
+  username: "field.username",
+  disabled: "admin.status",
+  display_name: "admin.identity",
+  agent_version: "audit.version",
+  last_seen: "audit.lastSeen",
+  blocked: "admin.status",
+  tests_per_day: "admin.identity",
+  performance_tests_per_day: "admin.identity",
+  jitter_minutes: "field.jitter",
+  light_checks_between: "admin.status",
+  scope_type: "field.registryProvenance",
+  version: "audit.version",
+  valid_from: "audit.at",
+  valid_to: "audit.at",
+  contract_no: "field.contract",
+  contract_date: "audit.at",
+  download_min: "field.download",
+  upload_min: "field.upload",
+  ping_max: "field.ping",
+  jitter_max: "field.jitter",
+  packet_loss_max: "field.loss",
+  availability_min: "field.metrics",
+  recommended: "admin.status",
+  minimum_supported: "admin.status",
+  release_at: "audit.at",
+});
+
+function code(value) {
+  return String(value ?? "").trim().toUpperCase().replace(/[.\s-]+/g, "_");
 }
 
 function humanEventLabel(value, { i18n, presentation }) {
@@ -53,8 +82,101 @@ function humanEventLabel(value, { i18n, presentation }) {
   if (action !== i18n.t("action.unknown")) return action;
   const normalized = String(value).trim().toLowerCase().replace(/_/g, ".");
   const suffix = normalized.replace(/^(incident|notification)\./, "");
-  if (i18n.has("event." + suffix)) return i18n.t("event." + suffix);
+  if (i18n.has(`event.${suffix}`)) return i18n.t(`event.${suffix}`);
   return presentation.event(value);
+}
+
+function humanObjectLabel(value, i18n) {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[.\s-]+/g, "_");
+  const key = OBJECT_LABEL_KEYS[normalized];
+  return key ? i18n.t(key) : i18n.t("empty.noData");
+}
+
+function humanNotificationSource(value, i18n) {
+  const key = NOTIFICATION_SOURCE_KEYS[code(value)];
+  return key ? i18n.t(key) : i18n.t("notification.source");
+}
+
+function localizedMessage(item, { i18n }) {
+  const localized = item?.message_by_locale || item?.messageByLocale;
+  if (localized && typeof localized === "object") {
+    const selected = localized[i18n.locale] || localized[i18n.locale === "kk" ? "kk-KZ" : "ru-RU"];
+    if (typeof selected === "string" && selected.trim()) return { value: selected.trim(), localized: true };
+  }
+  const messageKey = typeof item?.message_key === "string" ? item.message_key.trim() : "";
+  if (messageKey && i18n.has(messageKey)) return { value: i18n.t(messageKey), localized: true };
+  const raw = typeof item?.message === "string" ? item.message.trim() : "";
+  const declaredLocale = String(item?.message_locale || item?.messageLocale || "").trim().toLowerCase().slice(0, 2);
+  if (raw && (!declaredLocale ? i18n.locale === "ru" : declaredLocale === i18n.locale)) {
+    return { value: raw, localized: true };
+  }
+  const source = code(item?.source_type || item?.event_type || item?.type);
+  const fallbackKey = source === "INCIDENT" ? "incidentType.UNKNOWN" : source === "PROVIDER_CASE" ? "field.providerCase" : "notification.messageUnavailable";
+  return { value: i18n.t(fallbackKey), localized: true };
+}
+
+function adminFieldLabel(key, i18n) {
+  return i18n.t(ADMIN_FIELD_LABEL_KEYS[key] || "admin.details");
+}
+
+function adminFieldValue(key, value, { i18n, presentation }) {
+  if (value === null || value === undefined || value === "") return i18n.t("empty.noData");
+  if (typeof value === "boolean") return value ? i18n.t("status.ATTENTION") : i18n.t("status.OK");
+  if (/status|state|active|blocked|recommended|supported|disabled|primary/i.test(key)) return presentation.status(value).label;
+  if (key === "role") return presentation.role(value);
+  if (/created_at|updated_at|last_seen|release_at|valid_from|valid_to|contract_date/i.test(key)) return presentation.formatDate(value, true);
+  if (typeof value === "object") return i18n.t("admin.details");
+  return String(value);
+}
+
+export function presentAdminRecord(resource, item, { i18n, presentation }) {
+  const definition = adminResourceDefinition(resource);
+  const fields = definition.displayFields
+    .filter((key) => Object.prototype.hasOwnProperty.call(item || {}, key))
+    .map((key) => ({ key, label: adminFieldLabel(key, i18n), value: adminFieldValue(key, item[key], { i18n, presentation }) }));
+  return {
+    id: item?.id ?? item?.version ?? item?.line_id ?? item?.device_id ?? "",
+    fields,
+    technical: item || {},
+  };
+}
+
+export function presentNotification(item, { i18n, presentation, capabilities, pending = false }) {
+  const source = item?.source_type || item?.event_type || item?.type;
+  const message = localizedMessage(item, { i18n });
+  return {
+    id: item?.id,
+    status: code(item?.status),
+    message: message.value,
+    messageIsLocalized: message.localized,
+    sourceLabel: humanNotificationSource(source, i18n),
+    deliveryLabel: presentation.deliveryStatus(item?.status),
+    generatedLabel: presentation.formatDate(item?.generated_at || item?.created_at, true),
+    nextAttemptLabel: item?.next_attempt_at ? presentation.formatDate(item.next_attempt_at, true) : "",
+    attempts: item?.delivery_attempts,
+    scopeAvailable: Boolean(item?.line_id || item?.organization_id || item?.school_id || item?.incident_id),
+    actions: capabilities ? notificationActions(item, capabilities, pending) : null,
+    rawSource: source || "",
+    rawMessage: typeof item?.message === "string" ? item.message : "",
+  };
+}
+
+export function presentAuditItem(item, { i18n, presentation }) {
+  const action = item?.action || item?.event_type;
+  const actorName = [item?.actor_username, item?.actor_name, item?.actor_label]
+    .find((value) => typeof value === "string" && value.trim());
+  const actorType = code(item?.actor_type);
+  return {
+    id: item?.id,
+    actionLabel: humanEventLabel(action, { i18n, presentation }),
+    objectLabel: humanObjectLabel(item?.object_type, i18n),
+    actorLabel: actorName?.trim() || (actorType === "SYSTEM" ? i18n.t("event.unknown") : i18n.t("empty.noData")),
+    atLabel: presentation.formatDate(item?.created_at || item?.at, true),
+    rawAction: item?.action || item?.event_type || "",
+    rawObject: item?.object_id || "",
+    rawActor: item?.actor_id || "",
+    payload: item?.metadata || item?.after || item?.before || null,
+  };
 }
 
 export function presentAgentVersion(item, { i18n, presentation }) {

@@ -15,6 +15,37 @@ test("NOTIFICATION-001 presents delivery and omits unread semantics", async () =
   assert.doesNotMatch(fs.readFileSync("web/index.html", "utf8"), /notification.*badge|unread/i);
 });
 
+test("Notification dispatch is a real admin action and respects pending state", async () => {
+  const { createNotificationsBoundary, notificationActions } = await import("./features/notifications.mjs");
+  const calls = [];
+  const api = {
+    async tryRequest(paths, options) {
+      calls.push({ paths, options });
+      return { items: [] };
+    },
+  };
+  const boundary = createNotificationsBoundary(api);
+  await boundary.dispatch(12);
+
+  assert.equal(calls[0].paths[0], "/api/admin/notifications/12/dispatch");
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(notificationActions({ status: "FAILED" }, { has: (name) => name === "notification.dispatch" }).canDispatch, true);
+  assert.equal(notificationActions({ status: "FAILED" }, { has: () => true }, true).canDispatch, false);
+  await assert.rejects(() => boundary.dispatch("bad"), (error) => error.code === "invalid_notification_id");
+});
+
+test("Notification messages do not cross the locale boundary as untranslated raw copy", async () => {
+  const { createI18n } = await import("./core/i18n.mjs");
+  const { createPresentation } = await import("./core/presentation.mjs");
+  const { presentNotification } = await import("./features/secondary-presentation.mjs");
+  const i18n = createI18n({ locale: "kk", storage: null, root: null });
+  const item = presentNotification({ source_type: "INCIDENT", message: "Russian backend message" }, { i18n, presentation: createPresentation(i18n) });
+
+  assert.equal(item.message, "Желідегі бұзушылық расталды");
+  assert.doesNotMatch(item.message, /Russian|backend message/);
+  assert.equal(item.sourceLabel, "Оқиғалар");
+});
+
 test("NOTIFICATION-002 utility is capability-gated and has real loading/error/empty paths", () => {
   const app = fs.readFileSync("web/app.js", "utf8");
   const html = fs.readFileSync("web/index.html", "utf8");
@@ -37,8 +68,54 @@ test("ADMIN-001 and AUDIT-001 keep secondary routes capability-gated", () => {
 
 test("ADMIN-002 resource inventory covers real admin API families", async () => {
   const { adminResourceDefinitions } = await import("./features/secondary-presentation.mjs");
-  const keys = adminResourceDefinitions().map((item) => item.key);
+  const { adminResourceDefinition } = await import("./features/admin.mjs");
+  const definitions = adminResourceDefinitions();
+  const keys = definitions.map((item) => item.key);
   for (const required of ["organizations", "providers", "lines", "monitoring-points", "users", "devices", "schedule", "policies", "contracts", "districts", "technologies", "agent-versions"]) assert.ok(keys.includes(required), required);
+  assert.equal(adminResourceDefinition("policies").supportsUpdate, false);
+  assert.equal(adminResourceDefinition("contracts").supportsUpdate, false);
+  assert.deepEqual(adminResourceDefinition("devices").registrationFields, ["device_id", "monitoring_point_id", "agent_version", "display_name"]);
+});
+
+test("Admin boundary sends only writable fields and rejects unsupported updates", async () => {
+  const { createAdminBoundary, writableAdminPayload } = await import("./features/admin.mjs");
+  const calls = [];
+  const api = {
+    async tryRequest(paths, options) {
+      calls.push({ paths, options });
+      return { ok: true };
+    },
+  };
+  const boundary = createAdminBoundary(api);
+
+  assert.deepEqual(writableAdminPayload("organizations", { id: "wrong", name: "Школа", created_at: "secret", internal: true }, { id: "org-1" }), {
+    id: "org-1",
+    name: "Школа",
+  });
+  await boundary.update("organizations", "org-1", { name: "Школа", created_at: "secret", internal: true });
+  assert.deepEqual(JSON.parse(calls[0].options.body), { id: "org-1", name: "Школа" });
+  await assert.rejects(() => boundary.update("policies", "policy-1", { version: 2 }), (error) => error.code === "unsupported_admin_operation");
+
+  await boundary.registerDevice({ device_id: "device-1", monitoring_point_id: "point-1", display_name: "Agent", secret: "drop" });
+  assert.deepEqual(JSON.parse(calls[1].options.body), { device_id: "device-1", monitoring_point_id: "point-1", display_name: "Agent" });
+});
+
+test("Admin presentation exposes a localized display subset and keeps technical data separate", async () => {
+  const { createI18n } = await import("./core/i18n.mjs");
+  const { createPresentation } = await import("./core/presentation.mjs");
+  const { presentAdminRecord } = await import("./features/secondary-presentation.mjs");
+  const i18n = createI18n({ locale: "ru", storage: null, root: null });
+  const item = presentAdminRecord("organizations", {
+    id: "org-1",
+    name: "Школа 32",
+    district: "Район",
+    created_at: "technical-only",
+    private_value: "technical-only",
+  }, { i18n, presentation: createPresentation(i18n) });
+
+  assert.deepEqual(item.fields.map((field) => field.key), ["name", "district"]);
+  assert.doesNotMatch(JSON.stringify(item.fields), /created_at|private_value/);
+  assert.equal(item.technical.private_value, "technical-only");
 });
 
 test("AUDIT-002 raw audit values are only available in technical details", async () => {
@@ -48,6 +125,21 @@ test("AUDIT-002 raw audit values are only available in technical details", async
   const i18n = createI18n({ locale: "kk", storage: null, root: null });
   const item = presentAuditItem({ id: 1, action: "incident.status.changed", object_type: "incident", object_id: "i-1", actor_username: "operator", created_at: "2026-09-20T10:00:00Z" }, { i18n, presentation: createPresentation(i18n) });
   assert.equal(item.actionLabel, "Оқиға күйі өзгертілді");
+  assert.equal(item.objectLabel, "Оқиғалар");
+  assert.equal(item.actorLabel, "operator");
   assert.equal(item.rawAction, "incident.status.changed");
   assert.equal(item.rawObject, "i-1");
+});
+
+test("AUDIT-003 does not present raw object or actor identifiers as human copy", async () => {
+  const { createI18n } = await import("./core/i18n.mjs");
+  const { createPresentation } = await import("./core/presentation.mjs");
+  const { presentAuditItem } = await import("./features/secondary-presentation.mjs");
+  const i18n = createI18n({ locale: "ru", storage: null, root: null });
+  const item = presentAuditItem({ action: "line.unknown", object_type: "unknown_object", object_id: "secret-object", actor_id: "secret-actor" }, { i18n, presentation: createPresentation(i18n) });
+
+  assert.equal(item.objectLabel, "Нет данных");
+  assert.equal(item.actorLabel, "Нет данных");
+  assert.equal(item.rawObject, "secret-object");
+  assert.equal(item.rawActor, "secret-actor");
 });

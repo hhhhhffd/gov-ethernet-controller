@@ -17,16 +17,36 @@ function provenance(evidenceChain) {
     : "UNKNOWN";
 }
 
-export function providerCaseActions(providerCase, capabilities) {
+const PENDING_ACTIONS = Object.freeze(new Set(["creating", "generating", "sending", "retrying"]));
+
+export function providerCaseActions(providerCase, capabilities, actionState = "idle") {
   const status = code(providerCase?.status);
   const deliveryStatus = code(providerCase?.delivery_status);
-  const canSend = capabilities?.has?.("provider_case.send") === true;
+  const canDeliver = capabilities?.has?.("provider_case.send") === true;
+  const retryableFailure = deliveryStatus === "FAILED" && providerCase?.delivery_retryable === true;
+  const isPending = PENDING_ACTIONS.has(actionState);
+  const canRetry = canDeliver && retryableFailure && !isPending;
+  const canInitialSend = canDeliver && status !== "SENT" && deliveryStatus === "PENDING" && !isPending;
   return {
-    canPrepare: canSend,
-    canGenerate: capabilities?.has?.("provider_case.draft") === true && status !== "SENT",
-    canSend: canSend && status !== "SENT" && ["PENDING", "FAILED"].includes(deliveryStatus),
-    isRetry: deliveryStatus === "FAILED" && providerCase?.delivery_retryable === true,
+    canPrepare: canDeliver && !isPending,
+    canGenerate: capabilities?.has?.("provider_case.draft") === true && status !== "SENT" && !isPending,
+    canInitialSend,
+    canRetry,
+    canSend: canInitialSend || canRetry,
+    isRetry: retryableFailure,
+    operation: retryableFailure ? "retry" : "send",
+    isPending,
+    disabled: isPending,
+    pendingState: actionState,
   };
+}
+
+export function providerCaseDeliveryRequest(providerCase, { finalText = "", incidentId, reviewed = true } = {}) {
+  const retry = code(providerCase?.delivery_status) === "FAILED" && providerCase?.delivery_retryable === true;
+  const payload = { reviewed: reviewed === true };
+  if (finalText) payload.final_text = String(finalText).trim();
+  if (incidentId !== undefined && incidentId !== null && incidentId !== "") payload.incident_id = incidentId;
+  return { operation: retry ? "retry" : "send", payload };
 }
 
 export function presentProviderCase(providerCase, { i18n, presentation }) {
