@@ -221,6 +221,10 @@ func staticContentType(name string) string {
 		return "text/css; charset=utf-8"
 	case ".js", ".mjs":
 		return "text/javascript; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".png":
+		return "image/png"
 	default:
 		return "application/octet-stream"
 	}
