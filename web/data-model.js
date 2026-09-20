@@ -92,30 +92,185 @@
         organizationId: text(entry.organization_id),
         registryId: text(entry.registry_id),
         matchStatus: text(entry.match_status, "UNMAPPED"),
+        matchMethod: text(entry.match_method),
+        reviewRequired: entry.review_required === true,
         confidence: Number.isFinite(Number(entry.confidence)) ? Number(entry.confidence) : 0,
         coordinate: coordinateOf(entry.coordinate),
         coordinateProvenance: text(entry.coordinate_provenance, "none"),
         backendChain: entry.backend_chain ?? null,
         evidence: Array.isArray(entry.evidence) ? entry.evidence.slice() : [],
+        candidateRegistryIds: Array.isArray(entry.candidate_registry_ids) ? entry.candidate_registry_ids.map(text).filter(Boolean) : [],
       }))
       .filter((entry) => entry.organizationId)
       .sort((left, right) => left.organizationId.localeCompare(right.organizationId, "en"));
+    const provenance = payload && typeof payload === "object" ? (payload.provenance ?? null) : null;
     return {
       entries,
-      provenance: payload && typeof payload === "object" ? (payload.provenance ?? null) : null,
+      provenance,
+      artifactStatus: text(provenance?.operational_mapping_status, entries.length ? "AVAILABLE" : "NOT_PROVIDED"),
       disclosure: payload && typeof payload === "object" ? (payload.disclosure ?? null) : null,
+    };
+  }
+
+  function registryIdentifierIndex(schools) {
+    const index = new Map();
+    schools.forEach((school) => {
+      [school.registryId, school.schoolId].filter(Boolean).forEach((identifier) => {
+        const key = text(identifier);
+        if (!key) return;
+        const candidates = index.get(key) ?? [];
+        if (!candidates.some((candidate) => candidate.registryId === school.registryId)) candidates.push(school);
+        index.set(key, candidates);
+      });
+    });
+    return index;
+  }
+
+  function backendJoinCandidates(line) {
+    const nestedSchool = line?.school && typeof line.school === "object" ? line.school : {};
+    const nestedOrganization = line?.organization && typeof line.organization === "object" ? line.organization : {};
+    const candidates = [
+      {
+        field: "registry_id",
+        value: line?.registry_id ?? line?.registryId ?? nestedSchool.registry_id ?? nestedSchool.registryId ?? nestedOrganization.registry_id ?? nestedOrganization.registryId,
+        source: "backend.line.registry_id",
+      },
+      {
+        field: "school_id",
+        value: line?.school_id ?? line?.schoolId ?? nestedSchool.school_id ?? nestedSchool.schoolId ?? nestedSchool.id ?? nestedOrganization.school_id ?? nestedOrganization.schoolId,
+        source: "backend.line.school_id",
+      },
+    ];
+    const seen = new Set();
+    return candidates.filter((candidate) => {
+      const value = text(candidate.value);
+      if (!value || seen.has(`${candidate.field}:${value}`)) return false;
+      seen.add(`${candidate.field}:${value}`);
+      candidate.value = value;
+      return true;
+    });
+  }
+
+  function resolveBackendJoin(line, registryIndex) {
+    const ambiguous = [];
+    for (const candidate of backendJoinCandidates(line)) {
+      const matches = registryIndex.get(candidate.value) ?? [];
+      if (matches.length === 1) {
+        return {
+          school: matches[0],
+          mappingSource: candidate.source,
+          mappingProvenance: {
+            source: candidate.source,
+            field: candidate.field,
+            value: candidate.value,
+            coordinateSource: "registry.coordinate",
+          },
+        };
+      }
+      if (matches.length > 1) ambiguous.push({ ...candidate, candidateRegistryIds: matches.map((school) => school.registryId).sort() });
+    }
+    return ambiguous.length ? { ambiguous: true, candidates: ambiguous } : null;
+  }
+
+  function artifactProvenance(mapping, mappingEntry) {
+    return {
+      source: "mapping-artifact.organization_id",
+      organizationsInput: text(mapping.provenance?.organizations_input),
+      organizationSource: text(mapping.provenance?.organization_source),
+      organizationId: mappingEntry.organizationId,
+      registryId: mappingEntry.registryId,
+      matchMethod: mappingEntry.matchMethod,
+      matchStatus: mappingEntry.matchStatus,
+      evidence: mappingEntry.evidence,
+    };
+  }
+
+  function resolveLineMapping({ line, mappingEntry, registryById, registryIndex, registryUnavailable, mappingUnavailable, mapping }) {
+    if (registryUnavailable) {
+      return {
+        school: null,
+        mappingStatus: "REGISTRY_UNAVAILABLE",
+        mappingSource: null,
+        mappingProvenance: { reason: "official registry could not be loaded" },
+        diagnostics: [],
+      };
+    }
+
+    const backendJoin = resolveBackendJoin(line, registryIndex);
+    const artifactSchool = mappingEntry?.registryId ? registryById.get(mappingEntry.registryId) ?? null : null;
+    if (backendJoin?.ambiguous) {
+      return {
+        school: null,
+        mappingStatus: "AMBIGUOUS_BACKEND_JOIN",
+        mappingSource: "backend.line.identifier",
+        mappingProvenance: { source: "backend.line.identifier", candidates: backendJoin.candidates },
+        diagnostics: ["backend identifier matches more than one registry school"],
+      };
+    }
+    if (backendJoin?.school && artifactSchool && backendJoin.school.registryId !== artifactSchool.registryId) {
+      return {
+        school: null,
+        mappingStatus: "MAPPING_CONFLICT",
+        mappingSource: "backend.line+mapping-artifact",
+        mappingProvenance: {
+          backend: backendJoin.mappingProvenance,
+          artifact: artifactProvenance(mapping, mappingEntry),
+        },
+        diagnostics: ["backend join and imported organization mapping identify different registry schools"],
+      };
+    }
+    if (backendJoin?.school) {
+      return {
+        school: backendJoin.school,
+        mappingStatus: "BACKEND_JOIN",
+        mappingSource: backendJoin.mappingSource,
+        mappingProvenance: mappingEntry
+          ? { backend: backendJoin.mappingProvenance, artifact: artifactProvenance(mapping, mappingEntry) }
+          : backendJoin.mappingProvenance,
+        diagnostics: [],
+      };
+    }
+    if (mappingEntry?.registryId && !artifactSchool) {
+      return {
+        school: null,
+        mappingStatus: "INVALID_MAPPING",
+        mappingSource: "mapping-artifact.organization_id",
+        mappingProvenance: artifactProvenance(mapping, mappingEntry),
+        diagnostics: ["mapping artifact references a registry school that is not loaded"],
+      };
+    }
+    if (artifactSchool) {
+      return {
+        school: artifactSchool,
+        mappingStatus: mappingEntry.matchStatus,
+        mappingSource: "mapping-artifact.organization_id",
+        mappingProvenance: artifactProvenance(mapping, mappingEntry),
+        diagnostics: [],
+      };
+    }
+    if (mappingEntry) {
+      return {
+        school: null,
+        mappingStatus: mappingEntry.matchStatus,
+        mappingSource: "mapping-artifact.organization_id",
+        mappingProvenance: artifactProvenance(mapping, mappingEntry),
+        diagnostics: mappingEntry.evidence,
+      };
+    }
+    return {
+      school: null,
+      mappingStatus: mappingUnavailable ? "MAPPING_UNAVAILABLE" : "MISSING_MAPPING",
+      mappingSource: null,
+      mappingProvenance: mappingUnavailable
+        ? { reason: "mapping artifact could not be loaded" }
+        : { reason: "no exact backend identifier or imported organization mapping matched the official registry" },
+      diagnostics: [],
     };
   }
 
   function normalizeLineIdentity(line) {
     return text(line?.organization_id ?? line?.organizationId)
       || text(line?.school_id ?? line?.schoolId)
-      || text(line?.id ?? line?.line_id);
-  }
-
-  function monitoredSchoolKey(line) {
-    return text(line?.school_id ?? line?.schoolId)
-      || text(line?.organization_id ?? line?.organizationId)
       || text(line?.id ?? line?.line_id);
   }
 
@@ -160,28 +315,25 @@
     const mapping = normalizedMapping(mappingPayload);
     const registryById = new Map(registry.schools.map((school) => [school.registryId, school]));
     const mappingByOrganization = new Map(mapping.entries.map((entry) => [entry.organizationId, entry]));
+    const registryIndex = registryIdentifierIndex(registry.schools);
     const joins = [];
     const mappedRegistryIds = new Set();
 
     const linkwatchLines = (Array.isArray(lines) ? lines : []).map((line) => {
       const organizationId = normalizeLineIdentity(line);
       const mappingEntry = mappingByOrganization.get(organizationId) ?? null;
-      const school = mappingEntry?.registryId ? registryById.get(mappingEntry.registryId) ?? null : null;
-      const mappingStatus = registryUnavailable
-        ? "REGISTRY_UNAVAILABLE"
-        : mappingUnavailable
-          ? "MAPPING_UNAVAILABLE"
-        : !mappingEntry
-          ? "MISSING_MAPPING"
-          : mappingEntry.registryId && !school
-            ? "INVALID_MAPPING"
-            : mappingEntry.matchStatus;
+      const resolved = resolveLineMapping({ line, mappingEntry, registryById, registryIndex, registryUnavailable, mappingUnavailable, mapping });
+      const school = resolved.school;
       if (school) mappedRegistryIds.add(school.registryId);
       const join = {
         organizationId,
+        schoolId: text(line?.school_id ?? line?.schoolId),
         lineId: text(line?.id ?? line?.line_id),
         registryId: school?.registryId ?? null,
-        mappingStatus,
+        mappingStatus: resolved.mappingStatus,
+        mappingSource: resolved.mappingSource,
+        mappingProvenance: resolved.mappingProvenance,
+        diagnostics: resolved.diagnostics,
         registrySchool: school,
         status: lineStatus(line),
         statusSource: "backend.line_state",
@@ -190,7 +342,10 @@
       return {
         ...line,
         registryId: join.registryId,
-        mappingStatus,
+        mappingStatus: join.mappingStatus,
+        mappingSource: join.mappingSource,
+        mappingProvenance: join.mappingProvenance,
+        mappingDiagnostics: join.diagnostics,
         registrySchool: school,
         registryCoordinate: school?.coordinate ?? null,
         registryCoordinateSource: school?.coordinateSource ?? "none",
@@ -208,7 +363,31 @@
         statusSource: monitored ? "backend.line_state" : "registry-only",
       };
     });
-    const monitoredSchoolCount = new Set(linkwatchLines.map(monitoredSchoolKey).filter(Boolean)).size;
+    const mappingStatusCounts = joins.reduce((counts, join) => {
+      counts[join.mappingStatus] = (counts[join.mappingStatus] || 0) + 1;
+      return counts;
+    }, {});
+    const unmappedJoins = joins.filter((join) => !join.registryId);
+    const mappingDiagnostics = {
+      artifactStatus: mapping.artifactStatus,
+      artifactEntryCount: mapping.entries.length,
+      artifactProvenance: mapping.provenance,
+      registryAvailable: !registryUnavailable,
+      mappingArtifactAvailable: !mappingUnavailable,
+      lineCount: joins.length,
+      mappedLineCount: joins.length - unmappedJoins.length,
+      unmappedLineCount: unmappedJoins.length,
+      backendJoinCount: joins.filter((join) => join.mappingStatus === "BACKEND_JOIN").length,
+      statusCounts: mappingStatusCounts,
+      unmappedLines: unmappedJoins.map((join) => ({
+        lineId: join.lineId,
+        organizationId: join.organizationId,
+        schoolId: join.schoolId,
+        mappingStatus: join.mappingStatus,
+        diagnostics: join.diagnostics,
+      })),
+    };
+    const monitoredSchoolCount = mappedRegistryIds.size;
     return {
       registry: {
         schools: registrySchools,
@@ -221,8 +400,18 @@
         lines: linkwatchLines,
         monitoredSchoolCount,
         organizationCount: new Set(linkwatchLines.map(normalizeLineIdentity).filter(Boolean)).size,
+        mappedLineCount: mappingDiagnostics.mappedLineCount,
+        unmappedLineCount: mappingDiagnostics.unmappedLineCount,
       },
       joins,
+      mapping: {
+        artifactStatus: mapping.artifactStatus,
+        artifactEntryCount: mapping.entries.length,
+        provenance: mapping.provenance,
+        unavailable: Boolean(mappingUnavailable),
+        diagnostics: mappingDiagnostics,
+      },
+      mappingDiagnostics,
       registryUnavailable: Boolean(registryUnavailable),
       mappingUnavailable: Boolean(mappingUnavailable),
       registryOnly: registrySchools.filter((school) => school.monitoringStatus === "NOT_MONITORED"),

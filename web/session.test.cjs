@@ -179,3 +179,37 @@ test("map integration ignores lines that resolve after the session generation ch
   assert.equal(renders, 0);
   assert.equal(integration.state.loading, false);
 });
+
+test("map integration keeps an unmapped backend line in state, render context, and diagnostics", async () => {
+  const { createMapIntegration, normalizeLine } = await import("./integration/map-integration.mjs");
+  const dataModel = require("./data-model.js");
+  const registryPayload = { schools: [{ registry_id: "registry-1", official_name: "Registry school", latitude: 50, longitude: 82 }] };
+  const mappingPayload = { provenance: { operational_mapping_status: "NOT_PROVIDED" }, entries: [] };
+  const rendered = [];
+  const integration = createMapIntegration({
+    session: { generation: 1 },
+    api: { tryRequest: async () => [{ id: "line-unmapped", organization_id: "org-unmapped", school_id: "backend-school", latitude: 50.35, longitude: 82.62, status: "OK" }] },
+    reports: {},
+    dataModel: {
+      ...dataModel,
+      createDataLoader() { return { load: async () => ({ registryPayload, mappingPayload, registryUnavailable: false, mappingUnavailable: false }) }; },
+    },
+    mapApi: {
+      render(context) { rendered.push(context); },
+      setPresentation() {},
+      setMapPresentation() {},
+    },
+  });
+
+  assert.equal(normalizeLine({ pk: 42 }).id, null, "malformed backend rows must not receive a synthetic line id");
+  await integration.loadCurrent();
+
+  assert.equal(integration.state.lines.length, 1);
+  assert.equal(integration.state.lines[0].mappingStatus, "MISSING_MAPPING");
+  assert.equal(integration.state.view.lines.length, 0, "unmapped lines have no map marker without registry identity");
+  assert.equal(integration.state.view.unmappedLines.length, 1);
+  assert.equal(integration.state.view.authoritativeLines.length, 1);
+  assert.equal(rendered.at(-1).lines.length, 1, "the map boundary must receive the authoritative row for diagnostics");
+  assert.equal(integration.mappingDiagnostics().unmappedLineCount, 1);
+  assert.equal(integration.registryStatus().state, "mapping-incomplete");
+});

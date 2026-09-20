@@ -91,6 +91,80 @@ test("invalid and missing mappings are explicit and never fuzzy-matched", () => 
   assert.equal(model.linkwatch.lines[1].registrySchool, null);
 });
 
+test("an exact backend school join uses registry identity and coordinates, even when the artifact is empty", () => {
+  const model = buildFrontendModel({
+    registryPayload: {
+      schools: [{ registry_id: "registry-real", school_id: "backend-school-1", official_name: "Real school", latitude: 49.91, longitude: 82.51 }],
+    },
+    mappingPayload: {
+      provenance: { operational_mapping_status: "NOT_PROVIDED", organizations_input: "not-provided" },
+      entries: [],
+    },
+    lines: [{
+      id: "line-real",
+      organization_id: "org-real",
+      school_id: "backend-school-1",
+      latitude: 1,
+      longitude: 2,
+      status: "DEGRADED",
+    }],
+  });
+
+  const mapped = model.linkwatch.lines[0];
+  assert.equal(mapped.mappingStatus, "BACKEND_JOIN");
+  assert.equal(mapped.mappingSource, "backend.line.school_id");
+  assert.equal(mapped.registryId, "registry-real");
+  assert.deepEqual(mapped.registryCoordinate, { latitude: 49.91, longitude: 82.51 });
+  assert.deepEqual(mapped.mappingProvenance, {
+    source: "backend.line.school_id",
+    field: "school_id",
+    value: "backend-school-1",
+    coordinateSource: "registry.coordinate",
+  });
+  assert.equal(model.mapping.artifactEntryCount, 0);
+  assert.equal(model.mapping.artifactStatus, "NOT_PROVIDED");
+  assert.equal(model.mappingDiagnostics.backendJoinCount, 1);
+  assert.equal(model.mappingDiagnostics.unmappedLineCount, 0);
+  assert.equal(model.registryOnly.length, 0);
+});
+
+test("an authoritative line without an exact join is retained as MISSING_MAPPING and cannot use backend coordinates", () => {
+  const model = buildFrontendModel({
+    registryPayload: {
+      schools: [{ registry_id: "registry-real", official_name: "Real school", latitude: 49.91, longitude: 82.51 }],
+    },
+    mappingPayload: {
+      provenance: { operational_mapping_status: "NOT_PROVIDED" },
+      entries: [],
+    },
+    lines: [{
+      id: "line-unmapped",
+      organization_id: "org-unmapped",
+      school_id: "seed-school-42",
+      latitude: 50.35,
+      longitude: 82.62,
+      status: "OK",
+    }],
+  });
+
+  const unmapped = model.linkwatch.lines[0];
+  assert.equal(model.linkwatch.lines.length, 1, "the backend line must not be discarded");
+  assert.equal(unmapped.mappingStatus, "MISSING_MAPPING");
+  assert.equal(unmapped.registrySchool, null);
+  assert.equal(unmapped.registryCoordinate, null);
+  assert.equal(unmapped.registryCoordinateSource, "none");
+  assert.equal(model.linkwatch.monitoredSchoolCount, 0);
+  assert.equal(model.mappingDiagnostics.unmappedLineCount, 1);
+  assert.deepEqual(model.mappingDiagnostics.unmappedLines[0], {
+    lineId: "line-unmapped",
+    organizationId: "org-unmapped",
+    schoolId: "seed-school-42",
+    mappingStatus: "MISSING_MAPPING",
+    diagnostics: [],
+  });
+  assert.equal(model.registryOnly.length, 1, "the registry school remains registry-only");
+});
+
 test("registry failure is explicit, cached once, and does not discard LINKWATCH lines", async () => {
   let calls = 0;
   const loader = createDataLoader({
