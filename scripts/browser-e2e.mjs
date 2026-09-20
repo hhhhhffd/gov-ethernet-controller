@@ -166,7 +166,17 @@ async function runMapAcceptance() {
     });
     await surface("registry-only marker", async () => { const marker = page.locator('.leaflet-marker-icon.linkwatch-registry-marker[title*="только реестр"]').first(); check(await marker.count() === 1, "registry-only marker is missing"); await marker.click(); const text = await page.locator("#mapPopup").textContent(); check(text.includes("Не подключена к мониторингу"), "registry-only state is not explicit"); check(!text.includes("Текущее состояние"), "registry-only popup exposed operational state"); await page.screenshot({ path: "artifacts/task022-registry-school-1355x880.png", scale: "css" }); return "registry-only popup stays neutral"; });
     await surface("current monitoring marker", async () => { await page.locator("#mapPopupClose").click(); await page.locator(".leaflet-marker-icon.linkwatch-monitoring-marker").first().click(); const contextData = await page.evaluate(() => window.LinkwatchMap.getLayers().monitoringMarkers[0].__linkwatchContext); const text = await page.locator("#mapPopup").textContent(); check(contextData.status === "NO_INTERNET", `marker status was ${contextData.status}`); check(text.includes("Текущее состояние"), "monitoring popup did not disclose current state"); await page.screenshot({ path: "artifacts/task022-monitoring-school-1355x880.png", scale: "css" }); return "monitoring marker preserves backend LineState identity"; });
-    await surface("contextual line boundary", async () => { await page.locator("#mapPopupOpenLine").click(); await page.locator("#detailDrawer").waitFor({ state: "visible" }); const drawerText = await page.locator("#drawerContext, #drawerLine").allTextContents(); check(drawerText.join(" ").includes("fixture-line-001"), "line context lost line identity"); await page.screenshot({ path: "artifacts/task022-line-detail-1355x880.png", scale: "css" }); await page.locator("#drawerClose").click(); await page.locator("#mapPopupClose").click(); return "map popup opens the contextual line surface"; });
+    await surface("contextual line boundary", async () => {
+      await page.locator("#mapPopupOpenLine").click();
+      await page.locator("#detailDrawer").waitFor({ state: "visible" });
+      const drawerText = await page.locator("#drawerContext, #drawerLine").allTextContents();
+      check(drawerText.join(" ").includes("fixture-line-001"), "line context lost line identity");
+      check(await page.locator("#mapPopup").isHidden(), "map popup remained visible after opening line detail");
+      await page.screenshot({ path: "artifacts/task022-line-detail-1355x880.png", scale: "css" });
+      await page.locator("#drawerClose").click();
+      if (await page.locator("#mapPopup").isVisible()) await page.locator("#mapPopupClose").click();
+      return "map popup opens the contextual line surface and follows the drawer lifecycle";
+    });
     await surface("real school search, filters and map counts", async () => {
       await page.locator("#schoolSearch").fill("№32");
       const result = page.locator('.school-search-result[data-registry-id="18383"]');
