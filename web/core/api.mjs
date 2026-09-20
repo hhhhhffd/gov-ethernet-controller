@@ -3,7 +3,7 @@ export function createApiClient({ getToken, onUnauthorized, onForbidden } = {}) 
   let recoveryHandlers = { onUnauthorized, onForbidden };
 
   const request = async (path, options = {}) => {
-    const { _authRetried = false, _capabilityRetried = false, ...fetchOptions } = options;
+    const { _authRetried = false, _capabilityRetried = false, _rawResponse = false, ...fetchOptions } = options;
     const headers = {
       Accept: "application/json",
       ...(fetchOptions.body ? { "Content-Type": "application/json" } : {}),
@@ -29,6 +29,7 @@ export function createApiClient({ getToken, onUnauthorized, onForbidden } = {}) 
       throw error;
     }
     if (response.status === 204) return null;
+    if (_rawResponse) return response;
     const contentType = response.headers.get("content-type") || "";
     return contentType.includes("json") ? response.json() : response;
   };
@@ -53,7 +54,7 @@ export function createApiClient({ getToken, onUnauthorized, onForbidden } = {}) 
       recoveryHandlers = { ...recoveryHandlers, ...nextHandlers };
     },
     async download(paths, options = {}) {
-      const response = await tryRequest(paths, options);
+      const response = await tryRequest(paths, { ...options, _rawResponse: true });
       if ((typeof Response !== "undefined" && response instanceof Response) || typeof response?.blob === "function") return response;
       throw new Error("Ожидался файл, но сервер вернул JSON");
     },
