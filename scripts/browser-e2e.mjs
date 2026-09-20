@@ -101,6 +101,13 @@ async function runMapAcceptance() {
       await page.locator('.primary-nav [data-route="reports"]').click();
       await page.waitForFunction(() => document.querySelector("#authenticatedWorkspace")?.dataset.route === "reports");
       check(await page.locator('.primary-nav [data-route="reports"]').getAttribute("aria-current") === "page" && new URL(page.url()).hash === "#reports", "primary navigation has no route effect");
+      await page.locator("#reportsSurface h1").waitFor({ state: "visible" });
+      check(await page.locator("#reportsSurface [data-report-filters]").count() === 1, "reports route did not render real report filters");
+      check((await page.locator("#reportsSurface").textContent()).includes("За выбранный период"), "reports route did not preserve the honest empty historical state");
+      await page.locator('.primary-nav [data-route="incidents"]').click();
+      await page.waitForFunction(() => document.querySelector("#authenticatedWorkspace")?.dataset.route === "incidents");
+      await page.locator("#incidentsSurface h1").waitFor({ state: "visible" });
+      check((await page.locator("#incidentsSurface").textContent()).includes("В доступном охвате инцидентов нет"), "incidents route did not render the honest empty state");
       await page.locator('.primary-nav [data-route="map"]').click();
       const darkGeometry = await page.evaluate(() => ["#mapWrap", ".shell-top-left", ".primary-nav .reference-nav-item", "#schoolSearch", ".map-tools button"].flatMap((selector) => [...document.querySelectorAll(selector)].map((element) => { const box = element.getBoundingClientRect(); return [selector, Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)]; })));
       await page.screenshot({ path: "artifacts/task006-shell-1355x880.png", scale: "css" });
@@ -113,6 +120,15 @@ async function runMapAcceptance() {
       await page.locator("#themeToggle").click();
       await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
       return "map fills 1355×880, shell is isolated, nav is capability-aware, one map tool stack is visible, and dark/light geometry matches";
+    });
+    await surface("locale boundary", async () => {
+      await page.locator('[data-locale="kk"]').click();
+      await page.waitForFunction(() => document.documentElement.lang === "kk");
+      check((await page.locator("#schoolSearch").getAttribute("placeholder")) === "Мектеп, аудан немесе мекенжай", "Kazakh locale did not update the map search copy");
+      check(await page.evaluate(() => localStorage.getItem("linkwatch_locale")) === "kk", "Kazakh locale was not persisted");
+      await page.locator('[data-locale="ru"]').click();
+      await page.waitForFunction(() => document.documentElement.lang === "ru");
+      return "RU/KK switching updates product copy and persists the selected locale";
     });
     await surface("registry-only marker", async () => { const marker = page.locator('.leaflet-marker-icon.linkwatch-registry-marker[title*="только реестр"]').first(); check(await marker.count() === 1, "registry-only marker is missing"); await marker.click(); const text = await page.locator("#mapPopup").textContent(); check(text.includes("Не подключена к мониторингу"), "registry-only state is not explicit"); check(!text.includes("Текущее состояние"), "registry-only popup exposed operational state"); return "registry-only popup stays neutral"; });
     await surface("current monitoring marker", async () => { await page.locator("#mapPopupClose").click(); await page.locator(".leaflet-marker-icon.linkwatch-monitoring-marker").first().click(); const contextData = await page.evaluate(() => window.LinkwatchMap.getLayers().monitoringMarkers[0].__linkwatchContext); const text = await page.locator("#mapPopup").textContent(); check(contextData.status === "NO_INTERNET", `marker status was ${contextData.status}`); check(text.includes("Текущее состояние"), "monitoring popup did not disclose current state"); return "monitoring marker preserves backend LineState identity"; });
