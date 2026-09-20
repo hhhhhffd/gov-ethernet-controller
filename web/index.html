@@ -17,28 +17,6 @@
       <section id="authenticatedWorkspace" class="workspace" hidden data-i18n-aria-label="app.workspace">
         <section id="mapWrap" class="map-workspace" data-i18n-aria-label="app.mapWorkspace">
           <div id="leafletMap" class="leaflet-map" role="application" data-i18n-aria-label="app.regionMap"></div>
-          <div class="shell-top-left" data-i18n-aria-label="app.sections">
-            <div class="shell-logo" aria-label="LINKWATCH"><span class="shell-logo-mark" aria-hidden="true"></span><span class="visually-hidden">LINKWATCH</span></div>
-            <nav id="primaryNav" class="primary-nav" data-i18n-aria-label="app.sections">
-              <button class="reference-nav-item" data-route="map" type="button" aria-current="page" data-i18n="nav.map"></button>
-              <button class="reference-nav-item" data-route="incidents" type="button" hidden data-i18n="nav.incidents"></button>
-              <button class="reference-nav-item" data-route="reports" type="button" hidden data-i18n="nav.reports"></button>
-            </nav>
-          </div>
-          <div class="shell-top-right" data-i18n-aria-label="app.tools">
-            <button id="themeToggle" class="reference-icon-button" type="button" data-i18n-aria-label="theme.switchToLight" data-i18n-title="theme.switchToLight">☼</button>
-            <button id="refreshButton" class="reference-icon-button" type="button" data-i18n-aria-label="action.refreshMap" data-i18n-title="action.refreshMap">↻</button>
-            <button id="notificationsButton" class="reference-icon-button" type="button" data-capability="notification.read" data-i18n-aria-label="notification.open" data-i18n-title="notification.open" aria-expanded="false">♢</button>
-            <details id="accountControl" class="account-control">
-              <summary id="accountButton" class="account-button" data-i18n-aria-label="app.account"><span id="sessionUser">—</span></summary>
-              <div class="account-menu">
-                <span id="sessionRole" class="account-role">—</span>
-                <button id="adminMenuButton" data-route="admin" data-capability="admin.manage" type="button" hidden data-i18n="nav.admin"></button>
-                <button id="auditMenuButton" data-route="audit" data-capability="audit.read" type="button" hidden data-i18n="nav.audit"></button>
-                <button id="logoutButton" type="button" data-i18n="action.signOut"></button>
-              </div>
-            </details>
-          </div>
           <form id="mapFilter" class="map-filter-island" data-i18n-aria-label="map.filter">
             <label class="visually-hidden" for="schoolSearch" data-i18n="map.searchLabel"></label>
             <input id="schoolSearch" type="search" autocomplete="off" data-i18n-placeholder="map.searchPlaceholder" />
@@ -65,6 +43,28 @@
           <div class="map-meta"><span><b id="mapVisibleSchoolCount">—</b> <span data-i18n="map.visibleSchools"></span></span><span><b id="mapAttentionCount">—</b> <span data-i18n="map.attentionSchools"></span></span><span class="visually-hidden"><b id="lineCount">0</b> <span data-i18n="map.lineCount"></span></span><span class="visually-hidden" id="mapVisibleCount">0</span><span id="mapModeLabel"></span><span id="mapFooterNote"></span></div>
           <p id="mapError" class="state-message error" role="alert" hidden></p>
         </section>
+        <div class="shell-top-left" data-i18n-aria-label="app.sections">
+          <div class="shell-logo" aria-label="LINKWATCH"><span class="shell-logo-mark" aria-hidden="true"></span><span class="visually-hidden">LINKWATCH</span></div>
+          <nav id="primaryNav" class="primary-nav" data-i18n-aria-label="app.sections">
+            <button class="reference-nav-item" data-route="map" type="button" aria-current="page" data-i18n="nav.map"></button>
+            <button class="reference-nav-item" data-route="incidents" type="button" hidden data-i18n="nav.incidents"></button>
+            <button class="reference-nav-item" data-route="reports" type="button" hidden data-i18n="nav.reports"></button>
+          </nav>
+        </div>
+        <div class="shell-top-right" data-i18n-aria-label="app.tools">
+          <button id="themeToggle" class="reference-icon-button" type="button" data-i18n-aria-label="theme.switchToLight" data-i18n-title="theme.switchToLight">☼</button>
+          <button id="refreshButton" class="reference-icon-button" type="button" data-i18n-aria-label="action.refreshMap" data-i18n-title="action.refreshMap">↻</button>
+          <button id="notificationsButton" class="reference-icon-button" type="button" data-capability="notification.read" data-i18n-aria-label="notification.open" data-i18n-title="notification.open" aria-expanded="false">♢</button>
+          <details id="accountControl" class="account-control">
+            <summary id="accountButton" class="account-button" data-i18n-aria-label="app.account"><span id="sessionUser">—</span></summary>
+            <div class="account-menu">
+              <span id="sessionRole" class="account-role">—</span>
+              <button id="adminMenuButton" data-route="admin" data-capability="admin.manage" type="button" hidden data-i18n="nav.admin"></button>
+              <button id="auditMenuButton" data-route="audit" data-capability="audit.read" type="button" hidden data-i18n="nav.audit"></button>
+              <button id="logoutButton" type="button" data-i18n="action.signOut"></button>
+            </div>
+          </details>
+        </div>
         <div id="mapLiveStatus" class="visually-hidden" aria-live="polite"></div>
         <span id="operationalStatus" class="visually-hidden" role="status"></span>
         <span id="registryDataStatus" class="visually-hidden" role="status"></span>
