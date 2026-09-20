@@ -15,9 +15,189 @@
     map: null, tileLayer: null, config: null, layers: null, lastRender: null, resizeObserver: null, onMarkerClick: null, tileError: false,
     presentation: { t: () => "", schoolName: (school) => school?.officialName ?? school?.name ?? "" },
     mapPresentation: { theme: "dark", locale: "ru", style: "alidade-smooth-dark", fallback: null, labels: "application-presentation" },
+    activeMarker: null, activeDescriptor: null, popupFocusDescriptor: null, pendingFocusMarker: null,
+    popupElement: null, popupObserver: null, popupOpen: false, popupCloseSequence: 0,
   };
   function mapText(key, values) { return state.presentation?.t?.(key, values) || ""; }
   function schoolName(school, fallback) { return state.presentation?.schoolName?.(school, fallback) || fallback || ""; }
+
+  function markerElement(marker) {
+    return marker?.getElement?.() || marker?._icon || null;
+  }
+  function markerAccessibleName(context) {
+    return String(context?.label || context?.school?.officialName || context?.school?.name || (context?.kind === "registry-cluster" ? mapText("map.clusterTitle", { count: context.count }) : mapText("school.registry")) || "Map location");
+  }
+  function memberRegistryIds(context) {
+    return (Array.isArray(context?.members) ? context.members : [])
+      .map((member) => member?.registryId ?? member?.registry_id ?? member?.school?.registryId ?? member?.school?.registry_id)
+      .filter((registryId) => registryId !== undefined && registryId !== null)
+      .map(String);
+  }
+  function markerDescriptor(context) {
+    if (!context) return null;
+    const registryId = context.registryId ?? context.school?.registryId ?? context.school?.registry_id;
+    return {
+      kind: context.kind || "",
+      registryId: registryId === undefined || registryId === null ? null : String(registryId),
+      memberIds: memberRegistryIds(context),
+    };
+  }
+  function markerContext(marker) { return marker?.__linkwatchContext || null; }
+  function markerMatchesId(marker, registryId) {
+    const context = markerContext(marker);
+    const markerId = context?.registryId ?? context?.school?.registryId ?? context?.school?.registry_id;
+    return markerId !== undefined && markerId !== null && String(markerId) === String(registryId);
+  }
+  function renderedMarkers() {
+    const registry = state.layers?.registryClusters?.items || [];
+    const monitoring = state.layers?.monitoring?.items || [];
+    return [...monitoring, ...registry];
+  }
+  function allKnownMarkers() {
+    return [...new Set([
+      ...(state.layers?.registryMarkers || []),
+      ...(state.layers?.monitoringMarkers || []),
+      ...renderedMarkers(),
+      state.activeMarker,
+      state.pendingFocusMarker,
+    ].filter(Boolean))];
+  }
+  function markerOverlap(marker, memberIds) {
+    const context = markerContext(marker);
+    if (context?.kind !== "registry-cluster") return 0;
+    const ids = new Set(memberRegistryIds(context));
+    return memberIds.reduce((count, registryId) => count + (ids.has(String(registryId)) ? 1 : 0), 0);
+  }
+  function resolveMarker(descriptor) {
+    if (!descriptor) return null;
+    const candidates = renderedMarkers();
+    const exactKind = candidates.find((marker) => {
+      const context = markerContext(marker);
+      if (context?.kind !== descriptor.kind) return false;
+      if (descriptor.registryId) return markerMatchesId(marker, descriptor.registryId);
+      return descriptor.kind !== "registry-cluster" || !descriptor.memberIds.length || markerOverlap(marker, descriptor.memberIds) > 0;
+    });
+    if (exactKind) return exactKind;
+    if (descriptor.registryId) {
+      const direct = candidates.find((marker) => markerMatchesId(marker, descriptor.registryId));
+      if (direct) return direct;
+      const containing = candidates.find((marker) => markerOverlap(marker, [descriptor.registryId]) > 0);
+      if (containing) return containing;
+    }
+    if (descriptor.memberIds.length) {
+      const containing = candidates
+        .map((marker) => ({ marker, overlap: markerOverlap(marker, descriptor.memberIds) }))
+        .filter((item) => item.overlap > 0)
+        .sort((left, right) => right.overlap - left.overlap)[0];
+      if (containing) return containing.marker;
+      const directMember = candidates.find((marker) => descriptor.memberIds.some((registryId) => markerMatchesId(marker, registryId)));
+      if (directMember) return directMember;
+    }
+    return allKnownMarkers().find((marker) => marker === state.activeMarker) || null;
+  }
+  function setMarkerExpanded(marker, expanded) {
+    if (!marker) return;
+    marker.__linkwatchExpanded = Boolean(expanded);
+    const element = markerElement(marker);
+    if (!element?.setAttribute) return;
+    const context = markerContext(marker);
+    element.setAttribute("role", "button");
+    element.setAttribute("tabindex", "0");
+    element.setAttribute("aria-label", markerAccessibleName(context));
+    element.setAttribute("aria-expanded", String(Boolean(expanded)));
+  }
+  function applyMarkerAccessibility(marker) {
+    if (!marker) return;
+    const context = markerContext(marker);
+    marker.__linkwatchAriaLabel = markerAccessibleName(context);
+    setMarkerExpanded(marker, Boolean(marker.__linkwatchExpanded));
+  }
+  function focusMarker(marker) {
+    const element = markerElement(marker);
+    if (!element || element.isConnected === false || typeof element.focus !== "function") return false;
+    element.focus({ preventScroll: true });
+    return true;
+  }
+  function setActiveMarker(marker, context = markerContext(marker)) {
+    if (state.activeMarker && state.activeMarker !== marker) setMarkerExpanded(state.activeMarker, false);
+    state.activeMarker = marker || null;
+    state.activeDescriptor = markerDescriptor(context);
+    state.popupFocusDescriptor = state.activeDescriptor;
+    state.pendingFocusMarker = marker || null;
+    setMarkerExpanded(marker, true);
+  }
+  function syncOpenPopupMarker() {
+    if (!state.popupOpen) return;
+    const marker = resolveMarker(state.popupFocusDescriptor || state.activeDescriptor) || state.pendingFocusMarker || state.activeMarker;
+    if (!marker) return;
+    const descriptor = state.popupFocusDescriptor || state.activeDescriptor;
+    if (descriptor?.kind === "registry-cluster" && markerContext(marker)?.kind !== "registry-cluster") return;
+    if (state.activeMarker && state.activeMarker !== marker) setMarkerExpanded(state.activeMarker, false);
+    state.activeMarker = marker;
+    setMarkerExpanded(marker, true);
+  }
+  function closeKnownMarkerStates() {
+    allKnownMarkers().forEach((marker) => setMarkerExpanded(marker, false));
+  }
+  function restorePopupFocus(descriptor, sequence) {
+    const restore = () => {
+      if (state.popupOpen || sequence !== state.popupCloseSequence) return;
+      const marker = resolveMarker(descriptor);
+      if (marker) {
+        setMarkerExpanded(marker, false);
+        focusMarker(marker);
+      }
+    };
+    if (typeof window.setTimeout === "function") window.setTimeout(restore, 0);
+    else restore();
+  }
+  function popupIsOpen(popup) {
+    return Boolean(popup && popup.hidden !== true && !popup.classList?.contains?.("hidden"));
+  }
+  function registryMarkerForId(registryId) {
+    return allKnownMarkers().find((marker) => markerMatchesId(marker, registryId)) || null;
+  }
+  function handlePopupMemberClick(event) {
+    const target = event?.target;
+    const button = target?.closest?.("[data-popup-registry-id]") || (target?.dataset?.popupRegistryId ? target : null);
+    const registryId = button?.dataset?.popupRegistryId;
+    if (!registryId) return;
+    const marker = registryMarkerForId(registryId);
+    const context = markerContext(marker) || { kind: "registry", registryId };
+    setActiveMarker(marker, context);
+    state.popupFocusDescriptor = { kind: "registry", registryId: String(registryId), memberIds: [] };
+  }
+  function syncPopupVisibility() {
+    const popup = state.popupElement;
+    if (!popup) return;
+    const open = popupIsOpen(popup);
+    if (open) {
+      state.popupOpen = true;
+      syncOpenPopupMarker();
+      return;
+    }
+    if (!state.popupOpen && !state.activeMarker && !state.popupFocusDescriptor) return;
+    state.popupOpen = false;
+    const descriptor = state.popupFocusDescriptor || state.activeDescriptor;
+    state.popupCloseSequence += 1;
+    closeKnownMarkerStates();
+    state.activeMarker = null;
+    state.activeDescriptor = null;
+    state.pendingFocusMarker = null;
+    state.popupFocusDescriptor = null;
+    restorePopupFocus(descriptor, state.popupCloseSequence);
+  }
+  function observePopup() {
+    const popup = document.getElementById?.("mapPopup");
+    if (!popup || popup === state.popupElement) return;
+    state.popupElement = popup;
+    popup.addEventListener?.("click", handlePopupMemberClick, true);
+    if (typeof window.MutationObserver === "function") {
+      state.popupObserver = new window.MutationObserver(syncPopupVisibility);
+      state.popupObserver.observe(popup, { attributes: true, attributeFilter: ["hidden", "class"], childList: true, subtree: true });
+    }
+    syncPopupVisibility();
+  }
 
   function mapConfig() {
     const overrides = window.LINKWATCH_MAP_CONFIG || {};
@@ -85,12 +265,16 @@
   }
   function bindMarker(marker, context) {
     marker.__linkwatchContext = context;
+    marker.__linkwatchExpanded = false;
+    applyMarkerAccessibility(marker);
     if (typeof marker.bindTooltip === "function") marker.bindTooltip(context.label, { direction: "top", offset: [0, -7] });
     const activate = () => {
+      setActiveMarker(marker, context);
       if (typeof state.onMarkerClick === "function") state.onMarkerClick(context, marker);
       if (typeof window.CustomEvent === "function" && typeof window.dispatchEvent === "function") window.dispatchEvent(new window.CustomEvent("linkwatch:map-marker", { detail: { context, marker } }));
     };
     if (typeof marker.on === "function") {
+      marker.on("add", () => applyMarkerAccessibility(marker));
       marker.on("click", activate);
       marker.on("keypress", (event) => {
         const original = event?.originalEvent || event;
@@ -244,11 +428,12 @@
     groups.forEach((group) => {
       if (group.markers.length === 1) { state.layers.registryClusters.addLayer(group.markers[0]); return; }
       const displayCoordinate = clusterDisplayCoordinate(group);
-      const label = mapText("map.clusterTitle", { count: group.markers.length });
-      const marker = createMarker(displayCoordinate, { icon: icon("linkwatch-registry-cluster", '<span aria-label="' + label + '">' + group.markers.length + "</span>", [28, 28]), keyboard: true, title: label }, { kind: "registry-cluster", count: group.markers.length, members: group.markers.map((item) => item.__linkwatchContext), lines: [], mode: "registry", label });
+      const label = mapText("map.clusterTitle", { count: group.markers.length }) || `${group.markers.length} schools`;
+      const marker = createMarker(displayCoordinate, { icon: icon("linkwatch-registry-cluster", '<span aria-hidden="true">' + group.markers.length + "</span>", [28, 28]), keyboard: true, title: label }, { kind: "registry-cluster", count: group.markers.length, members: group.markers.map((item) => item.__linkwatchContext), lines: [], mode: "registry", label });
       if (typeof marker.on === "function") marker.on("click", () => expandRegistryCluster(group));
       state.layers.registryClusters.addLayer(marker);
     });
+    syncOpenPopupMarker();
     state.lastRender = state.lastRender ? { ...state.lastRender, registryClusterCount: groups.length, registryVisibleMarkerCount: groups.length } : state.lastRender;
   }
   function coordinateKey(coordinate) {
@@ -274,6 +459,11 @@
       // A previous fit animation can otherwise finish after a search selection
       // and put the viewport back at the old zoom level.
       state.map.stop?.();
+      const marker = allKnownMarkers().find((candidate) => {
+        const coordinate = coordinateForSchool(markerContext(candidate)?.school);
+        return coordinate && coordinate.latitude === valid[0].latitude && coordinate.longitude === valid[0].longitude;
+      });
+      if (marker) state.pendingFocusMarker = marker;
       state.map.setView(points[0], Math.min(options.singleZoom ?? 12, state.config.maxZoom), { animate: false });
       return true;
     }
@@ -306,6 +496,7 @@
     }
     state.tileLayer.addTo(state.map);
     state.layers = { registryMarkers: [], registryClusters: layerGroup(), monitoringMarkers: [], monitoring: layerGroup() };
+    observePopup();
     if (typeof state.map.on === "function") state.map.on("zoomend", rebuildRegistryClusters);
     if (typeof window.ResizeObserver === "function") { state.resizeObserver = new window.ResizeObserver(refreshSize); state.resizeObserver.observe(container); }
     return state.map;
@@ -325,7 +516,7 @@
     rebuildRegistryClusters();
     updateRegistryHitTargets(monitoringGroups); refreshSize(); return true;
   }
-  function resetView() { if (state.map && state.config) { state.map.stop?.(); state.map.setView(state.config.center, state.config.zoom); } }
+  function resetView() { if (state.map && state.config) { state.map.stop?.(); state.map.setView(state.config.center, state.config.zoom, { animate: false }); } }
   window.LinkwatchMap = {
     DEFAULT_CONFIG: DEFAULT_MAP_CONFIG, STATUS_PRIORITY, init, render, refreshSize, resetView, fitToCoordinates,
     getMap: () => state.map, getConfig: () => state.config || mapConfig(), getLastRender: () => state.lastRender, getLayers: () => state.layers,

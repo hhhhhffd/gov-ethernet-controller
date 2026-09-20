@@ -12,10 +12,21 @@ function createLayer() {
 
 function createMarker(latLng, options = {}) {
   const handlers = {};
+  const element = {
+    attributes: {},
+    style: {},
+    isConnected: true,
+    focusCalls: 0,
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    focus() { this.focusCalls += 1; document.activeElement = this; },
+  };
   return {
     latLng,
     options,
     handlers,
+    _icon: element,
+    getElement() { return this._icon; },
     on(name, callback) { (handlers[name] ||= []).push(callback); return this; },
     trigger(name, event = {}) { (handlers[name] || []).forEach((callback) => callback(event)); return this; },
     bindTooltip() { return this; },
@@ -28,9 +39,9 @@ const map = {
   layers: [],
   bounds: null,
   handlers: {},
-  setView(center, zoom) {
+  setView(center, zoom, options) {
     const previousZoom = this.zoom;
-    this.center = center; this.zoom = zoom;
+    this.center = center; this.zoom = zoom; this.setViewOptions = options;
     if (previousZoom !== zoom) (this.handlers.zoomend || []).forEach((callback) => callback());
     return this;
   },
@@ -39,7 +50,7 @@ const map = {
   project([latitude, longitude], zoom) { const scale = 256 * 2 ** zoom / 360; return { x: longitude * scale, y: latitude * scale }; },
   unproject([x, y], zoom) { const scale = 256 * 2 ** zoom / 360; return { lat: y / scale, lng: x / scale }; },
   fitBounds(bounds, options) { this.bounds = { bounds, options }; return this; },
-  stop() { this.stopped = true; return this; },
+  stop() { this.stopped = true; this.stopCalls = (this.stopCalls || 0) + 1; return this; },
   addLayer(layer) { this.layers.push(layer); return this; },
   removeLayer(layer) { this.layers = this.layers.filter((candidate) => candidate !== layer); return this; },
   on(name, callback) { (this.handlers[name] ||= []).push(callback); return this; },
@@ -52,6 +63,19 @@ const tileLayer = {
   addTo() { return this; },
 };
 const tileStatus = { hidden: true, textContent: "" };
+const popupListeners = {};
+let popupObserverCallback = null;
+const popup = {
+  hidden: true,
+  classList: {
+    values: new Set(["hidden"]),
+    contains(value) { return this.values.has(value); },
+    add(value) { this.values.add(value); },
+    remove(value) { this.values.delete(value); },
+  },
+  addEventListener(name, callback) { (popupListeners[name] ||= []).push(callback); },
+  dispatchEvent(event) { (popupListeners[event.type] || []).forEach((callback) => callback(event)); },
+};
 const window = {
   L: {
     map() { return map; },
@@ -63,8 +87,20 @@ const window = {
   CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init.detail; } },
   dispatchEvent() {},
   setTimeout(callback) { callback(); },
+  MutationObserver: class MutationObserver {
+    constructor(callback) { popupObserverCallback = callback; }
+    observe() {}
+    disconnect() {}
+  },
 };
-const document = { getElementById(id) { return id === "mapTileStatus" ? tileStatus : container; } };
+const document = {
+  activeElement: null,
+  getElementById(id) {
+    if (id === "mapTileStatus") return tileStatus;
+    if (id === "mapPopup") return popup;
+    return container;
+  },
+};
 const context = vm.createContext({ window, document });
 vm.runInContext(fs.readFileSync("web/map.js", "utf8"), context);
 
@@ -91,6 +127,12 @@ mapApi.setPresentation({
   schoolName(school, fallback) { return school?.officialName || fallback || ""; },
 });
 assert.equal(mapApi.init({ containerId: "leafletMap" }), map);
+function setPopupOpen(open) {
+  popup.hidden = !open;
+  if (open) popup.classList.remove("hidden");
+  else popup.classList.add("hidden");
+  popupObserverCallback?.();
+}
 assert.equal(mapApi.setMapPresentation({ theme: "light", locale: "kk", style: "alidade-smooth-dark", fallback: "preserve-canonical-dark-basemap", labels: "application-presentation" }), true);
 assert.equal(JSON.stringify(mapApi.getMapPresentation()), JSON.stringify({ theme: "light", locale: "kk", style: "alidade-smooth-dark", fallback: "preserve-canonical-dark-basemap", labels: "application-presentation" }));
 assert.equal(mapApi.getConfig().tileUrl, mapApi.DEFAULT_CONFIG.tileUrl, "light presentation must retain the canonical map URL");
@@ -108,15 +150,34 @@ assert.equal(current.registryVisibleMarkerCount, 2, "nearby registry schools mus
 const registryCluster = mapApi.getLayers().registryClusters.items.find((marker) => mapApi.getMarkerContext(marker)?.kind === "registry-cluster");
 assert.ok(registryCluster, "nearby registry schools must render a real cluster marker");
 const clusterContext = mapApi.getMarkerContext(registryCluster);
+assert.equal(registryCluster._icon.getAttribute("role"), "button", "cluster outer element must expose button semantics");
+assert.equal(registryCluster._icon.getAttribute("aria-label"), clusterContext.label, "cluster outer element must name the member context");
+assert.equal(registryCluster._icon.getAttribute("aria-expanded"), "false", "closed cluster context must be collapsed");
 assert.equal(clusterContext.lines.length, 0, "registry cluster must not expose operational lines");
 assert.ok(clusterContext.members.some((member) => member.registryId === "18383"), "school 32 must remain a cluster member");
 assert.ok(map.bounds, "render must fit the map to actual registry/monitoring coordinates");
 assert.ok(map.bounds.bounds.some(([latitude, longitude]) => latitude === 50.30 && longitude === 83.40));
+mapApi.setMarkerClickHandler(() => setPopupOpen(true));
 registryCluster.trigger("click");
 assert.ok(map.zoom > 7, "cluster click must advance the viewport zoom");
 assert.equal(map.bounds.bounds.length, clusterContext.members.length, "cluster click must fit exactly the member coordinates");
 assert.deepEqual(Array.from(map.bounds.options.padding), [24, 24], "cluster click must retain bounded viewport padding");
 assert.ok(map.bounds.options.maxZoom <= mapApi.getConfig().maxZoom, "cluster click must respect the configured maximum zoom");
+assert.equal(registryCluster._icon.getAttribute("aria-expanded"), "true", "open cluster context must keep its marker expanded while the context is active");
+setPopupOpen(false);
+assert.ok(document.activeElement, "closing a cluster context must restore focus to a current marker");
+assert.equal(document.activeElement.getAttribute("role"), "button");
+assert.equal(document.activeElement.getAttribute("aria-expanded"), "false", "restored marker must be collapsed after popup close");
+mapApi.setMarkerClickHandler(null);
+
+const stopCallsBeforeFit = map.stopCalls || 0;
+mapApi.fitToCoordinates([registry.schools[3].coordinate], { singleZoom: 14 });
+assert.ok(map.stopCalls > stopCallsBeforeFit, "single-point focus must stop prior map movement");
+assert.equal(map.setViewOptions.animate, false, "single-point focus must not start a competing animation");
+const stopCallsBeforeReset = map.stopCalls;
+mapApi.resetView();
+assert.ok(map.stopCalls > stopCallsBeforeReset, "reset must stop prior map movement");
+assert.equal(map.setViewOptions.animate, false, "reset must not start a competing animation");
 
 const monitoringLayer = mapApi.getLayers().monitoring;
 assert.equal(monitoringLayer.items.length, 1);

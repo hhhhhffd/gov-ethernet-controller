@@ -1,6 +1,6 @@
 # Map subsystem baseline
 
-Status: `BASELINE RECORDED; PROVENANCE BOUNDARY UPDATED 2026-09-20`
+Status: `BASELINE RECORDED; PROVENANCE AND MAP ACCESSIBILITY BOUNDARY UPDATED 2026-09-20`
 
 This document freezes the current map subsystem before the frontend rebuild. It
 records observed behavior and boundaries; it is not a redesign proposal. The
@@ -192,7 +192,10 @@ to the map. `fitToCoordinates()`:
 - returns false without a map or valid points.
 
 `resetView()` restores `[49.95, 82.62]` at zoom 7. Resize observation calls
-Leaflet `invalidateSize({ pan: false })` after layout changes.
+Leaflet `invalidateSize({ pan: false })` after layout changes. Every fit,
+cluster expansion, and reset stops an in-flight Leaflet movement first; the
+single-point and reset paths use `animate: false` so an older movement cannot
+overwrite a newly selected viewport.
 
 ## Current and historical modes
 
@@ -218,6 +221,14 @@ modes.
 Marker activation supports mouse click and Enter/Space keyboard activation,
 stores the marker context, emits `linkwatch:map-marker`, and routes through
 `openMapPopupForContext()`.
+
+The Leaflet marker outer element is the accessible control: it has `role="button"`,
+the localized school/cluster accessible name, `tabindex="0"`, and a synchronized
+`aria-expanded` value. `map.js` observes the existing popup's hidden state and
+keeps the active marker/cluster expanded while its context is open. Cluster
+member selection records the selected registry identity; on close, focus is
+resolved against the current visible marker or containing cluster, so a marker
+recreated by cluster expansion does not leave focus on a detached DOM node.
 
 - Registry-only popup: official registry facts, coordinate source, provenance,
   and `Не подключена к мониторингу`; no current status or metrics.
@@ -246,8 +257,11 @@ node --test web/data-model.test.cjs -> 5 tests passed, 0 failed
 `scripts/web-map.test.cjs` covers tile failure status, invalid-coordinate
 rejection, monitoring aggregation, screen-distance clustering, neutral cluster
 members, cluster fit, historical non-fallback, no synthetic coordinates, and
-Leaflet-only map assumptions. `web/map-popup.test.cjs` covers marker click and
-keyboard routing, line membership, and historical evidence. The data-model
+Leaflet-only map assumptions, marker accessible names, expanded/collapsed
+states, cluster focus restoration, school №32 membership, and movement-stop
+guards. `web/map-popup.test.cjs` covers marker click and keyboard routing, line
+membership, historical evidence, popup close focus restoration, and cluster
+member focus recovery. The data-model
 tests cover neutral registry-only rows, line deduplication, explicit mapping
 failure, cached asset loading, and coverage modes.
 
@@ -297,7 +311,8 @@ preserve these invariants:
    member lists, preserves cluster fit, and maintains monitoring-aware display
    separation.
 6. Fit, bounds padding, max-zoom behavior, default reset view, resize
-   invalidation, and explicit tile-unavailable state remain intact.
+   invalidation, movement-stop ordering, and explicit tile-unavailable state
+   remain intact.
 7. Current and historical modes remain separate; historical rendering cannot
    backfill from current state or turn missing evidence into a client verdict.
 8. Registry-only and cluster popups remain neutral. Monitoring popups retain
