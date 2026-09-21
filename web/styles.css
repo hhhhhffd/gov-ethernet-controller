@@ -800,7 +800,7 @@ body { background: var(--color-canvas); }
 
 /* Template composition: the attached LINKWATCH prototype is the visual
    contract; the production boundaries above keep owning data and behavior. */
-:root {
+:root, :root[data-theme="light"] {
   color-scheme: light;
   --rail-width: 78px;
   --topbar-height: 0px;
@@ -833,8 +833,6 @@ body { background: var(--color-canvas); }
   --ease-out: cubic-bezier(.23, 1, .32, 1);
   --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
 }
-
-:root[data-theme="light"] { color-scheme: light; }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
