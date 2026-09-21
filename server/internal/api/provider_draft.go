@@ -268,7 +268,14 @@ func envOr(primary, legacy string) string {
 }
 
 func isLocalHost(host string) bool {
-	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	if host != "host.docker.internal" {
+		return false
+	}
+	environment := strings.ToLower(strings.TrimSpace(envOr("LINKWATCH_ENV", "VKO_ENV")))
+	return environment == "development" || environment == "test"
 }
 
 const maxProviderDraftLength = 32 << 10
