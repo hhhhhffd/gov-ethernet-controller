@@ -192,7 +192,7 @@ func (g *ollamaDraftGenerator) Generate(ctx context.Context, input ProviderDraft
 		return "", &draftGenerationError{Category: "configuration", Err: fmt.Errorf("ollama endpoint must be a local HTTP endpoint")}
 	}
 	prompt := buildProviderDraftPrompt(input)
-	body, err := json.Marshal(map[string]interface{}{"model": g.Model, "prompt": prompt, "stream": false, "options": map[string]interface{}{"temperature": 0.2}})
+	body, err := json.Marshal(map[string]interface{}{"model": g.Model, "prompt": prompt, "stream": false, "think": false, "options": map[string]interface{}{"temperature": 0.2}})
 	if err != nil {
 		return "", &draftGenerationError{Category: "request_encode", Err: err}
 	}

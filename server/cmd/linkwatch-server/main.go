@@ -51,7 +51,7 @@ func main() {
 	if address == "" {
 		address = ":8080"
 	}
-	httpServer := &http.Server{Addr: address, Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second}
+	httpServer := &http.Server{Addr: address, Handler: server.Handler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 90 * time.Second, IdleTimeout: 60 * time.Second}
 	go runNotificationOutbox(ctx, server.Measure, logger)
 	go runFreshnessWorker(ctx, server.Measure, logger)
 	go runSituationWorker(ctx, server, logger)
