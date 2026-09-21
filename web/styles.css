@@ -33,27 +33,27 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --ref-canvas-0: #edf0ee;
-  --ref-canvas-1: #f7f8f5;
-  --ref-nav-inactive: #e2e6e2;
-  --ref-nav-active: #d6ddd8;
+  --ref-canvas-0: #eef2ef;
+  --ref-canvas-1: #f8faf8;
+  --ref-nav-inactive: #e5ebe7;
+  --ref-nav-active: #d6e1da;
   --ref-surface-main: #ffffff;
-  --ref-surface-secondary: #eef1ee;
-  --ref-surface-inset: #f6f8f5;
-  --ref-border-soft: rgb(25 40 32 / 13%);
-  --ref-border-medium: rgb(25 40 32 / 20%);
-  --ref-text-primary: #202a24;
-  --ref-text-secondary: #4f5c54;
-  --ref-text-muted: #748078;
-  --ref-white-action: #294038;
+  --ref-surface-secondary: #f2f6f3;
+  --ref-surface-inset: #f8faf8;
+  --ref-border-soft: rgb(31 54 42 / 14%);
+  --ref-border-medium: rgb(31 54 42 / 23%);
+  --ref-text-primary: #17241d;
+  --ref-text-secondary: #42554a;
+  --ref-text-muted: #687a6e;
+  --ref-white-action: #254c3c;
   --ref-black-on-white: #ffffff;
-  --ref-green: #2f7d5a;
-  --ref-red: #a84d58;
-  --ref-blue: #3d718f;
-  --ref-yellow: #8a7134;
-  --ref-info: #4d7182;
-  --ref-selected: #4b6c8d;
-  --ref-notification: #8a6638;
+  --ref-green: #277752;
+  --ref-red: #a34652;
+  --ref-blue: #326b88;
+  --ref-yellow: #80672b;
+  --ref-info: #416d80;
+  --ref-selected: #396988;
+  --ref-notification: #785a2c;
   --ref-notification-ink: #fffaf1;
 }
 
@@ -755,6 +755,299 @@ html, body { font-size: 14px; line-height: 1.5; }
 }
 :root:not([data-authenticated="true"]) .locale-switch button { color: #c9c9c6; }
 :root:not([data-authenticated="true"]) .locale-switch button[aria-pressed="true"] { background: #3a3a3a; color: #fff; }
+
+/* Visual refinement: preserve the operator layout while making hierarchy and states read consistently. */
+:root {
+  --theme-control-radius: 9px;
+  --theme-panel-radius: 12px;
+  --theme-focus-ring: color-mix(in srgb, var(--ref-blue) 78%, white);
+  --theme-shadow-float: 0 14px 30px rgb(7 14 10 / 18%);
+  --theme-shadow-panel: 0 1px 2px rgb(7 14 10 / 7%);
+}
+
+html, body {
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: -0.006em;
+}
+
+button, input, select, textarea { -webkit-font-smoothing: antialiased; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--theme-focus-ring);
+  outline-offset: 2px;
+}
+button:disabled, input:disabled, select:disabled, textarea:disabled {
+  cursor: not-allowed;
+  opacity: .56;
+}
+
+.reference-nav-item,
+.reference-icon-button,
+.account-button,
+.map-tools button,
+.locale-switch,
+.map-filter-island,
+.map-popup,
+.notification-surface,
+.incidents-list,
+.incident-detail,
+.report-panel,
+.admin-editor,
+.admin-preview,
+.audit-selection,
+.incident-create-panel,
+.admin-demo-panel,
+.detail-drawer,
+.auth-form,
+.admin-credential-dialog {
+  box-shadow: var(--theme-shadow-panel);
+}
+
+.reference-nav-item,
+.reference-icon-button,
+.account-button,
+.map-tools button,
+.nav-overflow > summary {
+  border-color: var(--ref-border-soft);
+  transition: background-color .14s ease, border-color .14s ease, color .14s ease;
+}
+.reference-nav-item[aria-current="page"],
+.locale-switch button[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--ref-blue) 30%, var(--ref-border-soft));
+  background: color-mix(in srgb, var(--ref-blue) 12%, var(--ref-nav-active));
+}
+.reference-nav-item:hover,
+.reference-icon-button:hover,
+.account-button:hover,
+.map-tools button:hover,
+.nav-overflow > summary:hover {
+  border-color: var(--ref-border-medium);
+  background: var(--ref-nav-active);
+}
+
+.surface-header { margin-bottom: 18px; }
+.surface-header h1,
+.incidents-header h1,
+.admin-surface-header h1 {
+  font-weight: 680;
+  letter-spacing: -0.025em;
+}
+.surface-header h1 { font-size: 20px; }
+.surface-header p { margin-top: 5px; font-size: 12px; }
+.report-panel h2,
+.incident-create-heading h2,
+.admin-demo-panel h2,
+.incident-detail h3 { letter-spacing: -0.015em; }
+
+.map-filter-island,
+.notification-surface,
+.map-popup,
+.detail-drawer,
+.auth-form,
+.admin-credential-dialog { box-shadow: var(--theme-shadow-float); }
+.map-filter-island,
+.notification-surface,
+.map-popup,
+.detail-drawer,
+.auth-form,
+.admin-credential-dialog,
+.incidents-list,
+.incident-detail,
+.report-panel,
+.admin-editor,
+.admin-preview,
+.audit-selection,
+.incident-create-panel,
+.admin-demo-panel {
+  border-color: var(--ref-border-medium);
+}
+
+.map-filter-island { gap: 11px; }
+.map-filter-details summary { padding-top: 11px; font-weight: 600; }
+.map-meta {
+  gap: 12px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--ref-border-soft) 82%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ref-surface-main) 84%, transparent);
+  box-shadow: var(--theme-shadow-panel);
+}
+
+.map-filter-island input,
+.map-filter-island select,
+.incident-filters select,
+.report-filters input,
+.report-filters select,
+.report-export select,
+.admin-toolbar input,
+.admin-toolbar select,
+.audit-filters input,
+.audit-filters select,
+.admin-editor input,
+.admin-editor textarea,
+.incident-create-form input,
+.incident-create-form select,
+.incident-create-form textarea,
+.admin-fields input,
+.admin-fields select,
+.admin-fields textarea,
+.incident-comment-form textarea,
+.provider-case-text textarea,
+.incident-action-form input,
+.incident-action-form select,
+.situation-action-form input,
+.situation-action-form select,
+.auth-form input {
+  border-color: var(--ref-border-soft);
+  background: var(--ref-surface-inset);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 4%);
+  transition: border-color .14s ease, background-color .14s ease, box-shadow .14s ease;
+}
+.map-filter-island input:hover,
+.map-filter-island select:hover,
+.incident-filters select:hover,
+.report-filters input:hover,
+.report-filters select:hover,
+.report-export select:hover,
+.admin-toolbar input:hover,
+.admin-toolbar select:hover,
+.audit-filters input:hover,
+.audit-filters select:hover,
+.admin-editor input:hover,
+.admin-editor textarea:hover,
+.incident-create-form input:hover,
+.incident-create-form select:hover,
+.incident-create-form textarea:hover,
+.admin-fields input:hover,
+.admin-fields select:hover,
+.admin-fields textarea:hover,
+.incident-comment-form textarea:hover,
+.provider-case-text textarea:hover,
+.incident-action-form input:hover,
+.incident-action-form select:hover,
+.situation-action-form input:hover,
+.situation-action-form select:hover,
+.auth-form input:hover { border-color: var(--ref-border-medium); }
+.map-filter-island input:focus,
+.map-filter-island select:focus,
+.incident-filters select:focus,
+.report-filters input:focus,
+.report-filters select:focus,
+.report-export select:focus,
+.admin-toolbar input:focus,
+.admin-toolbar select:focus,
+.audit-filters input:focus,
+.audit-filters select:focus,
+.admin-editor input:focus,
+.admin-editor textarea:focus,
+.incident-create-form input:focus,
+.incident-create-form select:focus,
+.incident-create-form textarea:focus,
+.admin-fields input:focus,
+.admin-fields select:focus,
+.admin-fields textarea:focus,
+.incident-comment-form textarea:focus,
+.provider-case-text textarea:focus,
+.incident-action-form input:focus,
+.incident-action-form select:focus,
+.situation-action-form input:focus,
+.situation-action-form select:focus,
+.auth-form input:focus {
+  border-color: var(--ref-blue);
+  background: var(--ref-surface-main);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ref-blue) 16%, transparent);
+  outline: 0;
+}
+
+.primary-action {
+  border: 1px solid color-mix(in srgb, var(--ref-white-action) 86%, black);
+  box-shadow: 0 1px 1px rgb(0 0 0 / 18%);
+  transition: background-color .14s ease, border-color .14s ease, transform .14s ease;
+}
+.primary-action:hover:not(:disabled) { background: color-mix(in srgb, var(--ref-white-action) 90%, white); }
+.primary-action:active:not(:disabled) { transform: translateY(1px); }
+.secondary-action,
+.link-action,
+.map-filter-fields button,
+.account-menu button {
+  border-color: var(--ref-border-soft);
+  transition: background-color .14s ease, border-color .14s ease;
+}
+.secondary-action:hover:not(:disabled),
+.link-action:hover:not(:disabled),
+.map-filter-fields button:hover:not(:disabled),
+.account-menu button:hover:not(:disabled) {
+  border-color: var(--ref-border-medium);
+  background: var(--ref-nav-active);
+}
+
+.incident-row { min-height: 74px; border-color: var(--ref-border-soft); }
+.incident-row-head { background: var(--ref-surface-secondary); letter-spacing: .015em; }
+.incident-row:not(.incident-row-head):hover,
+.incident-row.selected {
+  background: color-mix(in srgb, var(--ref-blue) 7%, var(--ref-surface-secondary));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--ref-blue) 72%, transparent);
+}
+.report-table th { background: var(--ref-surface-secondary); letter-spacing: .015em; }
+.report-table th, .report-table td { padding-block: 12px; }
+.report-table tbody tr:hover { background: color-mix(in srgb, var(--ref-blue) 6%, var(--ref-surface-secondary)); }
+.detail-grid > div,
+.drawer-grid > div,
+.map-popup-fields > div { padding-block: 11px; }
+.status-badge,
+.incident-row-status,
+.incident-detail-head > span { border-width: 1px; font-weight: 650; }
+
+/* Cluster geometry and interaction remain in map.js; this styles only the existing cluster marker. */
+.leaflet-marker-icon.linkwatch-registry-cluster {
+  width: 42px !important;
+  height: 42px !important;
+  margin-left: -21px !important;
+  margin-top: -21px !important;
+  border: 1px solid color-mix(in srgb, var(--ref-blue) 55%, var(--ref-surface-main));
+  background: color-mix(in srgb, var(--ref-surface-main) 90%, var(--ref-blue));
+  box-shadow: 0 2px 8px rgb(4 14 10 / 24%);
+}
+.leaflet-marker-icon.linkwatch-registry-cluster .linkwatch-registry-cluster-core {
+  display: grid;
+  width: 32px !important;
+  height: 32px !important;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--ref-blue) 54%, var(--ref-surface-main));
+  border-radius: 50%;
+  background: var(--ref-blue);
+  color: white;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 22%);
+}
+.leaflet-marker-icon.linkwatch-registry-cluster .linkwatch-registry-cluster-count {
+  width: auto !important;
+  height: auto !important;
+  color: inherit;
+  font: 700 12px/1 Inter, ui-sans-serif, system-ui, sans-serif !important;
+  letter-spacing: -0.025em;
+}
+.leaflet-marker-icon.linkwatch-registry-cluster:hover,
+.leaflet-marker-icon.linkwatch-registry-cluster:focus-visible,
+.leaflet-marker-icon.linkwatch-registry-cluster[aria-expanded="true"] {
+  transform: scale(1.06);
+  border-color: var(--ref-blue);
+  background: var(--ref-surface-main);
+  box-shadow: 0 4px 11px rgb(4 14 10 / 28%);
+}
+
+:root[data-theme="light"] .map-filter-island,
+:root[data-theme="light"] .map-popup,
+:root[data-theme="light"] .notification-surface,
+:root[data-theme="light"] .incidents-list,
+:root[data-theme="light"] .incident-detail,
+:root[data-theme="light"] .report-panel,
+:root[data-theme="light"] .admin-editor,
+:root[data-theme="light"] .admin-preview,
+:root[data-theme="light"] .audit-selection,
+:root[data-theme="light"] .incident-create-panel,
+:root[data-theme="light"] .admin-demo-panel {
+  box-shadow: 0 1px 2px rgb(24 46 34 / 7%), 0 8px 20px rgb(24 46 34 / 5%);
+}
 
 @media (max-width: 620px) {
   .notification-surface { right: 12px; width: calc(100% - 24px); padding: 14px; }

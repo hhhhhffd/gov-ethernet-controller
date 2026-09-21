@@ -392,7 +392,7 @@
   }
 
   function clusterMarkup(count) {
-    return `<span aria-hidden="true" style="display:grid;place-items:center;width:34px;height:34px;border:2px solid rgba(229,236,245,.96);border-radius:50%;background:rgba(30,42,57,.95);color:#f7fafc;box-shadow:0 2px 8px rgba(8,13,20,.48),0 0 0 3px rgba(120,145,170,.22);font:700 13px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:-.01em">${count}</span>`;
+    return `<span class="linkwatch-registry-cluster-core" aria-hidden="true"><span class="linkwatch-registry-cluster-count">${count}</span></span>`;
   }
   function bindMarker(marker, context) {
     marker.__linkwatchContext = context;
