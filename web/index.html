@@ -65,9 +65,8 @@
           </header>
 
           <div class="workspace-content">
-            <section id="mapWrap" class="map-workspace" data-i18n-aria-label="app.mapWorkspace">
-              <div id="leafletMap" class="leaflet-map" role="application" data-i18n-aria-label="app.regionMap"></div>
-              <form id="mapFilter" class="map-filter-island context-panel" data-i18n-aria-label="map.filter">
+            <section id="mapWrap" class="map-workspace map-screen" data-i18n-aria-label="app.mapWorkspace">
+              <form id="mapFilter" class="map-filter-island context-panel map-panel" data-i18n-aria-label="map.filter">
                 <div class="context-panel-head">
                   <div><span class="surface-eyebrow" data-i18n="map.workspaceEyebrow">ОБЗОР СЕТИ</span><h2 data-i18n="nav.map">Карта</h2></div>
                   <span class="live-chip"><span class="live-chip-dot" aria-hidden="true"></span><span data-i18n="map.live">LIVE</span></span>
@@ -94,14 +93,17 @@
                 <div id="schoolList" class="school-list" role="list" data-i18n-aria-label="map.schoolList"></div>
                 <div class="context-panel-footer"><span class="context-stat"><strong id="mapVisibleSchoolCount">—</strong><span data-i18n="map.visibleSchools"></span></span><span class="context-stat attention"><strong id="mapAttentionCount">—</strong><span data-i18n="map.attentionSchools"></span></span></div>
               </form>
-              <div id="mapTileStatus" class="map-tile-status" role="status" hidden></div>
-              <div class="map-tools" data-i18n-aria-label="map.controls"><button id="mapZoomIn" type="button" data-i18n-aria-label="action.zoomIn"><span data-icon="plus"></span></button><button id="mapZoomOut" type="button" data-i18n-aria-label="action.zoomOut"><span data-icon="minus"></span></button><button id="mapReset" type="button" data-i18n-aria-label="action.resetMap"><span data-icon="locate"></span></button></div>
-              <section id="mapPopup" class="map-popup hidden" role="dialog" aria-modal="false" aria-labelledby="mapPopupTitle" aria-describedby="mapPopupSummary" tabindex="-1" hidden>
-                <div class="map-popup-head"><div><span class="surface-eyebrow" data-i18n="map.selection">ВЫБОР НА КАРТЕ</span><h2 id="mapPopupTitle">—</h2><p id="mapPopupSummary">—</p></div><button id="mapPopupClose" class="icon-close" type="button" data-i18n-aria-label="action.closeMapCard"><span data-icon="x"></span></button></div>
-                <div id="mapPopupState" class="selection-state" role="status"></div><div id="mapPopupFields" class="map-popup-fields"></div><div class="map-popup-actions"><button id="mapPopupAddMonitoring" class="secondary-action" type="button" hidden></button><button id="mapPopupOpenLine" class="primary-action" type="button" hidden></button></div>
-              </section>
-              <div class="map-meta"><span id="mapModeLabel"></span><span id="mapFooterNote"></span><span class="visually-hidden"><b id="lineCount">0</b> <span data-i18n="map.lineCount"></span></span><span class="visually-hidden" id="mapVisibleCount">0</span></div>
-              <p id="mapError" class="state-message error" role="alert" hidden></p>
+              <div id="mapArea" class="map-area">
+                <div id="leafletMap" class="leaflet-map" role="application" data-i18n-aria-label="app.regionMap"></div>
+                <div id="mapTileStatus" class="map-tile-status" role="status" hidden></div>
+                <div class="map-tools" data-i18n-aria-label="map.controls"><button id="mapZoomIn" type="button" data-i18n-aria-label="action.zoomIn"><span data-icon="plus"></span></button><button id="mapZoomOut" type="button" data-i18n-aria-label="action.zoomOut"><span data-icon="minus"></span></button><button id="mapReset" type="button" data-i18n-aria-label="action.resetMap"><span data-icon="locate"></span></button></div>
+                <section id="mapPopup" class="map-popup mapcard hidden" role="dialog" aria-modal="false" aria-labelledby="mapPopupTitle" aria-describedby="mapPopupSummary" tabindex="-1" hidden>
+                  <div class="map-popup-head"><div><span class="surface-eyebrow" data-i18n="map.selection">ВЫБОР НА КАРТЕ</span><h2 id="mapPopupTitle">—</h2><p id="mapPopupSummary">—</p></div><button id="mapPopupClose" class="icon-close" type="button" data-i18n-aria-label="action.closeMapCard"><span data-icon="x"></span></button></div>
+                  <div id="mapPopupState" class="selection-state" role="status"></div><div id="mapPopupMetrics" class="metricsline" hidden></div><div id="mapPopupFields" class="map-popup-fields"></div><div class="map-popup-actions"><button id="mapPopupAddMonitoring" class="secondary-action" type="button" hidden></button><button id="mapPopupPrepareCase" class="secondary-action" type="button" hidden></button><button id="mapPopupOpenLine" class="primary-action" type="button" hidden></button></div>
+                </section>
+                <div class="map-meta"><span id="mapModeLabel"></span><span id="mapFooterNote"></span><span class="visually-hidden"><b id="lineCount">0</b> <span data-i18n="map.lineCount"></span></span><span class="visually-hidden" id="mapVisibleCount">0</span></div>
+                <p id="mapError" class="state-message error" role="alert" hidden></p>
+              </div>
             </section>
             <div id="mapLiveStatus" class="visually-hidden" aria-live="polite"></div>
             <span id="operationalStatus" class="visually-hidden" role="status"></span>
@@ -128,7 +130,13 @@
       <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
       <aside id="detailDrawer" class="detail-drawer" role="dialog" aria-modal="true" aria-hidden="true" hidden aria-labelledby="drawerTitle" tabindex="-1">
         <div class="drawer-head"><div><span class="surface-eyebrow" data-i18n="map.lineDetail">ДЕТАЛИ ЛИНИИ</span><h2 id="drawerTitle">—</h2><p id="drawerSubtitle">—</p></div><button id="drawerClose" class="icon-close" type="button" data-i18n-aria-label="action.closeLineCard"><span data-icon="x"></span></button></div>
-        <div id="drawerState" class="selection-state" role="status"></div><div id="drawerStatus" class="drawer-section"></div><dl id="drawerContext" class="drawer-grid"></dl><dl id="drawerLine" class="drawer-grid"></dl><dl id="drawerMetrics" class="drawer-grid"></dl><dl id="drawerIncident" class="drawer-grid"></dl><section id="drawerEnrollment" class="drawer-section" aria-live="polite"></section>
+        <div id="drawerState" class="selection-state" role="status"></div>
+        <nav id="drawerTabs" class="detail-tabs" aria-label="Детали школы" role="tablist"></nav>
+        <section id="drawerTabSummary" class="drawer-tab-panel" data-drawer-panel="summary"><div id="drawerStatus" class="drawer-section"></div><dl id="drawerContext" class="drawer-grid"></dl><dl id="drawerLine" class="drawer-grid"></dl><dl id="drawerMetrics" class="drawer-grid"></dl></section>
+        <section id="drawerTabMeasurements" class="drawer-tab-panel" data-drawer-panel="measurements" hidden><div id="drawerMeasurements" class="drawer-section"></div></section>
+        <section id="drawerTabStates" class="drawer-tab-panel" data-drawer-panel="states" hidden><div id="drawerStates" class="drawer-section"></div></section>
+        <section id="drawerTabDevice" class="drawer-tab-panel" data-drawer-panel="device" hidden><div id="drawerDevice" class="drawer-section"></div><section id="drawerEnrollment" class="drawer-section" aria-live="polite"></section></section>
+        <section id="drawerTabIncidents" class="drawer-tab-panel" data-drawer-panel="incidents" hidden><dl id="drawerIncident" class="drawer-grid"></dl></section>
       </aside>
       <div id="toastRegion" class="toast-region" aria-live="polite"></div>
     </main>

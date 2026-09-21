@@ -219,7 +219,7 @@
   function constrainPopupToViewport() {
     const popup = state.popupElement;
     if (!popupIsOpen(popup) || !popup?.style) return;
-    const container = document.getElementById?.("mapWrap") || document.getElementById?.("leafletMap");
+    const container = document.getElementById?.("mapArea") || document.getElementById?.("mapWrap") || document.getElementById?.("leafletMap");
     // The fixed map workspace must not become a scroll container when focus moves into the popup.
     if (container && Number(container.scrollTop) !== 0) container.scrollTop = 0;
     const popupRect = popup.getBoundingClientRect?.();
