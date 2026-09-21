@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru" data-theme="dark">
+<html lang="ru" data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="oklch(20% 0.025 250)" />
+    <meta name="theme-color" content="oklch(96% 0.012 150)" />
     <title>LINKWATCH</title>
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/static/styles.css" />
@@ -20,6 +20,8 @@
             <button class="reference-nav-item" data-route="map" type="button" aria-current="page"><span class="nav-icon" data-icon="map"></span><span class="nav-label" data-i18n="nav.map">Карта</span></button>
             <button class="reference-nav-item" data-route="incidents" type="button" hidden><span class="nav-icon" data-icon="alert"></span><span class="nav-label" data-i18n="nav.incidents">Инциденты</span></button>
             <button class="reference-nav-item" data-route="reports" type="button" hidden><span class="nav-icon" data-icon="barChart"></span><span class="nav-label" data-i18n="nav.reports">Отчёты</span></button>
+            <button class="reference-nav-item" data-route="admin" data-capability="admin.manage" type="button" hidden><span class="nav-icon" data-icon="settings"></span><span class="nav-label" data-i18n="nav.admin">Администрирование</span></button>
+            <button class="reference-nav-item" data-route="audit" data-capability="audit.read" type="button" hidden><span class="nav-icon" data-icon="history"></span><span class="nav-label" data-i18n="nav.audit">Аудит</span></button>
             <details id="navOverflow" class="nav-overflow">
               <summary data-i18n-aria-label="app.sections"><span class="nav-icon" data-icon="more"></span><span class="visually-hidden" data-i18n="nav.more">Ещё</span></summary>
               <div class="nav-overflow-menu">
@@ -45,7 +47,7 @@
                 <button type="button" data-locale="ru" data-i18n="locale.ru"></button>
                 <button type="button" data-locale="kk" data-i18n="locale.kk"></button>
               </div>
-              <button id="themeToggle" class="reference-icon-button" type="button" data-i18n-aria-label="theme.switchToLight" data-i18n-title="theme.switchToLight"><span data-icon="sun"></span></button>
+              <button id="themeToggle" class="reference-icon-button" type="button" aria-hidden="true" tabindex="-1" data-i18n-aria-label="theme.switchToLight" data-i18n-title="theme.switchToLight"><span data-icon="sun"></span></button>
               <button id="refreshButton" class="reference-icon-button" type="button" data-i18n-aria-label="action.refreshMap" data-i18n-title="action.refreshMap"><span data-icon="refresh"></span></button>
               <button id="notificationsButton" class="reference-icon-button has-indicator" type="button" data-capability="notification.read" data-i18n-aria-label="notification.open" data-i18n-title="notification.open" aria-controls="notificationsSurface" aria-expanded="false"><span data-icon="bell"></span></button>
               <details id="accountControl" class="account-control">
@@ -125,6 +127,6 @@
       </aside>
       <div id="toastRegion" class="toast-region" aria-live="polite"></div>
     </main>
-    <script src="/static/vendor/leaflet/leaflet.js"></script><script src="/static/data-model.js"></script><script src="/static/map.js"></script><script type="module" src="/static/app.js?v=frontend-rebuild-1"></script>
+    <script src="/static/vendor/leaflet/leaflet.js"></script><script src="/static/data-model.js"></script><script src="/static/map.js"></script><script type="module" src="/static/app.js?v=frontend-rebuild-2"></script>
   </body>
 </html>

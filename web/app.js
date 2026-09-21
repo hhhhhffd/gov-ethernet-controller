@@ -86,7 +86,10 @@ const api = createApiClient({
 });
 session = createSession({ api, onChange: handleSessionChange });
 const theme = createThemeState();
-const mapPresentationAdapter = createMapPresentationAdapter({ theme: theme.theme, locale: i18n.locale });
+// LINKWATCH is intentionally a light-only operator workspace. The theme state
+// remains available to compatibility consumers, but the product presentation
+// and basemap never switch away from the light contract.
+const mapPresentationAdapter = createMapPresentationAdapter({ theme: "light", locale: i18n.locale });
 const reports = createReportsBoundary(api);
 const map = createMapIntegration({ api, reports, session, presentation, mapPresentation: mapPresentationAdapter.snapshot() });
 const lines = createLinesBoundary(api);
@@ -241,18 +244,22 @@ function hydrateRenderedControls(root) {
 function renderThemeControl() {
   const control = $("#themeToggle");
   if (!control) return;
-  const switchTo = theme.theme === "dark" ? "light" : "dark";
-  const key = "theme.switchTo" + (switchTo === "light" ? "Light" : "Dark");
-  control.replaceChildren();
-  control.insertAdjacentHTML("beforeend", iconMarkup(switchTo === "light" ? "sun" : "moon", { size: 18 }));
+  // Keep the legacy hook in the DOM for installed automation and accessibility
+  // contracts, while making the light-only policy explicit to the UI.
+  control.hidden = false;
+  control.setAttribute("aria-hidden", "true");
+  control.tabIndex = -1;
   control.dataset.theme = theme.theme;
-  control.setAttribute("aria-label", i18n.t(key));
-  control.setAttribute("title", i18n.t(key));
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.theme === "light" ? "oklch(96% 0.012 150)" : "oklch(20% 0.025 250)");
+  control.replaceChildren();
+  control.insertAdjacentHTML("beforeend", iconMarkup("sun", { size: 18 }));
+  control.setAttribute("aria-label", i18n.t("theme.switchToLight"));
+  control.setAttribute("title", i18n.t("theme.switchToLight"));
+  document.documentElement.dataset.theme = theme.theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "oklch(96% 0.012 150)");
 }
 
 function refreshTheme() {
-  mapPresentationAdapter.setTheme(theme.theme);
+  mapPresentationAdapter.setTheme("light");
   mapPresentationAdapter.setLocale(i18n.locale);
   map.setMapPresentation(mapPresentationAdapter.snapshot());
   renderThemeControl();
@@ -316,7 +323,13 @@ function renderRoute(snapshot = router.getState()) {
 }
 
 function renderPrimaryNav() {
-  const destinations = { map: true, incidents: state.capabilities.canRead("incident"), reports: state.capabilities.canRead("report") };
+  const destinations = {
+    map: true,
+    incidents: state.capabilities.canRead("incident"),
+    reports: state.capabilities.canRead("report"),
+    admin: state.capabilities.has("admin.manage"),
+    audit: state.capabilities.has("audit.read"),
+  };
   document.querySelectorAll("#primaryNav [data-route], #navOverflow [data-route]").forEach((button) => { button.hidden = !destinations[button.dataset.route]; });
   document.querySelectorAll("[data-capability]").forEach((control) => { control.hidden = !state.capabilities.has(control.dataset.capability); });
   const current = router.getState().view;
@@ -2952,6 +2965,9 @@ function bindEvents() {
     finally { submit.disabled = false; }
   });
   $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (error) { showToast("auth.logoutFailed", "warn"); } });
+  // The legacy hook remains callable for installed automation, but the
+  // rendered shell and basemap stay light regardless of this compatibility
+  // state.
   $("#themeToggle")?.addEventListener("click", () => theme.toggle());
   $("#notificationsButton")?.addEventListener("click", toggleNotifications);
   $("#refreshButton")?.addEventListener("click", refreshMap);
