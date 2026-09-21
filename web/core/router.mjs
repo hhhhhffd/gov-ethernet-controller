@@ -1,4 +1,4 @@
-const PRIMARY_VIEWS = Object.freeze(["map", "incidents", "reports"]);
+const PRIMARY_VIEWS = Object.freeze(["map", "incidents", "situations", "cases", "reports"]);
 const SECONDARY_VIEWS = Object.freeze(["notifications", "admin", "audit"]);
 const ALL_VIEWS = Object.freeze([...PRIMARY_VIEWS, ...SECONDARY_VIEWS]);
 

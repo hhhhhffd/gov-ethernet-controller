@@ -86,16 +86,15 @@ const api = createApiClient({
 });
 session = createSession({ api, onChange: handleSessionChange });
 const theme = createThemeState();
-// LINKWATCH is intentionally a light-only operator workspace. The theme state
-// remains available to compatibility consumers, but the product presentation
-// and basemap never switch away from the light contract.
-const mapPresentationAdapter = createMapPresentationAdapter({ theme: "light", locale: i18n.locale });
+const mapPresentationAdapter = createMapPresentationAdapter({ theme: theme.theme, locale: i18n.locale });
 const reports = createReportsBoundary(api);
 const map = createMapIntegration({ api, reports, session, presentation, mapPresentation: mapPresentationAdapter.snapshot() });
 const lines = createLinesBoundary(api);
 const router = createShellRouter({
   canAccess(view) {
     if (view === "incidents") return state.capabilities.canRead("incident");
+    if (view === "situations") return state.capabilities.canRead("incident");
+    if (view === "cases") return state.capabilities.canRead("incident") && state.capabilities.canAny(["provider_case.draft", "provider_case.send"]);
     if (view === "reports") return state.capabilities.canRead("report");
     if (view === "admin") return state.capabilities.has("admin.manage");
     if (view === "audit") return state.capabilities.has("audit.read");
@@ -117,6 +116,7 @@ function createIncidentSurfaceState() {
     actionState: "idle", actionError: "", actionMessage: "", commentState: "idle", commentMessage: "", situationActionState: "idle", situationActionError: "", situationActionMessage: "",
     createOpen: false, createState: "idle", createError: "", createDraft: { line_id: "", violation_type: "MANUAL_REVIEW", description: "", assignee: "" },
     providerCase: { selectedId: null, state: "idle", detail: null, actionState: "idle", actionError: "", actionMessage: "", generated: null },
+    cases: [], casesState: "idle", casesLoadPromise: null,
   };
 }
 
@@ -244,22 +244,21 @@ function hydrateRenderedControls(root) {
 function renderThemeControl() {
   const control = $("#themeToggle");
   if (!control) return;
-  // Keep the legacy hook in the DOM for installed automation and accessibility
-  // contracts, while making the light-only policy explicit to the UI.
   control.hidden = false;
-  control.setAttribute("aria-hidden", "true");
-  control.tabIndex = -1;
+  control.removeAttribute("aria-hidden");
+  control.tabIndex = 0;
   control.dataset.theme = theme.theme;
   control.replaceChildren();
-  control.insertAdjacentHTML("beforeend", iconMarkup("sun", { size: 18 }));
-  control.setAttribute("aria-label", i18n.t("theme.switchToLight"));
-  control.setAttribute("title", i18n.t("theme.switchToLight"));
+  const nextTheme = theme.theme === "dark" ? "light" : "dark";
+  control.insertAdjacentHTML("beforeend", iconMarkup(nextTheme === "dark" ? "moon" : "sun", { size: 18 }));
+  control.setAttribute("aria-label", i18n.t(nextTheme === "dark" ? "theme.switchToDark" : "theme.switchToLight"));
+  control.setAttribute("title", i18n.t(nextTheme === "dark" ? "theme.switchToDark" : "theme.switchToLight"));
   document.documentElement.dataset.theme = theme.theme;
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "oklch(96% 0.012 150)");
+  document.querySelector("meta[name=\"theme-color\"]")?.setAttribute("content", theme.theme === "dark" ? "rgb(23 26 27)" : "rgb(241 243 242)");
 }
 
 function refreshTheme() {
-  mapPresentationAdapter.setTheme("light");
+  mapPresentationAdapter.setTheme(theme.theme);
   mapPresentationAdapter.setLocale(i18n.locale);
   map.setMapPresentation(mapPresentationAdapter.snapshot());
   renderThemeControl();
@@ -311,8 +310,10 @@ function renderRoute(snapshot = router.getState()) {
     closeDrawer(false);
     closeMapPopup(false);
   }
-  if (snapshot.view === "incidents") loadIncidents();
+  if (["incidents", "situations", "cases"].includes(snapshot.view)) loadIncidents();
   if (snapshot.view === "reports") loadReports();
+  if (snapshot.view === "notifications") loadNotifications();
+  if (snapshot.view === "cases") loadProviderCases();
   if (snapshot.view === "admin") loadAdminResource();
   if (snapshot.view === "audit") loadAuditLog();
   renderIncidentsPreservingScroll();
@@ -326,7 +327,10 @@ function renderPrimaryNav() {
   const destinations = {
     map: true,
     incidents: state.capabilities.canRead("incident"),
+    situations: state.capabilities.canRead("incident"),
+    cases: state.capabilities.canRead("incident") && state.capabilities.canAny(["provider_case.draft", "provider_case.send"]),
     reports: state.capabilities.canRead("report"),
+    notifications: state.capabilities.has("notification.read"),
     admin: state.capabilities.has("admin.manage"),
     audit: state.capabilities.has("audit.read"),
   };
@@ -413,6 +417,8 @@ function renderMapStatus() {
   if ($("#mapError")) { $("#mapError").hidden = !map.state.operationalError; $("#mapError").textContent = map.state.operationalError ? i18n.t("map.serverUnavailable") : ""; }
   renderMapFilterControls();
   renderSchoolSearchResults();
+  renderMapQuickFilters();
+  renderSchoolList();
 }
 
 async function loadAuthenticatedMap({ preserveViewport = false, background = false } = {}) {
@@ -527,6 +533,82 @@ function renderMapFilterControls() {
   if ($("#coverageFilter")) $("#coverageFilter").value = map.state.coverage;
   if ($("#mapListMode")) $("#mapListMode").value = map.state.mapMode;
   if ($("#schoolSearch")) $("#schoolSearch").value = filters.query;
+}
+
+function mapRecordStatus(record) {
+  const rawStatus = record?.status === "NOT_MONITORED" ? "NO_DATA" : record?.status;
+  return presentation.status(rawStatus);
+}
+
+function mapRecordMetrics(record) {
+  const line = record?.lines?.[0];
+  const latest = line?.latest || {};
+  const download = latest.download;
+  const upload = latest.upload;
+  const speed = download == null && upload == null
+    ? presentation.empty()
+    : [download, upload].map((value) => value == null ? presentation.empty() : presentation.formatNumber(value)).join(" / ");
+  return {
+    speed,
+    ping: latest.ping == null ? presentation.empty() : presentation.formatNumber(latest.ping),
+  };
+}
+
+function renderMapQuickFilters() {
+  const root = $("#mapQuickFilters");
+  if (!root) return;
+  const options = map.filterOptions();
+  const filters = map.state.filters;
+  const activeStatus = filters.status;
+  const activeProvider = filters.provider;
+  const allActive = !activeStatus && !activeProvider;
+  const buttons = [
+    { key: "all", label: i18n.t("map.allSchools"), active: allActive },
+    ...options.statuses.map((status) => ({ key: `status:${status}`, label: status === "NOT_MONITORED" ? i18n.t("map.registryOnly") : presentation.status(status).label, active: activeStatus === status && !activeProvider })),
+    ...options.providers.map((provider) => ({ key: `provider:${provider}`, label: provider, active: activeProvider === provider && !activeStatus })),
+  ];
+  root.innerHTML = buttons.map((button) => `<button type="button" class="map-quick-filter${button.active ? " active" : ""}" data-map-quick-filter="${escapeHtml(button.key)}" aria-pressed="${String(button.active)}">${escapeHtml(button.label)}</button>`).join("");
+}
+
+function renderSchoolList() {
+  const root = $("#schoolList");
+  if (!root) return;
+  root.replaceChildren();
+  if (map.state.registryLoading) {
+    root.innerHTML = `<p class="school-list-state" role="status">${escapeHtml(i18n.t("map.registryLoading"))}</p>`;
+    return;
+  }
+  if (map.state.registryUnavailable) {
+    root.innerHTML = `<p class="school-list-state error" role="alert">${escapeHtml(i18n.t("map.registryUnavailable"))}</p>`;
+    return;
+  }
+  const records = Array.isArray(map.state.view?.records) ? map.state.view.records : [];
+  if (!records.length) {
+    root.innerHTML = `<div class="school-list-empty"><span class="empty-icon" aria-hidden="true">${iconMarkup("search", { size: 18 })}</span><strong>${escapeHtml(i18n.t("map.searchEmpty"))}</strong><span>${escapeHtml(i18n.t("map.adjustFilters"))}</span></div>`;
+    return;
+  }
+  const selectedID = state.mapPopupContext?.registryId ?? state.selectedSchool?.school?.registryId ?? null;
+  records.forEach((record) => {
+    const school = record.school;
+    const status = mapRecordStatus(record);
+    const metrics = mapRecordMetrics(record);
+    const registryID = school?.registryId ?? "";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `school-row${String(registryID) === String(selectedID) ? " selected" : ""}`;
+    button.dataset.registryId = registryID;
+    button.setAttribute("aria-pressed", String(String(registryID) === String(selectedID)));
+    const title = escapeHtml(presentation.schoolName(school));
+    const context = escapeHtml([school?.district, school?.locality].filter(Boolean).join(" · ") || i18n.t("school.registry"));
+    const statusLabel = escapeHtml(status.label);
+    button.innerHTML = `<span class="school-row-icon" aria-hidden="true">${iconMarkup("school", { size: 20 })}</span><span class="school-row-copy"><strong>${title}</strong><span>${context}</span></span><span class="school-row-state"><span><i class="state-dot ${status.tone}"></i>${statusLabel}</span><b>${escapeHtml(metrics.speed)}</b></span>`;
+    button.addEventListener("click", () => {
+      const focused = map.focusSchool(registryID);
+      if (focused.ok) openMapPopup(focused.context, focused.marker);
+      else showToast("map.searchNoCoordinate", "warn");
+    });
+    root.appendChild(button);
+  });
 }
 
 function setSearchComboboxState(expanded, activeId = "") {
@@ -893,6 +975,7 @@ function openMapPopup(context, trigger = null) {
   state.mapPopupTrigger = trigger?.getLatLng?.() ? trigger : markerForMapContext(context) || (document.activeElement !== document.body ? document.activeElement : null);
   state.selectedSchool = context.kind === "registry-cluster" ? null : createSelectedSchool(context);
   renderPopup(context);
+  renderSchoolList();
   $("#mapPopup")?.focus();
 }
 
@@ -911,6 +994,7 @@ function closeMapPopup(restoreFocus = true, preserveSelection = false) {
   if (restoreFocus) (trigger?.getElement?.() || trigger)?.focus?.();
   state.mapPopupContext = null;
   state.mapPopupTrigger = null;
+  renderSchoolList();
   if (preserveSelection || !$("#detailDrawer")?.hidden) return;
   state.selectedSchool = null;
 }
@@ -1126,13 +1210,72 @@ function renderIncidentsPreservingScroll() {
   if (nextDetail) nextDetail.scrollTop = scrollTop;
 }
 
+function renderSituationsSurface() {
+  const root = $("#incidentsSurface");
+  const view = incidentSurfaceState();
+  const situations = Array.isArray(view.situations) ? view.situations : [];
+  const selected = situations.find((item) => String(item?.id) === String(view.selectedSituationId)) || situations[0];
+  const list = situations.length
+    ? situations.map((item) => {
+      const presented = presentSituation(item, { i18n, presentation, capabilities: state.capabilities, actionState: view.situationActionState });
+      const active = String(item?.id) === String(selected?.id);
+      return '<button class="incident-row' + (active ? ' selected' : '') + ' situation-row" type="button" data-situation-id="' + escapeHtml(item.id) + '"><span class="incident-row-status severity-' + escapeHtml(presented.severity.toLowerCase()) + '">' + escapeHtml(presented.severityLabel) + '</span><span><strong>' + escapeHtml(presented.title) + '</strong><small>' + escapeHtml(presented.typeLabel) + '</small></span><span>' + escapeHtml(String(presented.affectedCount)) + '</span><span>' + escapeHtml(presented.startedLabel) + '</span></button>';
+    }).join("")
+    : '<p class="surface-state">' + escapeHtml(i18n.t("situation.empty")) + "</p>";
+  const selectedID = selected?.id;
+  const detail = selectedID && String(view.selectedSituationId) === String(selectedID) ? renderSituationDetail() : '<p class="surface-state">' + escapeHtml(i18n.t("incidents.select")) + "</p>";
+  root.innerHTML = '<div class="incidents-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("nav.situations")) + '</h1></div><div class="surface-header-actions"><button class="secondary-action" type="button" data-incidents-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + '</button></div></header><div class="incidents-layout"><section class="incidents-list" aria-label="' + escapeHtml(i18n.t("nav.situations")) + '">' + list + '</section><aside class="incident-detail" aria-live="polite">' + detail + '</aside></div></div>';
+  hydrateRenderedControls(root);
+  bindIncidentSurfaceEvents(root);
+}
+
+function renderProviderCasesSurface() {
+  const root = $("#incidentsSurface");
+  const view = incidentSurfaceState();
+  const cases = Array.isArray(view.cases) ? view.cases : [];
+  let list;
+  if (view.casesState === "loading" || view.casesState === "idle") {
+    list = '<p class="surface-state" role="status">' + escapeHtml(i18n.t("providerCase.loading")) + '</p>';
+  } else if (view.casesState === "error") {
+    list = '<div class="surface-state error" role="alert"><p>' + escapeHtml(i18n.t("providerCase.listUnavailable")) + '</p><button class="secondary-action" type="button" data-provider-cases-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + '</button></div>';
+  } else if (!cases.length) {
+    list = '<p class="surface-state">' + escapeHtml(i18n.t("providerCase.empty")) + '</p>';
+  } else {
+    list = cases.map((item) => {
+      const presented = presentProviderCase(item, { i18n, presentation });
+      const reference = presented.reference || item.id;
+      const school = item.organization_name || i18n.t("school.noOfficialName");
+      const provider = item.provider_name || i18n.t("empty.value");
+      const context = item.incident_no || (item.incident_id ? i18n.t("incidents.number") + " #" + item.incident_id : i18n.t("field.line") + " " + (item.line_id || i18n.t("empty.value")));
+      return '<button class="incident-row case-row' + (String(view.providerCase.selectedId) === String(item.id) ? ' selected' : '') + '" type="button" data-provider-case-id="' + escapeHtml(item.id) + '"><span class="incident-row-status provider-case-delivery">' + escapeHtml(presented.deliveryLabel) + '</span><span><strong>' + escapeHtml(i18n.t("providerCase.title", { reference })) + '</strong><small>' + escapeHtml(school + " · " + provider) + '</small></span><span>' + escapeHtml(context) + '</span><span>' + escapeHtml(presentation.formatDate(item.created_at, true)) + '</span></button>';
+    }).join("");
+  }
+  const detail = view.providerCase.selectedId
+    ? renderSelectedProviderCase()
+    : '<div class="case-route-empty"><strong>' + escapeHtml(i18n.t("nav.cases")) + '</strong><span>' + escapeHtml(i18n.t("incidents.select")) + '</span><button class="secondary-action" type="button" data-route="incidents">' + escapeHtml(i18n.t("nav.incidents")) + '</button></div>';
+  root.innerHTML = '<div class="incidents-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("nav.cases")) + '</h1></div><div class="surface-header-actions"><button class="secondary-action" type="button" data-route="incidents">' + escapeHtml(i18n.t("nav.incidents")) + '</button><button class="secondary-action" type="button" data-provider-cases-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + '</button></div></header><div class="incidents-layout"><section class="incidents-list" aria-label="' + escapeHtml(i18n.t("nav.cases")) + '">' + list + '</section><aside class="incident-detail" aria-live="polite">' + detail + '</aside></div></div>';
+  hydrateRenderedControls(root);
+  bindIncidentSurfaceEvents(root);
+  root.querySelectorAll("[data-route]").forEach((button) => button.addEventListener("click", () => router.navigate(button.dataset.route)));
+}
+
 function renderIncidentsSurface() {
   const root = $("#incidentsSurface");
   if (!root) return;
   const view = incidentSurfaceState();
-  const active = router.getState().view === "incidents";
+  const route = router.getState().view;
+  const active = ["incidents", "situations", "cases"].includes(route);
   root.hidden = !active;
   if (!active) return;
+  if (route === "cases") {
+    renderProviderCasesSurface();
+    return;
+  }
+  if (route === "situations" && view.state === "ready" && !view.selectedSituationId && view.situations[0]?.id) void selectSituation(view.situations[0].id);
+  if (route === "situations" && view.state === "ready") {
+    renderSituationsSurface();
+    return;
+  }
   if (view.state === "loading" || view.state === "idle") {
     root.innerHTML = '<div class="incidents-shell"><p class="surface-state" role="status">' + escapeHtml(i18n.t("incidents.loading")) + "</p></div>";
     return;
@@ -1417,14 +1560,15 @@ function renderNotificationsSurface() {
   const button = $("#notificationsButton");
   const view = state.notifications;
   const allowed = state.capabilities.has("notification.read");
+  const routeActive = router.getState().view === "notifications";
   if (button) {
     button.hidden = !allowed;
-    button.setAttribute("aria-expanded", String(Boolean(allowed && view.open)));
+    button.setAttribute("aria-expanded", String(Boolean(allowed && (view.open || routeActive))));
   }
   renderNotificationButton();
   if (!root) return;
-  root.hidden = !allowed || !view.open;
-  if (!allowed || !view.open) return;
+  root.hidden = !allowed || (!view.open && !routeActive);
+  if (!allowed || (!view.open && !routeActive)) return;
   if (view.state === "loading" || view.state === "idle") {
     root.innerHTML = notificationHeader(view) + '<p class="surface-state" role="status">' + escapeHtml(i18n.t("notification.loading")) + "</p>";
   } else if (view.state === "error") {
@@ -1461,6 +1605,10 @@ function closeNotifications(restoreFocus = true) {
   state.notifications.actionError = "";
   state.notifications.actionErrorId = null;
   state.notificationsTrigger = null;
+  if (router.getState().view === "notifications") {
+    router.navigate("map");
+    return;
+  }
   renderNotificationsSurface();
   if (restoreFocus && trigger?.isConnected) trigger.focus();
 }
@@ -1489,6 +1637,10 @@ async function loadNotifications({ force = false, background = false } = {}) {
 
 function toggleNotifications() {
   if (!state.capabilities.has("notification.read")) return;
+  if (router.getState().view === "notifications") {
+    closeNotifications();
+    return;
+  }
   if (state.notifications.open) {
     closeNotifications();
     return;
@@ -2621,6 +2773,7 @@ async function submitIncidentCreate(event) {
 
 function bindIncidentSurfaceEvents(root) {
   root.querySelector("[data-incidents-refresh]")?.addEventListener("click", () => loadIncidents({ force: true }));
+  root.querySelector("[data-provider-cases-refresh]")?.addEventListener("click", () => loadProviderCases({ force: true }));
   root.querySelector("[data-incident-create-open]")?.addEventListener("click", () => {
     const view = incidentSurfaceState();
     view.createOpen = true;
@@ -2636,7 +2789,13 @@ function bindIncidentSurfaceEvents(root) {
   }));
   root.querySelectorAll("[data-incident-id]").forEach((control) => control.addEventListener("click", () => selectIncident(control.dataset.incidentId)));
   root.querySelectorAll("[data-situation-id]").forEach((control) => control.addEventListener("click", () => selectSituation(control.dataset.situationId)));
-  root.querySelectorAll("[data-provider-case-id]").forEach((control) => control.addEventListener("click", () => selectProviderCase(control.dataset.providerCaseId)));
+  root.querySelectorAll("[data-provider-case-id]").forEach((control) => control.addEventListener("click", () => {
+    if (router.getState().view === "cases") {
+      void selectProviderCaseFromRoute(control.dataset.providerCaseId);
+      return;
+    }
+    void selectProviderCase(control.dataset.providerCaseId);
+  }));
   root.querySelectorAll("[data-incident-action-form]").forEach((form) => form.addEventListener("submit", submitIncidentAction));
   root.querySelector("[data-provider-case-prepare]")?.addEventListener("click", createIncidentProviderCase);
   root.querySelector("[data-provider-case-generate]")?.addEventListener("click", generateProviderCaseDraft);
@@ -2683,6 +2842,26 @@ async function loadIncidents({ force = false, background = false } = {}) {
     if (view.selectedId) await loadIncidentDetail(view.selectedId);
   }).finally(() => { view.loadPromise = null; });
   return view.loadPromise;
+}
+
+async function loadProviderCases({ force = false } = {}) {
+  const view = incidentSurfaceState();
+  if (!session.authenticated || !state.capabilities.canAny(["provider_case.draft", "provider_case.send"])) return;
+  if (view.casesState === "loading") return view.casesLoadPromise;
+  if (view.casesState === "ready" && !force) { renderIncidentsSurface(); return; }
+  view.casesState = "loading";
+  renderIncidentsSurface();
+  view.casesLoadPromise = boundaries.providerCases.list().then((items) => {
+    view.cases = Array.isArray(items) ? items : [];
+    view.casesState = "ready";
+  }).catch(() => {
+    view.cases = [];
+    view.casesState = "error";
+  }).finally(() => {
+    view.casesLoadPromise = null;
+    renderIncidentsSurface();
+  });
+  return view.casesLoadPromise;
 }
 
 async function selectIncident(id) {
@@ -2734,6 +2913,35 @@ async function selectProviderCase(id) {
     const detail = objectPayload(await boundaries.providerCases.get(id));
     if (String(view.providerCase.selectedId) !== String(id) || String(view.selectedId) !== String(view.detail?.id)) return;
     if (String(detail.incident_id) !== String(view.selectedId)) throw Object.assign(new Error("provider case context mismatch"), { status: 404 });
+    view.providerCase.detail = detail;
+    view.providerCase.state = "ready";
+  } catch (error) {
+    if (String(view.providerCase.selectedId) !== String(id)) return;
+    view.providerCase.state = "error";
+  }
+  renderIncidentsPreservingScroll();
+}
+
+async function selectProviderCaseFromRoute(id) {
+  const view = incidentSurfaceState();
+  if (!session.authenticated || view.providerCase.actionState !== "idle") return;
+  view.providerCase = { selectedId: id, state: "loading", detail: null, actionState: "idle", actionError: "", actionMessage: "", generated: null };
+  view.selectedId = null;
+  view.detail = null;
+  view.detailState = "idle";
+  view.selectedSituationId = null;
+  view.situation = null;
+  renderIncidentsPreservingScroll();
+  try {
+    const detail = objectPayload(await boundaries.providerCases.get(id));
+    if (String(view.providerCase.selectedId) !== String(id)) return;
+    view.providerCase.detail = detail;
+    const incidentID = Number(detail?.incident_id);
+    view.selectedId = Number.isFinite(incidentID) && incidentID > 0 ? incidentID : null;
+    if (view.selectedId) {
+      await loadIncidentDetail(view.selectedId);
+      if (String(view.providerCase.selectedId) !== String(id)) return;
+    }
     view.providerCase.detail = detail;
     view.providerCase.state = "ready";
   } catch (error) {
@@ -2834,8 +3042,15 @@ async function sendProviderCase(event) {
     if (String(view.providerCase.selectedId) !== String(detail.id)) return;
     view.providerCase.detail = { ...detail, ...sent };
     view.providerCase.actionState = "idle";
-    await loadIncidentDetail(view.selectedId);
-    await selectProviderCase(detail.id);
+    if (view.selectedId) {
+      await loadIncidentDetail(view.selectedId);
+      await selectProviderCase(detail.id);
+    } else {
+      const refreshed = objectPayload(await boundaries.providerCases.get(detail.id));
+      view.providerCase.detail = refreshed;
+      view.providerCase.state = "ready";
+    }
+    if (router.getState().view === "cases") await loadProviderCases({ force: true });
     view.providerCase.actionMessage = "providerCase.sent";
     renderIncidentsPreservingScroll();
   } catch (error) {
@@ -2965,9 +3180,6 @@ function bindEvents() {
     finally { submit.disabled = false; }
   });
   $("#logoutButton")?.addEventListener("click", async () => { try { await session.logout(); } catch (error) { showToast("auth.logoutFailed", "warn"); } });
-  // The legacy hook remains callable for installed automation, but the
-  // rendered shell and basemap stay light regardless of this compatibility
-  // state.
   $("#themeToggle")?.addEventListener("click", () => theme.toggle());
   $("#notificationsButton")?.addEventListener("click", toggleNotifications);
   $("#refreshButton")?.addEventListener("click", refreshMap);
@@ -2993,6 +3205,17 @@ function bindEvents() {
   $("#districtFilter")?.addEventListener("change", applyMapFilters);
   $("#providerFilter")?.addEventListener("change", applyMapFilters);
   $("#statusFilter")?.addEventListener("change", applyMapFilters);
+  $("#mapQuickFilters")?.addEventListener("click", (event) => {
+    const control = event.target.closest("[data-map-quick-filter]");
+    if (!control) return;
+    const [kind, ...parts] = control.dataset.mapQuickFilter.split(":");
+    const value = parts.join(":");
+    map.setFilters({
+      status: kind === "status" ? value : "",
+      provider: kind === "provider" ? value : "",
+    });
+    renderMapStatus();
+  });
   $("#schoolSearch")?.addEventListener("input", (event) => { state.searchActiveIndex = -1; map.setFilters({ query: event.target.value }); renderMapStatus(); });
   $("#schoolSearch")?.addEventListener("keydown", handleSchoolSearchKeydown);
   $("#mapFiltersReset")?.addEventListener("click", () => { map.resetFilters(); renderMapStatus(); });

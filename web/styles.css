@@ -549,8 +549,7 @@ form label { color: var(--color-ink-secondary); font-size: 12px; }
   --shadow-focus: 0 0 0 3px oklch(58% 0.17 145 / 0.22);
 }
 
-/* Never expose the former theme switch. Its DOM hook remains for installed
-   acceptance tooling, but the operator cannot enter a dark visual mode. */
+/* Keep the theme hook available to the persistent utility controls. */
 #themeToggle { position: fixed; top: 0; right: 0; z-index: 120; width: 2px; height: 2px; min-height: 0; padding: 0; border: 0; opacity: 0; pointer-events: auto; overflow: hidden; }
 
 body { background: var(--color-canvas); }
@@ -797,4 +796,239 @@ body { background: var(--color-canvas); }
   .incident-filters, .report-filters, .admin-toolbar, .audit-filters { align-items: stretch; flex-direction: column; }
   .incident-filters label, .report-filters label, .admin-toolbar label, .audit-filters label { width: 100%; min-width: 0; }
   .incident-count { margin-inline-start: 0; }
+}
+
+/* Template composition: the attached LINKWATCH prototype is the visual
+   contract; the production boundaries above keep owning data and behavior. */
+:root {
+  color-scheme: light;
+  --rail-width: 78px;
+  --topbar-height: 0px;
+  --panel-width: 414px;
+  --color-canvas: rgb(241 243 242);
+  --color-canvas-raised: rgb(245 246 245);
+  --color-surface: rgb(255 255 255);
+  --color-surface-raised: rgb(255 255 255);
+  --color-surface-strong: rgb(236 239 237);
+  --color-ink: rgb(23 26 31);
+  --color-ink-secondary: rgb(48 52 58);
+  --color-ink-muted: rgb(116 122 130);
+  --color-ink-faint: rgb(168 173 179);
+  --color-border: rgb(228 231 229);
+  --color-border-strong: rgb(212 217 214);
+  --color-brand: rgb(85 111 242);
+  --color-brand-strong: rgb(70 93 215);
+  --color-brand-soft: rgb(233 237 255);
+  --color-success: rgb(85 183 125);
+  --color-success-soft: rgb(229 245 235);
+  --color-warning: rgb(227 164 79);
+  --color-warning-soft: rgb(251 240 223);
+  --color-danger: rgb(223 98 95);
+  --color-danger-soft: rgb(251 232 231);
+  --color-info-soft: rgb(227 243 245);
+  --shadow-panel: 0 14px 42px rgb(20 28 24 / .12);
+  --shadow-float: 0 6px 20px rgb(20 28 24 / .08);
+  --shadow-focus: 0 0 0 3px rgb(85 111 242 / .24);
+  --ease-standard: cubic-bezier(.23, 1, .32, 1);
+  --ease-out: cubic-bezier(.23, 1, .32, 1);
+  --font-sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+}
+
+:root[data-theme="light"] { color-scheme: light; }
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-canvas: rgb(23 26 27);
+  --color-canvas-raised: rgb(32 36 37);
+  --color-surface: rgb(32 36 37);
+  --color-surface-raised: rgb(32 36 37);
+  --color-surface-strong: rgb(49 54 55);
+  --color-ink: rgb(244 246 245);
+  --color-ink-secondary: rgb(217 221 218);
+  --color-ink-muted: rgb(152 159 154);
+  --color-ink-faint: rgb(109 116 111);
+  --color-border: rgb(48 53 54);
+  --color-border-strong: rgb(58 65 64);
+  --color-brand: rgb(116 137 255);
+  --color-brand-strong: rgb(135 153 255);
+  --color-brand-soft: rgb(44 52 88);
+  --color-success: rgb(101 201 142);
+  --color-success-soft: rgb(35 60 46);
+  --color-warning: rgb(230 173 95);
+  --color-warning-soft: rgb(70 57 35);
+  --color-danger: rgb(238 113 110);
+  --color-danger-soft: rgb(72 42 42);
+  --color-info-soft: rgb(36 60 64);
+  --shadow-panel: 0 16px 46px rgb(0 0 0 / .28);
+  --shadow-float: 0 8px 22px rgb(0 0 0 / .2);
+  --shadow-focus: 0 0 0 3px rgb(116 137 255 / .28);
+}
+
+body { background: var(--color-canvas); color: var(--color-ink-secondary); font-size: 14px; letter-spacing: -.005em; }
+.workspace { display: flex; background: var(--color-canvas); }
+.app-rail { width: var(--rail-width); flex-basis: var(--rail-width); align-items: center; padding: 0; border-inline-end: 1px solid var(--color-border); background: var(--color-surface); box-shadow: none; }
+.brand-lockup { width: 100%; height: 74px; flex: 0 0 74px; display: grid; place-items: center; padding: 0; border-bottom: 1px solid var(--color-border); }
+.brand-name { display: none; }
+.brand-mark { width: 44px; height: 44px; padding: 0; border: 0; border-radius: 15px; background: var(--color-ink); box-shadow: inset 0 0 0 1px rgb(255 255 255 / .08), 0 4px 12px rgb(20 28 24 / .08); }
+.brand-mark svg { width: 100%; height: 100%; }
+.brand-mark svg path { fill: none; stroke: var(--color-surface); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.brand-mark svg path:nth-child(3) { stroke-width: 3.4; }
+.brand-mark svg rect { fill: var(--color-brand); stroke: none; }
+.primary-nav { width: 100%; align-items: center; gap: 2px; padding: 9px 7px; overflow: auto; }
+.reference-nav-item { width: 64px; min-height: 62px; flex: 0 0 62px; flex-direction: column; justify-content: center; gap: 2px; padding: 0; border-radius: 16px; color: var(--color-ink-muted); text-align: center; }
+.reference-nav-item:hover { background: var(--color-surface-strong); color: var(--color-ink); transform: translateY(-1px); }
+.reference-nav-item[aria-current="page"] { background: transparent; color: var(--color-ink); box-shadow: none; }
+.reference-nav-item[aria-current="page"]::before { inset-inline-start: -7px; width: 3px; height: 24px; border-radius: 0 4px 4px 0; background: var(--color-brand); }
+.reference-nav-item[aria-current="page"] .nav-icon { background: var(--color-ink); color: var(--color-surface); transform: translateY(-1px); box-shadow: 0 5px 14px rgb(20 28 24 / .14); }
+.nav-icon { width: 46px; height: 40px; border-radius: 14px; }
+.nav-icon .lw-icon { width: 26px; height: 26px; }
+.nav-label { max-width: 64px; color: inherit; font-size: 9.5px; line-height: 11px; font-weight: 760; letter-spacing: -.01em; }
+.nav-overflow { display: none; }
+.app-rail-footer { width: 100%; height: 52px; justify-items: center; padding: 0; border-top: 0; }
+.app-rail-footer .visually-hidden { position: absolute !important; }
+.app-main { background: var(--color-canvas); }
+.workspace-topbar { position: absolute; inset: 0 0 auto; z-index: 40; height: 74px; flex: 0 0 74px; padding: 0 17px; border: 0; background: transparent; box-shadow: none; pointer-events: none; }
+.workspace-topbar::after, .route-context { display: none; }
+.header-tools { pointer-events: auto; }
+#themeToggle { position: relative; top: auto; right: auto; z-index: auto; width: var(--theme-control-size); height: var(--theme-control-size); min-height: var(--theme-control-size); padding: 0; border: 1px solid var(--color-border); opacity: 1; overflow: visible; pointer-events: auto; }
+.locale-switch { border-color: var(--color-border); background: var(--color-surface); }
+.locale-switch button[aria-pressed="true"] { background: var(--color-surface-strong); color: var(--color-ink); }
+.reference-icon-button { border-color: var(--color-border); border-radius: 10px; background: var(--color-surface); box-shadow: var(--shadow-float); }
+.reference-icon-button:hover { border-color: var(--color-border-strong); background: var(--color-surface-strong); color: var(--color-ink); }
+.account-button { min-height: 40px; border-color: var(--color-border); background: var(--color-surface); box-shadow: var(--shadow-float); }
+.account-button:hover, .account-control[open] .account-button { background: var(--color-surface-strong); }
+.account-avatar { background: var(--color-brand-soft); color: var(--color-brand-strong); }
+.workspace-content { min-height: 0; }
+
+/* Map-first frame: the Leaflet instance is the right-hand canvas, never a fake
+   illustration. The real registry list occupies the template's left rail. */
+.map-workspace { background: var(--color-canvas); }
+.leaflet-map { inset: 0 0 0 var(--panel-width); background: rgb(234 240 236); }
+.leaflet-container { background: rgb(234 240 236); font-family: var(--font-sans); }
+.leaflet-tile { filter: saturate(.88) contrast(.97) brightness(1.03); }
+:root[data-theme="dark"] .leaflet-tile { filter: saturate(.9) contrast(1.02) brightness(.9); }
+.leaflet-control-attribution { border-color: var(--color-border) !important; background: var(--color-surface) !important; color: var(--color-ink-muted) !important; }
+.context-panel { top: 0; bottom: 0; left: 0; width: var(--panel-width); max-height: none; border-top: 0; border-bottom: 0; border-left: 0; border-right: 1px solid var(--color-border); border-radius: 0; box-shadow: none; }
+.context-panel::before { display: none; }
+.context-panel-head { height: 74px; flex: 0 0 74px; align-items: center; padding: 0 21px; background: var(--color-surface); }
+.context-panel-head h2 { margin-top: 0; color: var(--color-ink); font-size: 24px; letter-spacing: -.03em; }
+.surface-eyebrow { color: var(--color-brand-strong); }
+.live-chip { padding: 4px 7px; border-color: var(--color-success-soft); border-radius: 6px; background: var(--color-success-soft); color: var(--color-success); }
+.map-search-wrap { margin: 14px 15px 0; }
+.map-search-wrap input { height: 47px; border-color: var(--color-border-strong); border-radius: 14px; background: var(--color-surface); }
+.map-filter-status { margin-inline: 15px; }
+.map-quick-filters { display: flex; gap: 6px; padding: 0 15px 9px; overflow-x: auto; scrollbar-width: none; }
+.map-quick-filters::-webkit-scrollbar { display: none; }
+.map-quick-filter { flex: 0 0 auto; height: 35px; padding: 0 10px; border: 1px solid var(--color-border); border-radius: 10px; background: var(--color-surface); color: var(--color-ink-secondary); font-size: 11.5px; font-weight: 690; white-space: nowrap; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard); }
+.map-quick-filter:hover { background: var(--color-surface-strong); transform: translateY(-1px); }
+.map-quick-filter.active { border-color: var(--color-ink); background: var(--color-ink); color: var(--color-surface); }
+.map-filter-details { margin: 0 15px 9px; border-radius: 11px; background: var(--color-surface-strong); }
+.map-filter-details > summary { min-height: 38px; }
+.map-filter-fields select { background: var(--color-surface); }
+.school-list { flex: 1; min-height: 0; overflow: auto; padding: 2px 8px 10px; }
+.school-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; min-height: 72px; padding: 9px 10px; border: 0; border-radius: 14px; background: transparent; color: var(--color-ink-secondary); text-align: start; transition: background-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard); }
+.school-row:hover { background: var(--color-surface-strong); transform: translateX(2px); }
+.school-row.selected, .school-row[aria-pressed="true"] { background: var(--color-brand-soft); }
+.school-row-icon { display: grid; width: 42px; height: 42px; place-items: center; border: 1px solid var(--color-border); border-radius: 13px; background: var(--color-surface); color: var(--color-ink); }
+.school-row-copy { min-width: 0; }
+.school-row-copy strong, .school-row-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.school-row-copy strong { color: var(--color-ink); font-size: 13px; }
+.school-row-copy span { margin-top: 4px; color: var(--color-ink-muted); font-size: 10.5px; }
+.school-row-state { min-width: 74px; color: var(--color-ink-muted); font-size: 10px; text-align: end; }
+.school-row-state > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.school-row-state b { display: block; margin-top: 5px; color: var(--color-ink-secondary); font-size: 10.5px; font-weight: 740; }
+.school-row-state .state-dot { display: inline-block; width: 7px; height: 7px; margin-inline-end: 5px; border-radius: 50%; }
+.state-dot.healthy { background: var(--color-success); }
+.state-dot.unstable { background: var(--color-warning); }
+.state-dot.critical { background: var(--color-danger); }
+.state-dot.no-data { background: var(--color-ink-muted); }
+.school-list-state, .school-list-empty { padding: 24px 16px; color: var(--color-ink-muted); font-size: 12px; text-align: center; }
+.school-list-empty { display: grid; place-items: center; gap: 6px; }
+.school-list-empty strong { color: var(--color-ink); font-size: 12px; }
+.school-list-empty span:last-child { font-size: 11px; }
+.context-panel-footer { flex: 0 0 auto; padding: 12px 15px; }
+.context-stat { padding: 9px 10px; border-radius: 10px; background: var(--color-surface-strong); }
+.context-stat strong { font-size: 17px; }
+.map-tools { right: 18px; bottom: 18px; gap: 3px; padding: 4px; border: 1px solid var(--color-border); border-radius: 15px; background: var(--color-surface); box-shadow: var(--shadow-float); }
+.map-tools button { width: 36px; height: 36px; border: 0; border-radius: 10px; box-shadow: none; }
+.map-meta { right: 18px; bottom: 18px; left: calc(var(--panel-width) + 28px); }
+.map-popup { border-color: var(--color-border); border-radius: 19px; background: var(--color-surface); box-shadow: var(--shadow-panel); }
+.map-popup-head, .drawer-head { padding: 17px 18px 16px; background: var(--color-surface); }
+.map-popup-head h2, .drawer-head h2 { font-size: 18px; }
+.selection-state { background: var(--color-brand-soft); }
+
+/* Real Leaflet markers inherit the same flat object language as the
+   template's prototype markers and clusters. */
+.marker-core { border-color: var(--color-surface); box-shadow: 0 2px 6px rgb(20 28 24 / .34); }
+.registry-marker-core { background: var(--color-ink-muted); }
+.monitoring-marker-core.status-no_internet { background: var(--color-danger); }
+.monitoring-marker-core.status-degraded { background: var(--color-warning); }
+.monitoring-marker-core.status-no_data, .monitoring-marker-core.status-unknown { background: var(--color-ink-muted); }
+.monitoring-marker-core.status-ok { background: var(--color-success); }
+.cluster-core { border-color: var(--color-surface); background: var(--color-brand); box-shadow: 0 4px 12px rgb(20 28 24 / .24), 0 0 0 4px rgb(85 111 242 / .18); color: var(--color-surface); }
+
+/* Keep the production detail and CRUD surfaces in the template's compact
+   titlebar / pane / inspector grammar. */
+.incidents-surface, .reports-surface, .secondary-surface { background: var(--color-surface); }
+.incidents-shell, .reports-shell, .secondary-shell { min-height: 100%; padding: 0; background: var(--color-surface); }
+.incidents-header, .surface-header { height: 74px; flex: 0 0 74px; align-items: center; margin: 0; padding: 0 24px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
+.surface-header h1, .incidents-header h1 { color: var(--color-ink); font-size: 24px; letter-spacing: -.03em; }
+.surface-header p, .incidents-header p { display: none; }
+.surface-header-actions { gap: 8px; }
+.primary-action, .secondary-action, .link-action { min-height: 40px; border-radius: 11px; }
+.primary-action { background: var(--color-brand); border-color: var(--color-brand); box-shadow: none; }
+.primary-action:hover { background: var(--color-brand-strong); border-color: var(--color-brand-strong); }
+.secondary-action { border-color: var(--color-border-strong); background: var(--color-surface); box-shadow: none; }
+.secondary-action:hover { border-color: var(--color-border-strong); background: var(--color-surface-strong); color: var(--color-ink); }
+.incident-filters, .report-filters, .admin-toolbar, .audit-filters { margin: 0; padding: 10px 14px; border: 0; border-bottom: 1px solid var(--color-border); border-radius: 0; background: var(--color-surface); box-shadow: none; }
+.incidents-layout { display: grid; grid-template-columns: 390px minmax(0, 1fr); flex: 1; min-height: 0; gap: 0; }
+.incidents-list { max-height: none; border: 0; border-right: 1px solid var(--color-border); border-radius: 0; background: var(--color-surface); box-shadow: none; }
+.incident-row { min-height: 68px; padding: 10px 14px; }
+.case-row { grid-template-columns: minmax(0, .8fr) minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, .9fr); }
+.incident-row:not(.incident-row-head):hover, .incident-row.selected { background: var(--color-brand-soft); }
+.incident-row.selected { box-shadow: inset 3px 0 0 var(--color-brand); }
+.incident-row-head { background: var(--color-surface-strong); }
+.incident-detail { width: auto; min-width: 0; max-height: none; padding: 24px 25px 90px; border: 0; border-radius: 0; background: var(--color-surface); box-shadow: none; }
+.case-route-empty { display: grid; place-items: start; gap: 10px; max-width: 360px; padding-top: 24px; color: var(--color-ink-muted); }
+.case-route-empty strong { color: var(--color-ink); font-size: 18px; }
+.incident-create-panel { margin: 12px 14px; border-radius: 14px; background: var(--color-surface-strong); box-shadow: none; }
+.report-overview, .report-tables { gap: 12px; }
+.report-panel, .report-measures, .report-table-wrap, .report-export { border-color: var(--color-border); border-radius: 14px; background: var(--color-surface); box-shadow: none; }
+.report-panel { padding: 18px; }
+.secondary-shell[data-admin-resource-context] { padding: 0; }
+.notification-surface { inset: 0; top: 0; right: auto; width: auto; max-height: none; padding: 0; overflow: auto; border: 0; border-radius: 0; background: var(--color-surface); box-shadow: none; animation: none; }
+.notification-surface .utility-header { height: 74px; margin: 0; padding: 0 24px; border-bottom: 1px solid var(--color-border); }
+.detail-drawer { background: var(--color-surface); }
+.auth-form { background: var(--color-surface); }
+
+.workspace[data-route="notifications"] #mapWrap { display: none; }
+.workspace[data-route="notifications"] .workspace-content { overflow: auto; }
+
+@media (max-width: 1000px) {
+  :root { --panel-width: 360px; }
+  .reference-nav-item { width: 64px; }
+  .incidents-layout { grid-template-columns: 340px minmax(0, 1fr); }
+}
+
+@media (max-width: 760px) {
+  :root { --panel-width: 100%; }
+  .app-rail { width: 58px; flex-basis: 58px; }
+  .workspace { display: flex; }
+  .brand-lockup { height: 58px; flex-basis: 58px; }
+  .brand-mark { width: 36px; height: 36px; border-radius: 12px; }
+  .nav-label { display: none; }
+  .reference-nav-item { width: 44px; min-height: 44px; flex-basis: 44px; }
+  .nav-icon { width: 40px; height: 36px; }
+  .context-panel { right: 0; max-height: min(430px, 100%); border-right: 0; border-bottom: 1px solid var(--color-border); }
+  .leaflet-map { inset: min(430px, 100%) 0 0; }
+  .map-meta { left: 12px; }
+  .workspace-topbar { height: 58px; padding-inline: 8px; }
+  .account-copy, .locale-switch { display: none; }
+  .incidents-layout { grid-template-columns: 1fr; }
+  .incidents-list { border-right: 0; border-bottom: 1px solid var(--color-border); }
+  .incident-detail { min-height: 420px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .school-row, .map-quick-filter, .reference-nav-item { transition: none; }
 }
