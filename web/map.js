@@ -382,12 +382,13 @@
   }
 
   function registryMarkerMarkup() {
-    return '<span class="linkwatch-registry-marker-core" aria-hidden="true"></span>';
+    return '<span aria-hidden="true" style="display:block;width:10px;height:10px;border:2px solid rgba(245,248,252,.95);border-radius:50%;background:#63758b;box-shadow:0 1px 4px rgba(9,14,22,.55)"></span>';
   }
 
   function monitoringMarkerMarkup(status) {
-    const statusClass = String(status || "UNKNOWN").toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    return `<span class="linkwatch-monitoring-marker-core is-${statusClass}" aria-hidden="true"><span></span></span>`;
+    const colors = { NO_INTERNET: "#b96d6b", DEGRADED: "#ae8b58", NO_DATA: "#76879c", OK: "#609176", UNKNOWN: "#6e7d8d" };
+    const color = colors[status] || colors.UNKNOWN;
+    return `<span aria-hidden="true" style="display:grid;place-items:center;width:18px;height:18px;border:2px solid rgba(248,250,252,.96);border-radius:50%;background:${color};box-shadow:0 1px 5px rgba(9,14,22,.62)"><span style="display:block;width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.92)"></span></span>`;
   }
 
   function clusterMarkup(count) {
