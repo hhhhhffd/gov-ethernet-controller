@@ -114,6 +114,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.agentProbeUpload(w, r)
 	case normalized == "/agent/register" && r.Method == http.MethodPost:
 		s.agentRegister(w, r)
+	case normalized == "/agent/enroll" && r.Method == http.MethodPost:
+		s.agentEnroll(w, r)
 	case normalized == "/lines" && r.Method == http.MethodGet:
 		s.listLines(w, r)
 	case strings.HasPrefix(normalized, "/lines/"):

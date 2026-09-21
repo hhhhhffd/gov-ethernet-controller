@@ -23,7 +23,7 @@ import { adminResourceDefinitions, presentAdminRecord, presentAgentVersion, pres
 const $ = (selector, root = document) => root.querySelector(selector);
 const OPERATIONAL_POLL_INTERVAL_MS = 5_000;
 const state = {
-  capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, mapPopupAnchor: null, selectedSchool: null,
+  capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, mapPopupAnchor: null, selectedSchool: null, enrollment: { open: false, state: "idle", pointID: "", lineID: "", result: null },
   mapInitialized: false, mapLoaded: false, mapLoadPromise: null, operationalPollTimer: null, toastTimer: null, drawerTrigger: null, drawerFocusSet: false,
   notificationsTrigger: null, searchActiveIndex: -1,
   incidents: createIncidentSurfaceState(),
@@ -931,6 +931,7 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
     const incident = activeIncident(line);
     $("#drawerIncident").innerHTML = incident ? mapFields([[i18n.t("field.activeIncident"), incident.incident_no || incident.number || incident.id], [i18n.t("field.incidentStatus"), presentation.incidentStatus(incident.status)]]) + '<button class="link-action" type="button" data-open-incident-id="' + escapeHtml(incident.id) + '">' + escapeHtml(i18n.t("nav.incidents")) + "</button>" : "";
   }
+  $("#drawerEnrollment").innerHTML = renderEnrollmentPanel(selected, line);
   $("#drawerBackdrop").hidden = false;
   $("#detailDrawer").hidden = false;
   $("#detailDrawer").classList.add("open");
@@ -938,11 +939,98 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
   if (state.drawerTrigger && !state.drawerFocusSet) { $("#detailDrawer")?.focus(); state.drawerFocusSet = true; }
   $("#detailDrawer").querySelectorAll("[data-popup-line-id]").forEach((button) => button.addEventListener("click", async () => {
     state.selectedSchool = selectSchoolLine(state.selectedSchool, button.dataset.popupLineId);
+    resetEnrollment();
     renderSchoolDrawer();
     if (state.mapPopupContext) renderPopup(state.mapPopupContext);
     await openSelectedSchoolDetail();
   }));
   $("#detailDrawer").querySelector("[data-open-incident-id]")?.addEventListener("click", () => openIncident($("#detailDrawer").querySelector("[data-open-incident-id]").dataset.openIncidentId));
+  bindEnrollmentPanel();
+}
+
+function resetEnrollment() {
+  state.enrollment = { open: false, state: "idle", pointID: "", lineID: "", result: null };
+}
+
+function activeMonitoringPoints(line) {
+  return (Array.isArray(line?.monitoring_points) ? line.monitoring_points : []).filter((point) => point?.id && point.active !== false);
+}
+
+function renderEnrollmentPanel(selected, line) {
+  if (!selected || !state.capabilities.has("admin.manage")) return "";
+  const view = state.enrollment;
+  if (!view.open || view.lineID !== String(selected.id)) {
+    return '<button type="button" class="secondary-action" data-enrollment-connect>' + escapeHtml(i18n.t("enrollment.connectAgent")) + "</button>";
+  }
+  const points = activeMonitoringPoints(line);
+  const pointID = points.some((point) => String(point.id) === String(view.pointID)) ? view.pointID : points[0]?.id || "";
+  const options = points.map((point) => '<option value="' + escapeHtml(String(point.id)) + '"' + (String(point.id) === String(pointID) ? " selected" : "") + ">" + escapeHtml(point.location ? `${point.location} · ${point.id}` : String(point.id)) + "</option>").join("");
+  const busy = view.state === "saving";
+  const result = view.result;
+  const status = view.state === "error"
+    ? '<p class="enrollment-status error" role="alert">' + escapeHtml(i18n.t("enrollment.failed")) + "</p>"
+    : result
+      ? '<p class="enrollment-status" role="status">' + escapeHtml(i18n.t("enrollment.activeUntil", { expiresAt: presentation.formatDate(result.expires_at, true) })) + "</p>"
+      : "";
+  const code = result?.code
+    ? '<div class="enrollment-code"><code>' + escapeHtml(result.code) + '</code><button type="button" class="secondary-action" data-enrollment-copy>' + escapeHtml(i18n.t("admin.copy")) + "</button></div>"
+    : "";
+  const noPoints = !points.length;
+  return '<div class="enrollment-panel"><h3>' + escapeHtml(i18n.t("enrollment.connectAgent")) + "</h3><p>" + escapeHtml(i18n.t("enrollment.selectedLine", { line: selected.id })) + "</p>"
+    + (noPoints ? '<p class="enrollment-status error">' + escapeHtml(i18n.t("enrollment.noActivePoint")) + "</p>" : '<label>' + escapeHtml(i18n.t("enrollment.monitoringPoint")) + '<select data-enrollment-point' + (busy ? " disabled" : "") + ">" + options + "</select></label>")
+    + '<button type="button" class="primary-action" data-enrollment-generate' + (busy || noPoints ? " disabled" : "") + ">" + escapeHtml(busy ? i18n.t("enrollment.generating") : i18n.t("enrollment.generate")) + "</button>"
+    + status + code + "</div>";
+}
+
+async function openEnrollmentPanel() {
+  const selected = selectedLine(state.selectedSchool);
+  if (!selected || !state.capabilities.has("admin.manage")) return;
+  let line = state.selectedSchool?.detail || selected;
+  if (!Array.isArray(line.monitoring_points)) {
+    await openSelectedSchoolDetail();
+    line = state.selectedSchool?.detail || selectedLine(state.selectedSchool);
+  }
+  const points = activeMonitoringPoints(line);
+  state.enrollment = { open: true, state: "idle", pointID: String(points[0]?.id || ""), lineID: String(selected.id), result: null };
+  renderSchoolDrawer();
+}
+
+async function generateEnrollmentCode() {
+  const view = state.enrollment;
+  const selected = selectedLine(state.selectedSchool);
+  if (!selected || view.state === "saving" || !view.pointID || view.lineID !== String(selected.id)) return;
+  state.enrollment = { ...view, state: "saving", result: null };
+  renderSchoolDrawer();
+  try {
+    const result = objectPayload(await boundaries.admin.createEnrollmentCode(view.pointID));
+    state.enrollment = { ...state.enrollment, state: "success", result };
+  } catch (error) {
+    state.enrollment = { ...state.enrollment, state: "error", result: null };
+  }
+  renderSchoolDrawer();
+}
+
+async function copyEnrollmentCode() {
+  const code = state.enrollment?.result?.code;
+  if (!code) return;
+  try {
+    if (typeof globalThis.navigator?.clipboard?.writeText !== "function") throw new Error("clipboard unavailable");
+    await globalThis.navigator.clipboard.writeText(code);
+    showToast("admin.copied");
+  } catch (error) {
+    showToast("admin.copyFailed", "warn");
+  }
+}
+
+function bindEnrollmentPanel() {
+  const panel = $("#drawerEnrollment");
+  panel?.querySelector("[data-enrollment-connect]")?.addEventListener("click", openEnrollmentPanel);
+  panel?.querySelector("[data-enrollment-point]")?.addEventListener("change", (event) => {
+    state.enrollment = { ...state.enrollment, pointID: String(event.target.value), result: null, state: "idle" };
+    renderSchoolDrawer();
+  });
+  panel?.querySelector("[data-enrollment-generate]")?.addEventListener("click", generateEnrollmentCode);
+  panel?.querySelector("[data-enrollment-copy]")?.addEventListener("click", copyEnrollmentCode);
 }
 
 async function openSelectedSchoolDetail() {

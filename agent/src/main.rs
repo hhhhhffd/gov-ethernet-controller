@@ -876,9 +876,10 @@ mod tests {
         config.line_id = "legacy-line".into();
         config.monitoring_point_id = "legacy-point".into();
         config.agent_version = "configured-but-not-running".into();
+        config.device_id = "enrolled-device".into();
 
         let payload = event(&config, json!({"mode": "LIGHT"}));
-        assert_eq!(payload["device_id"], "device-42-primary");
+        assert_eq!(payload["device_id"], "enrolled-device");
         assert_eq!(payload["agent_version"], update::running_version());
         assert!(payload.get("school_id").is_none());
         assert!(payload.get("line_id").is_none());

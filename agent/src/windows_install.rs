@@ -5,7 +5,7 @@
 
 #![cfg(windows)]
 
-use crate::config::Config;
+use crate::{client::Client, config::Config, hostname};
 use serde_json::json;
 use std::{
     env,
@@ -18,7 +18,86 @@ use std::{
 };
 
 type Handle = *mut c_void;
+type Hwnd = Handle;
+type Hinstance = Handle;
+type Wparam = usize;
+type Lparam = isize;
+type Lresult = isize;
 const SW_HIDE: i32 = 0;
+const SW_SHOW: i32 = 5;
+const WM_NCCREATE: u32 = 0x0081;
+const WM_CREATE: u32 = 0x0001;
+const WM_COMMAND: u32 = 0x0111;
+const WM_CLOSE: u32 = 0x0010;
+const WM_DESTROY: u32 = 0x0002;
+const GWLP_USERDATA: i32 = -21;
+const WS_OVERLAPPED: u32 = 0x0000_0000;
+const WS_CAPTION: u32 = 0x00C0_0000;
+const WS_SYSMENU: u32 = 0x0008_0000;
+const WS_VISIBLE: u32 = 0x1000_0000;
+const WS_CHILD: u32 = 0x4000_0000;
+const WS_TABSTOP: u32 = 0x0001_0000;
+const WS_BORDER: u32 = 0x0080_0000;
+const ES_AUTOHSCROLL: u32 = 0x0080;
+const BS_DEFPUSHBUTTON: u32 = 0x0001;
+const MB_OK: u32 = 0;
+const MB_ICONINFORMATION: u32 = 0x40;
+const MB_ICONERROR: u32 = 0x10;
+const ID_CONNECT: usize = 1001;
+const ID_CANCEL: usize = 1002;
+const ID_CODE_INPUT: usize = 1003;
+
+#[repr(C)]
+struct WndClassW {
+    style: u32,
+    window_proc: Option<unsafe extern "system" fn(Hwnd, u32, Wparam, Lparam) -> Lresult>,
+    class_extra: i32,
+    window_extra: i32,
+    instance: Hinstance,
+    icon: Handle,
+    cursor: Handle,
+    background: Handle,
+    menu_name: *const u16,
+    class_name: *const u16,
+}
+
+#[repr(C)]
+struct CreateStructW {
+    create_params: *mut c_void,
+    instance: Hinstance,
+    menu: Handle,
+    parent: Hwnd,
+    height: i32,
+    width: i32,
+    y: i32,
+    x: i32,
+    style: i32,
+    name: *const u16,
+    class_name: *const u16,
+    extended_style: u32,
+}
+
+#[repr(C)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+#[repr(C)]
+struct Message {
+    hwnd: Hwnd,
+    message: u32,
+    wparam: Wparam,
+    lparam: Lparam,
+    time: u32,
+    point: Point,
+    private: u32,
+}
+
+struct EnrollmentDialogState {
+    code: Option<String>,
+    input: Hwnd,
+}
 
 #[link(name = "shell32")]
 extern "system" {
@@ -30,6 +109,46 @@ extern "system" {
         directory: *const u16,
         show: i32,
     ) -> Handle;
+
+}
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetModuleHandleW(name: *const u16) -> Hinstance;
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn RegisterClassW(class: *const WndClassW) -> u16;
+    fn CreateWindowExW(
+        extended_style: u32,
+        class_name: *const u16,
+        window_name: *const u16,
+        style: u32,
+        x: i32,
+        y: i32,
+        width: i32,
+        height: i32,
+        parent: Hwnd,
+        menu: Handle,
+        instance: Hinstance,
+        parameter: *mut c_void,
+    ) -> Hwnd;
+    fn DefWindowProcW(hwnd: Hwnd, message: u32, wparam: Wparam, lparam: Lparam) -> Lresult;
+    fn DestroyWindow(hwnd: Hwnd) -> i32;
+    fn PostQuitMessage(exit_code: i32);
+    fn ShowWindow(hwnd: Hwnd, command: i32) -> i32;
+    fn UpdateWindow(hwnd: Hwnd) -> i32;
+    fn GetMessageW(message: *mut Message, hwnd: Hwnd, minimum: u32, maximum: u32) -> i32;
+    fn TranslateMessage(message: *const Message) -> i32;
+    fn DispatchMessageW(message: *const Message) -> Lresult;
+    fn SetWindowLongPtrW(hwnd: Hwnd, index: i32, value: isize) -> isize;
+    fn GetWindowLongPtrW(hwnd: Hwnd, index: i32) -> isize;
+    fn GetWindowTextLengthW(hwnd: Hwnd) -> i32;
+    fn GetWindowTextW(hwnd: Hwnd, buffer: *mut u16, maximum: i32) -> i32;
+    fn SetFocus(hwnd: Hwnd) -> Hwnd;
+    fn MessageBoxW(hwnd: Hwnd, text: *const u16, caption: *const u16, style: u32) -> i32;
+    fn LoadCursorW(instance: Hinstance, cursor_name: *const u16) -> Handle;
 }
 
 /// Ask the shell for a UAC-elevated copy when a user starts the one-file
@@ -66,6 +185,22 @@ pub fn install() -> Result<(), String> {
     let install_root = PathBuf::from(program_files).join("LINKWATCH");
     let data_root = PathBuf::from(program_data).join("LINKWATCH");
     let installed = install_root.join("linkwatch-agent.exe");
+    let token_path = data_root.join("device-token");
+    let config_path = data_root.join("config.json");
+    let has_existing_installation = token_path.exists() || config_path.exists();
+    let mut config = Config::load_for_install()?;
+    if has_existing_installation && !config.has_device_credentials() {
+        return Err("the existing LINKWATCH installation has incomplete credentials; restore its protected ProgramData files before reinstalling".into());
+    }
+    if !config.has_device_credentials() {
+        let hostname = hostname::detect().unwrap_or_else(|| "Windows device".into());
+        let credentials =
+            enroll_with_code(&config.server_url, config.probe.timeout_seconds, &hostname)?;
+        config.device_id = credentials.device_id;
+        config.device_token = credentials.device_token;
+    }
+    config.validate_device_credentials()?;
+
     fs::create_dir_all(&install_root)
         .map_err(|error| format!("create install directory: {error}"))?;
     fs::create_dir_all(data_root.join("queue"))
@@ -86,18 +221,12 @@ pub fn install() -> Result<(), String> {
         fs::copy(&current, &installed)
             .map_err(|error| format!("copy agent into Program Files: {error}"))?;
     }
-    let config = Config::load()?;
-    if config.device_token.trim().is_empty() {
-        return Err("device token is required on first run (use a protected config/token file or LINKWATCH_DEVICE_TOKEN)".into());
-    }
-    let token_path = data_root.join("device-token");
     // Reinstall/upgrade runs under the service account or an administrator
     // that may not be the owner of the protected token file. Preserve the
     // existing credential and ACL; token rotation is an explicit operation,
     // not a side effect of replacing the binary.
     ensure_token(&token_path, config.device_token.trim(), protect_token)?;
 
-    let config_path = data_root.join("config.json");
     let dashboard = config
         .dashboard_url
         .clone()
@@ -163,7 +292,246 @@ pub fn install() -> Result<(), String> {
     if current != installed {
         remove_after_exit(&current);
     }
+    show_installer_message("LINKWATCH подключён и работает.", MB_ICONINFORMATION);
     Ok(())
+}
+
+fn enroll_with_code(
+    server_url: &str,
+    timeout_seconds: u64,
+    hostname: &str,
+) -> Result<crate::client::EnrollmentCredentials, String> {
+    loop {
+        let code = prompt_enrollment_code()?;
+        match Client::enroll(
+            server_url,
+            Duration::from_secs(timeout_seconds.max(1)),
+            &code,
+            hostname,
+            env!("CARGO_PKG_VERSION"),
+        ) {
+            Ok(credentials) => return Ok(credentials),
+            Err(error) => {
+                // The code is intentionally not interpolated into this message
+                // or an error log. A user can safely retry after correcting it.
+                show_installer_message(
+                    &format!("Не удалось подключить агент: {error}"),
+                    MB_ICONERROR,
+                );
+            }
+        }
+    }
+}
+
+fn prompt_enrollment_code() -> Result<String, String> {
+    let instance = unsafe { GetModuleHandleW(ptr::null()) };
+    if instance.is_null() {
+        return Err("load Windows installer module".into());
+    }
+    let class_name = wide("LINKWATCHEnrollmentDialog");
+    let class = WndClassW {
+        style: 0,
+        window_proc: Some(enrollment_window_proc),
+        class_extra: 0,
+        window_extra: 0,
+        instance,
+        icon: ptr::null_mut(),
+        cursor: unsafe { LoadCursorW(ptr::null_mut(), 32512usize as *const u16) },
+        background: 6usize as Handle,
+        menu_name: ptr::null(),
+        class_name: class_name.as_ptr(),
+    };
+    // A retry opens another dialog in the same process. Windows reports the
+    // already-registered class as an error, but it remains safe to reuse.
+    unsafe { RegisterClassW(&class) };
+    let mut state = EnrollmentDialogState {
+        code: None,
+        input: ptr::null_mut(),
+    };
+    let window = unsafe {
+        CreateWindowExW(
+            0,
+            class_name.as_ptr(),
+            wide("LINKWATCH").as_ptr(),
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+            i32::MIN,
+            i32::MIN,
+            380,
+            190,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            instance,
+            &mut state as *mut EnrollmentDialogState as *mut c_void,
+        )
+    };
+    if window.is_null() {
+        return Err("create connection-code window".into());
+    }
+    unsafe {
+        ShowWindow(window, SW_SHOW);
+        UpdateWindow(window);
+        SetFocus(state.input);
+    }
+    let mut message = Message {
+        hwnd: ptr::null_mut(),
+        message: 0,
+        wparam: 0,
+        lparam: 0,
+        time: 0,
+        point: Point { x: 0, y: 0 },
+        private: 0,
+    };
+    loop {
+        let result = unsafe { GetMessageW(&mut message, ptr::null_mut(), 0, 0) };
+        if result <= 0 {
+            break;
+        }
+        unsafe {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+    }
+    state
+        .code
+        .filter(|code| !code.trim().is_empty())
+        .ok_or_else(|| "connection was cancelled".into())
+}
+
+unsafe extern "system" fn enrollment_window_proc(
+    window: Hwnd,
+    message: u32,
+    wparam: Wparam,
+    lparam: Lparam,
+) -> Lresult {
+    if message == WM_NCCREATE {
+        let create = lparam as *const CreateStructW;
+        if !create.is_null() {
+            SetWindowLongPtrW(window, GWLP_USERDATA, (*create).create_params as isize);
+        }
+    }
+    let state = GetWindowLongPtrW(window, GWLP_USERDATA) as *mut EnrollmentDialogState;
+    match message {
+        WM_NCCREATE => 1,
+        WM_COMMAND => {
+            let control_id = wparam & 0xffff;
+            if control_id == ID_CONNECT {
+                if state.is_null() {
+                    return 0;
+                }
+                let code = read_window_text((*state).input);
+                if code.trim().is_empty() {
+                    show_installer_message("Введите код подключения.", MB_ICONERROR);
+                    SetFocus((*state).input);
+                    return 0;
+                }
+                (*state).code = Some(code);
+                DestroyWindow(window);
+                return 0;
+            }
+            if control_id == ID_CANCEL {
+                DestroyWindow(window);
+                return 0;
+            }
+            0
+        }
+        WM_CLOSE => {
+            DestroyWindow(window);
+            0
+        }
+        WM_DESTROY => {
+            PostQuitMessage(0);
+            0
+        }
+        _ => {
+            if message == WM_CREATE && !state.is_null() {
+                create_enrollment_controls(window, state);
+                return 0;
+            }
+            DefWindowProcW(window, message, wparam, lparam)
+        }
+    }
+}
+
+unsafe fn create_enrollment_controls(window: Hwnd, state: *mut EnrollmentDialogState) {
+    let instance = GetModuleHandleW(ptr::null());
+    CreateWindowExW(
+        0,
+        wide("STATIC").as_ptr(),
+        wide("Код подключения:").as_ptr(),
+        WS_CHILD | WS_VISIBLE,
+        24,
+        28,
+        300,
+        24,
+        window,
+        ptr::null_mut(),
+        instance,
+        ptr::null_mut(),
+    );
+    (*state).input = CreateWindowExW(
+        0,
+        wide("EDIT").as_ptr(),
+        ptr::null(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
+        24,
+        55,
+        330,
+        28,
+        window,
+        ID_CODE_INPUT as Handle,
+        instance,
+        ptr::null_mut(),
+    );
+    CreateWindowExW(
+        0,
+        wide("BUTTON").as_ptr(),
+        wide("Подключить").as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+        150,
+        105,
+        120,
+        32,
+        window,
+        ID_CONNECT as Handle,
+        instance,
+        ptr::null_mut(),
+    );
+    CreateWindowExW(
+        0,
+        wide("BUTTON").as_ptr(),
+        wide("Отмена").as_ptr(),
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        278,
+        105,
+        76,
+        32,
+        window,
+        ID_CANCEL as Handle,
+        instance,
+        ptr::null_mut(),
+    );
+}
+
+unsafe fn read_window_text(window: Hwnd) -> String {
+    let length = GetWindowTextLengthW(window).max(0) as usize;
+    let mut buffer = vec![0u16; length + 1];
+    let copied = GetWindowTextW(window, buffer.as_mut_ptr(), buffer.len() as i32).max(0) as usize;
+    String::from_utf16_lossy(&buffer[..copied])
+        .trim()
+        .to_string()
+}
+
+fn show_installer_message(message: &str, style: u32) {
+    let text = wide(message);
+    let caption = wide("LINKWATCH");
+    unsafe {
+        MessageBoxW(
+            ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_OK | style,
+        );
+    }
 }
 
 fn ensure_token(

@@ -63,6 +63,10 @@ func (s *Server) adminRoute(w http.ResponseWriter, r *http.Request, rest string)
 		s.adminAgentUpdate(w, r, p)
 		return
 	}
+	if parts[0] == "enrollment-codes" && r.Method == http.MethodPost {
+		s.adminEnrollmentCode(w, r, p)
+		return
+	}
 	if parts[0] == "policies" {
 		s.adminPolicy(w, r, p)
 		return
@@ -1098,24 +1102,32 @@ func (s *Server) adminDevices(w http.ResponseWriter, r *http.Request, p *auth.Pr
 		if payload.AgentVersion == "" {
 			payload.AgentVersion = "0.1.0"
 		}
-		token, err := randomSecret()
-		if err != nil {
-			writeError(w, 500, "could not generate device token")
-			return
-		}
-		now := time.Now().UTC().Truncate(time.Second)
 		var displayNameErr error
 		payload.DisplayName, displayNameErr = normalizeDeviceDisplayName(payload.DisplayName)
 		if displayNameErr != nil {
 			writeError(w, 422, displayNameErr.Error())
 			return
 		}
-		if _, err := s.DB.Pool.Exec(r.Context(), `INSERT INTO devices(id,monitoring_point_id,auth_token_hash,agent_version,display_name,created_at) VALUES ($1,$2,$3,$4,$5,$6)`, payload.DeviceID, payload.MonitoringPointID, auth.TokenHash(token), payload.AgentVersion, payload.DisplayName, now); err != nil {
+		tx, err := s.DB.Pool.Begin(r.Context())
+		if err != nil {
+			writeError(w, 500, "could not begin device registration")
+			return
+		}
+		defer func() { _ = tx.Rollback(r.Context()) }()
+		registered, err := registerDeviceInTx(r.Context(), tx, deviceRegistrationInput{
+			ID: payload.DeviceID, MonitoringPointID: payload.MonitoringPointID,
+			AgentVersion: payload.AgentVersion, DisplayName: payload.DisplayName,
+		})
+		if err != nil {
 			writeError(w, 409, "device id already registered")
 			return
 		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, 500, "could not commit device registration")
+			return
+		}
 		writeAudit(r.Context(), s, p, "device.registered", "device", payload.DeviceID, nil, map[string]interface{}{"monitoring_point_id": payload.MonitoringPointID, "line_id": lineID, "agent_version": payload.AgentVersion})
-		writeJSON(w, 201, map[string]interface{}{"device_id": payload.DeviceID, "display_name": payload.DisplayName, "hostname": nil, "monitoring_point_id": payload.MonitoringPointID, "line_id": lineID, "agent_version": payload.AgentVersion, "device_token": token})
+		writeJSON(w, 201, map[string]interface{}{"device_id": registered.ID, "display_name": registered.DisplayName, "hostname": nil, "monitoring_point_id": payload.MonitoringPointID, "line_id": lineID, "agent_version": registered.AgentVersion, "device_token": registered.Token})
 		return
 	}
 	if len(parts) > 1 && parts[1] == "block" && r.Method == http.MethodPost {

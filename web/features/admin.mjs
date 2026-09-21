@@ -215,6 +215,9 @@ export function createAdminBoundary(api) {
     async registerDevice(payload) {
       return api.tryRequest(apiAliases("/admin/devices/register"), { method: "POST", body: JSON.stringify(adminRegistrationPayload(payload)) });
     },
+    async createEnrollmentCode(monitoringPointID) {
+      return api.tryRequest(apiAliases("/admin/enrollment-codes"), { method: "POST", body: JSON.stringify({ monitoring_point_id: String(monitoringPointID || "").trim() }) });
+    },
     async deviceAction(id, action, payload) {
       if (!DEVICE_ACTIONS.has(action)) throw contractError("unsupported_device_action", `Unsupported device action: ${action}`);
       const body = payload === undefined ? undefined : JSON.stringify(pickFields(payload, []));

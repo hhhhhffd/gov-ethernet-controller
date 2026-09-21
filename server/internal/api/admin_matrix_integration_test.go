@@ -468,10 +468,17 @@ func cleanupAdminMatrixFixture(t *testing.T, db *database.DB, prefix string) {
 	t.Helper()
 	pattern := prefix + "%"
 	queries := []string{
+		`DELETE FROM audit_events WHERE object_type='device' AND object_id IN (SELECT used_device_id FROM agent_enrollment_codes WHERE monitoring_point_id LIKE $1)`,
 		`DELETE FROM audit_events WHERE actor_id LIKE $1 OR object_id LIKE $1 OR object_id IN (SELECT id::text FROM contract_versions WHERE line_id LIKE $1) OR object_id IN (SELECT id::text FROM threshold_policy_versions WHERE scope_id LIKE $1)`,
+		`DELETE FROM agent_enrollment_codes WHERE monitoring_point_id LIKE $1 OR used_device_id LIKE $1 OR created_by LIKE $1`,
 		`DELETE FROM auth_sessions WHERE user_id LIKE $1`,
 		`DELETE FROM role_scopes WHERE user_id LIKE $1`,
-		`DELETE FROM devices WHERE id LIKE $1`,
+		`DELETE FROM measurement_verifications WHERE candidate_measurement_id IN (SELECT m.id FROM measurements m JOIN devices d ON d.id=m.device_id WHERE d.id LIKE $1 OR d.monitoring_point_id IN (SELECT id FROM monitoring_points WHERE id LIKE $1)) OR verifying_measurement_id IN (SELECT m.id FROM measurements m JOIN devices d ON d.id=m.device_id WHERE d.id LIKE $1 OR d.monitoring_point_id IN (SELECT id FROM monitoring_points WHERE id LIKE $1))`,
+		`DELETE FROM measurement_evaluations WHERE measurement_id IN (SELECT m.id FROM measurements m JOIN devices d ON d.id=m.device_id WHERE d.id LIKE $1 OR d.monitoring_point_id IN (SELECT id FROM monitoring_points WHERE id LIKE $1))`,
+		`DELETE FROM measurements WHERE device_id IN (SELECT id FROM devices WHERE id LIKE $1 OR monitoring_point_id IN (SELECT id FROM monitoring_points WHERE id LIKE $1))`,
+		`DELETE FROM line_state_events WHERE line_id LIKE $1`,
+		`DELETE FROM line_states WHERE line_id LIKE $1`,
+		`DELETE FROM devices WHERE id LIKE $1 OR monitoring_point_id IN (SELECT id FROM monitoring_points WHERE id LIKE $1)`,
 		`DELETE FROM monitoring_points WHERE id LIKE $1`,
 		`DELETE FROM line_context_versions WHERE line_id LIKE $1`,
 		`DELETE FROM threshold_policy_versions WHERE scope_id LIKE $1`,

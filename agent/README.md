@@ -21,17 +21,24 @@ linkwatch-agent --once                # alias once
 ```
 
 В Windows один release-бинарь, запущенный без аргументов, выполняет первичную
-установку: копирует себя в `C:\Program Files\LINKWATCH`, сохраняет queue/config/logs
-в `C:\ProgramData\LINKWATCH`, защищает token ACL, регистрирует Windows Service и
+установку без ENV и ручного ввода identity: показывает нативное окно для
+одноразового кода, получает `device_id`/`device_token` от `/api/v1/agent/enroll`,
+копирует себя в `C:\Program Files\LINKWATCH`, сохраняет queue/config/logs в
+`C:\ProgramData\LINKWATCH`, защищает token ACL, регистрирует Windows Service и
 tray autostart, затем запускает их. Дальше service владеет scheduler/probe/spool/
-heartbeat/upload, а `tray` общается с ним через локальный named pipe. Для удаления
-используйте тот же бинарь с `uninstall` (очередь сохраняется) или
+heartbeat/upload, а `tray` общается с ним через локальный named pipe. Повторный
+запуск уже установленного EXE сохраняет существующую identity и не запрашивает код.
+Для удаления используйте тот же бинарь с `uninstall` (очередь сохраняется) или
 `uninstall --purge-data` для явного удаления `ProgramData`. CLI-команды `run`,
 `once`, `probe`, `version` остаются доступными.
-Перед первым запуском положите рядом с exe `linkwatch-config.json` либо задайте
-обычные `LINKWATCH_SERVER_URL`, `LINKWATCH_DEVICE_ID` и `LINKWATCH_DEVICE_TOKEN`;
-установщик один раз перенесёт token в защищённый файл `ProgramData` и больше не
-передаст его через command line.
+
+Адрес сервера для первого enroll вшивается при сборке через
+`LINKWATCH_DEFAULT_SERVER_URL`; без него development build использует
+`http://127.0.0.1:8080`. Обычный пользователь этот адрес не видит и не вводит.
+Для development/recovery по-прежнему можно положить рядом с EXE
+`linkwatch-config.json` либо задать `LINKWATCH_SERVER_URL`,
+`LINKWATCH_DEVICE_ID` и `LINKWATCH_DEVICE_TOKEN`; установщик один раз перенесёт
+token в защищённый файл `ProgramData` и больше не передаст его через command line.
 
 Tray показывает состояние, очередь, hostname и последний heartbeat, запускает
 обычный measurement pipeline через service (`probe → queue → upload`), открывает
@@ -104,3 +111,11 @@ cargo build --release --manifest-path agent/Cargo.toml
 Windows artifact собирается скриптом `scripts/build-agent.ps1` и помещается в
 `dist/linkwatch-agent-windows-amd64.exe`. Служба Linux описана в
 `agent/systemd/vko-agent.service.example`.
+
+Для production EXE задайте URL на этапе сборки, например:
+
+```powershell
+./scripts/build-agent.ps1 -DefaultServerUrl $env:LINKWATCH_PUBLIC_URL
+```
+
+Перед сборкой задайте `LINKWATCH_PUBLIC_URL` фактическим production HTTPS URL.

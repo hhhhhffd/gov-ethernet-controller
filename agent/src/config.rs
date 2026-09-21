@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{env, fs, path::PathBuf};
 
+const DEVELOPMENT_DEFAULT_SERVER_URL: &str = "http://127.0.0.1:8080";
+const BUILD_DEFAULT_SERVER_URL: Option<&str> = option_env!("LINKWATCH_DEFAULT_SERVER_URL");
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProbeConfig {
@@ -60,9 +63,9 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            server_url: "http://127.0.0.1:8080".into(),
-            device_id: "device-42-primary".into(),
-            device_token: "demo-device-42-primary-token".into(),
+            server_url: build_default_server_url(),
+            device_id: String::new(),
+            device_token: String::new(),
             device_token_file: None,
             school_id: String::new(),
             line_id: String::new(),
@@ -81,6 +84,15 @@ impl Default for Config {
 
 impl Config {
     pub fn load() -> Result<Self, String> {
+        let config = Self::load_for_install()?;
+        config.validate_device_credentials()?;
+        Ok(config)
+    }
+
+    /// Loads the server and optional legacy credentials without requiring an
+    /// identity. The Windows installer uses this before first-run enrollment.
+    /// Normal runtime callers must use `load`, which requires credentials.
+    pub fn load_for_install() -> Result<Self, String> {
         let mut config = Config::default();
         let mut file_probe_explicit = false;
         let config_path = env::var("LINKWATCH_CONFIG_FILE")
@@ -146,14 +158,24 @@ impl Config {
         {
             return Err("LINKWATCH_SERVER_URL must use HTTPS in production".into());
         }
-        if production.eq_ignore_ascii_case("production") && config.device_token.starts_with("demo-")
-        {
-            return Err("production requires a provisioned device token".into());
-        }
-        if config.device_id.is_empty() || config.device_token.is_empty() {
+        Ok(config)
+    }
+
+    pub fn has_device_credentials(&self) -> bool {
+        !self.device_id.trim().is_empty() && !self.device_token.trim().is_empty()
+    }
+
+    pub fn validate_device_credentials(&self) -> Result<(), String> {
+        if !self.has_device_credentials() {
             return Err("device_id and device_token are required".into());
         }
-        Ok(config)
+        let production = env::var("LINKWATCH_ENV")
+            .or_else(|_| env::var("VKO_ENV"))
+            .unwrap_or_default();
+        if production.eq_ignore_ascii_case("production") && self.device_token.starts_with("demo-") {
+            return Err("production requires a provisioned device token".into());
+        }
+        Ok(())
     }
 
     pub fn apply_server_config(&mut self, value: &Value) {
@@ -353,6 +375,14 @@ impl Config {
     }
 }
 
+fn build_default_server_url() -> String {
+    BUILD_DEFAULT_SERVER_URL
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEVELOPMENT_DEFAULT_SERVER_URL)
+        .to_string()
+}
+
 fn default_config_path() -> Option<String> {
     #[cfg(windows)]
     {
@@ -434,6 +464,17 @@ mod tests {
         assert_eq!(config.performance_tests_per_day, 4);
         assert_eq!(config.probe.timeout_seconds, 5);
         assert_eq!(config.probe.throughput_duration_seconds, 3);
+    }
+
+    #[test]
+    fn default_server_url_is_a_build_time_value_with_development_fallback() {
+        let config = Config::default();
+        let expected = BUILD_DEFAULT_SERVER_URL
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(DEVELOPMENT_DEFAULT_SERVER_URL);
+        assert_eq!(config.server_url, expected);
+        assert!(!config.has_device_credentials());
     }
 
     #[test]

@@ -24,6 +24,12 @@ pub struct AgentCommand {
     pub attempt_count: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnrollmentCredentials {
+    pub device_id: String,
+    pub device_token: String,
+}
+
 pub struct Client {
     config: Config,
     http: reqwest::blocking::Client,
@@ -37,6 +43,51 @@ impl Client {
 
     pub fn update_config(&mut self, config: Config) {
         self.config = config;
+    }
+
+    pub fn enroll(
+        server_url: &str,
+        timeout: Duration,
+        code: &str,
+        hostname: &str,
+        agent_version: &str,
+    ) -> Result<EnrollmentCredentials, String> {
+        let http = reqwest::blocking::Client::builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|error| format!("build enrollment client: {error}"))?;
+        let url = format!("{}/api/v1/agent/enroll", server_url.trim_end_matches('/'));
+        let response = http
+            .post(url)
+            .json(&json!({"code":code,"hostname":hostname,"agent_version":agent_version}))
+            .send()
+            .map_err(|error| format!("send enrollment request: {error}"))?;
+        if !response.status().is_success() {
+            // Do not include a response body here: a proxy could reflect
+            // submitted secrets, which must never reach installer logs.
+            return Err("the connection code was not accepted".into());
+        }
+        let payload: Value = response
+            .json()
+            .map_err(|error| format!("decode enrollment response: {error}"))?;
+        let device_id = payload
+            .get("device_id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or("enrollment response is missing device_id")?
+            .to_string();
+        let device_token = payload
+            .get("device_token")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or("enrollment response is missing device_token")?
+            .to_string();
+        Ok(EnrollmentCredentials {
+            device_id,
+            device_token,
+        })
     }
     pub fn upload_pending(&self, queue: &Queue) -> Result<(usize, usize), String> {
         self.upload_pending_with(queue, |payloads| self.post_batch(payloads))

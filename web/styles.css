@@ -294,6 +294,16 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .detail-drawer { position: fixed; z-index: 1200; top: 0; right: 0; bottom: 0; width: min(540px, 100%); overflow: auto; padding: 28px; border-left: 1px solid var(--ref-border-medium); background: var(--ref-surface-main); box-shadow: 0 16px 34px rgb(0 0 0 / 26%); }
 .drawer-section { margin: 28px 0; }
 .drawer-grid { display: grid; gap: 0; margin: 0 0 16px; }
+.enrollment-panel { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--ref-border-soft); border-radius: var(--theme-panel-radius); background: var(--ref-surface-secondary); }
+.enrollment-panel h3, .enrollment-panel p { margin: 0; }
+.enrollment-panel h3 { color: var(--ref-text-primary); font-size: 16px; }
+.enrollment-panel p, .enrollment-panel label { color: var(--ref-text-secondary); font-size: 13px; }
+.enrollment-panel label { display: grid; gap: 6px; }
+.enrollment-panel select { min-height: 42px; padding: 0 10px; border: 1px solid var(--ref-border-soft); border-radius: 8px; background: var(--ref-surface-main); color: var(--ref-text-primary); font: inherit; }
+.enrollment-code { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.enrollment-code code { overflow-wrap: anywhere; color: var(--ref-text-primary); font: 600 15px/1.45 ui-monospace, monospace; letter-spacing: .04em; }
+.enrollment-status { color: var(--ref-text-secondary); font-size: 13px; }
+.enrollment-status.error { color: var(--ref-red); }
 .status-badge { display: inline-block; padding: 5px 9px; border: 1px solid currentColor; border-radius: 7px; font-size: 12px; font-weight: 600; }
 .status-badge.critical { color: var(--ref-red); }
 .status-badge.unstable { color: var(--ref-yellow); }
