@@ -382,17 +382,15 @@
   }
 
   function registryMarkerMarkup() {
-    return '<span aria-hidden="true" style="display:block;width:10px;height:10px;border:2px solid rgba(245,248,252,.95);border-radius:50%;background:#63758b;box-shadow:0 1px 4px rgba(9,14,22,.55)"></span>';
+    return '<span class="marker-core registry-marker-core" aria-hidden="true"></span>';
   }
 
   function monitoringMarkerMarkup(status) {
-    const colors = { NO_INTERNET: "#b96d6b", DEGRADED: "#ae8b58", NO_DATA: "#76879c", OK: "#609176", UNKNOWN: "#6e7d8d" };
-    const color = colors[status] || colors.UNKNOWN;
-    return `<span aria-hidden="true" style="display:grid;place-items:center;width:18px;height:18px;border:2px solid rgba(248,250,252,.96);border-radius:50%;background:${color};box-shadow:0 1px 5px rgba(9,14,22,.62)"><span style="display:block;width:5px;height:5px;border-radius:50%;background:rgba(255,255,255,.92)"></span></span>`;
+    return `<span class="marker-core monitoring-marker-core status-${String(status || "UNKNOWN").toLowerCase()}" aria-hidden="true"><span class="marker-core-center"></span></span>`;
   }
 
   function clusterMarkup(count) {
-    return `<span aria-hidden="true" style="display:grid;place-items:center;width:34px;height:34px;border:2px solid rgba(229,236,245,.96);border-radius:50%;background:rgba(30,42,57,.95);color:#f7fafc;box-shadow:0 2px 8px rgba(8,13,20,.48),0 0 0 3px rgba(120,145,170,.22);font:700 13px/1 ui-sans-serif,system-ui,sans-serif;letter-spacing:-.01em">${count}</span>`;
+    return `<span class="cluster-core" aria-hidden="true"><span>${count}</span></span>`;
   }
   function bindMarker(marker, context) {
     marker.__linkwatchContext = context;
@@ -555,7 +553,7 @@
     if (typeof state.map.setView === "function" && (!Number.isFinite(fittedZoom) || fittedZoom < targetZoom || fittedZoom <= currentZoom)) state.map.setView(center, targetZoom, { animate: false });
     rebuildRegistryClusters();
     if (typeof window.CustomEvent === "function" && typeof window.dispatchEvent === "function") {
-      window.dispatchEvent(new window.CustomEvent("linkwatch:map-cluster-expanded"));
+      window.dispatchEvent(new window.CustomEvent("linkwatch:map-cluster-expanded", { detail: null }));
     }
     return true;
   }

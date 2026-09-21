@@ -3,99 +3,128 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#08131f" />
+    <meta name="theme-color" content="oklch(20% 0.025 250)" />
     <title>LINKWATCH</title>
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <main id="app">
-      <div class="locale-switch" role="group" data-i18n-aria-label="locale.switch">
-        <button type="button" data-locale="ru" data-i18n="locale.ru"></button>
-        <button type="button" data-locale="kk" data-i18n="locale.kk"></button>
-      </div>
       <section id="authenticatedWorkspace" class="workspace" hidden data-i18n-aria-label="app.workspace">
-        <section id="mapWrap" class="map-workspace" data-i18n-aria-label="app.mapWorkspace">
-          <div id="leafletMap" class="leaflet-map" role="application" data-i18n-aria-label="app.regionMap"></div>
-          <form id="mapFilter" class="map-filter-island" data-i18n-aria-label="map.filter">
-            <label class="visually-hidden" for="schoolSearch" data-i18n="map.searchLabel"></label>
-            <input id="schoolSearch" type="search" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="schoolSearchResults" aria-expanded="false" data-i18n-placeholder="map.searchPlaceholder" />
-            <div id="schoolSearchResults" class="school-search-results" role="listbox" data-i18n-aria-label="map.searchResults" hidden></div>
-            <p id="mapFilterStatus" class="map-filter-status" role="status" hidden></p>
-            <details class="map-filter-details">
-              <summary data-i18n="map.filter"></summary>
-              <div class="map-filter-fields">
-                <label for="districtFilter" data-i18n="field.district"></label><select id="districtFilter"></select>
-                <label for="providerFilter" data-i18n="field.provider"></label><select id="providerFilter"></select>
-                <label for="statusFilter" data-i18n="field.status"></label><select id="statusFilter"></select>
-                <label for="coverageFilter" data-i18n="map.coverage"></label><select id="coverageFilter"><option value="all" data-i18n="map.allSchools"></option><option value="monitored" data-i18n="map.monitored"></option></select>
-                <label for="mapListMode" data-i18n="map.state"></label><select id="mapListMode"><option value="current" data-i18n="map.current"></option><option value="historical" data-i18n="map.historical"></option></select>
-                <button id="mapFiltersReset" type="button" data-i18n="action.resetFilters"></button>
-              </div>
-            </details>
-          </form>
-          <div id="mapTileStatus" class="map-tile-status" role="status" hidden></div>
-          <div class="map-tools" data-i18n-aria-label="map.controls"><button id="mapZoomIn" type="button" data-i18n-aria-label="action.zoomIn">+</button><button id="mapZoomOut" type="button" data-i18n-aria-label="action.zoomOut">−</button><button id="mapReset" type="button" data-i18n-aria-label="action.resetMap">⌖</button></div>
-          <section id="mapPopup" class="map-popup hidden" role="dialog" aria-modal="false" aria-labelledby="mapPopupTitle" aria-describedby="mapPopupSummary" tabindex="-1" hidden>
-            <div class="map-popup-head"><div><h2 id="mapPopupTitle">—</h2><p id="mapPopupSummary">—</p></div><button id="mapPopupClose" type="button" data-i18n-aria-label="action.closeMapCard">×</button></div>
-            <div id="mapPopupState" class="selection-state" role="status"></div><div id="mapPopupFields" class="map-popup-fields"></div><div class="map-popup-actions"><button id="mapPopupAddMonitoring" class="secondary-action" type="button" hidden></button><button id="mapPopupOpenLine" class="primary-action" type="button" hidden></button></div>
-          </section>
-          <div class="map-meta"><span><b id="mapVisibleSchoolCount">—</b> <span data-i18n="map.visibleSchools"></span></span><span><b id="mapAttentionCount">—</b> <span data-i18n="map.attentionSchools"></span></span><span class="visually-hidden"><b id="lineCount">0</b> <span data-i18n="map.lineCount"></span></span><span class="visually-hidden" id="mapVisibleCount">0</span><span id="mapModeLabel"></span><span id="mapFooterNote"></span></div>
-          <p id="mapError" class="state-message error" role="alert" hidden></p>
-        </section>
-        <div class="shell-top-left" data-i18n-aria-label="app.sections">
-          <div class="shell-logo" aria-label="LINKWATCH"><span class="shell-logo-mark" aria-hidden="true"></span><span class="visually-hidden">LINKWATCH</span></div>
+        <aside class="app-rail" data-i18n-aria-label="app.sections">
+          <a class="brand-lockup" href="#map" aria-label="LINKWATCH">
+            <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+            <span class="brand-name">LINKWATCH</span>
+          </a>
           <nav id="primaryNav" class="primary-nav" data-i18n-aria-label="app.sections">
-            <button class="reference-nav-item" data-route="map" type="button" aria-current="page" data-i18n="nav.map"></button>
-            <button class="reference-nav-item" data-route="incidents" type="button" hidden data-i18n="nav.incidents"></button>
-            <button class="reference-nav-item" data-route="reports" type="button" hidden data-i18n="nav.reports"></button>
+            <button class="reference-nav-item" data-route="map" type="button" aria-current="page"><span class="nav-icon" data-icon="map"></span><span class="nav-label" data-i18n="nav.map">Карта</span></button>
+            <button class="reference-nav-item" data-route="incidents" type="button" hidden><span class="nav-icon" data-icon="alert"></span><span class="nav-label" data-i18n="nav.incidents">Инциденты</span></button>
+            <button class="reference-nav-item" data-route="reports" type="button" hidden><span class="nav-icon" data-icon="barChart"></span><span class="nav-label" data-i18n="nav.reports">Отчёты</span></button>
             <details id="navOverflow" class="nav-overflow">
-              <summary data-i18n-aria-label="app.sections">⋯</summary>
+              <summary data-i18n-aria-label="app.sections"><span class="nav-icon" data-icon="more"></span><span class="visually-hidden" data-i18n="nav.more">Ещё</span></summary>
               <div class="nav-overflow-menu">
                 <button class="reference-nav-item" data-route="incidents" type="button" hidden data-i18n="nav.incidents"></button>
                 <button class="reference-nav-item" data-route="reports" type="button" hidden data-i18n="nav.reports"></button>
               </div>
             </details>
           </nav>
-        </div>
-        <div class="shell-top-right" data-i18n-aria-label="app.tools">
-          <button id="themeToggle" class="reference-icon-button" type="button" data-i18n-aria-label="theme.switchToLight" data-i18n-title="theme.switchToLight">☼</button>
-          <button id="refreshButton" class="reference-icon-button" type="button" data-i18n-aria-label="action.refreshMap" data-i18n-title="action.refreshMap">↻</button>
-          <button id="notificationsButton" class="reference-icon-button" type="button" data-capability="notification.read" data-i18n-aria-label="notification.open" data-i18n-title="notification.open" aria-controls="notificationsSurface" aria-expanded="false">♢</button>
-          <details id="accountControl" class="account-control">
-            <summary id="accountButton" class="account-button" data-i18n-aria-label="app.account"><span id="sessionUser">—</span></summary>
-            <div class="account-menu">
-              <span id="sessionRole" class="account-role">—</span>
-              <button id="adminMenuButton" data-route="admin" data-capability="admin.manage" type="button" hidden data-i18n="nav.admin"></button>
-              <button id="auditMenuButton" data-route="audit" data-capability="audit.read" type="button" hidden data-i18n="nav.audit"></button>
-              <button id="logoutButton" type="button" data-i18n="action.signOut"></button>
+          <div class="app-rail-footer">
+            <span class="app-status-dot" aria-hidden="true"></span>
+            <span class="visually-hidden" id="railStatusText" data-i18n="app.connected">Система подключена</span>
+          </div>
+        </aside>
+
+        <section class="app-main">
+          <header class="workspace-topbar" data-i18n-aria-label="app.tools">
+            <div class="route-context">
+              <span class="route-kicker">LINKWATCH <span class="route-kicker-dot" aria-hidden="true"></span> OPERATIONS</span>
+              <h1 id="workspaceRouteTitle" data-i18n="nav.map">Карта</h1>
             </div>
-          </details>
-        </div>
-        <div id="mapLiveStatus" class="visually-hidden" aria-live="polite"></div>
-        <span id="operationalStatus" class="visually-hidden" role="status"></span>
-        <span id="registryDataStatus" class="visually-hidden" role="status"></span>
-        <section id="incidentsSurface" class="incidents-surface" aria-live="polite" hidden></section>
-        <section id="reportsSurface" class="reports-surface" aria-live="polite" hidden></section>
-        <section id="notificationsSurface" class="notification-surface" role="dialog" aria-modal="false" aria-labelledby="notificationsTitle" tabindex="-1" hidden></section>
-        <section id="adminSurface" class="secondary-surface" aria-live="polite" tabindex="-1" hidden></section>
-        <section id="auditSurface" class="secondary-surface" aria-live="polite" tabindex="-1" hidden></section>
+            <div class="header-tools">
+              <div class="locale-switch" role="group" data-i18n-aria-label="locale.switch">
+                <button type="button" data-locale="ru" data-i18n="locale.ru"></button>
+                <button type="button" data-locale="kk" data-i18n="locale.kk"></button>
+              </div>
+              <button id="themeToggle" class="reference-icon-button" type="button" data-i18n-aria-label="theme.switchToLight" data-i18n-title="theme.switchToLight"><span data-icon="sun"></span></button>
+              <button id="refreshButton" class="reference-icon-button" type="button" data-i18n-aria-label="action.refreshMap" data-i18n-title="action.refreshMap"><span data-icon="refresh"></span></button>
+              <button id="notificationsButton" class="reference-icon-button has-indicator" type="button" data-capability="notification.read" data-i18n-aria-label="notification.open" data-i18n-title="notification.open" aria-controls="notificationsSurface" aria-expanded="false"><span data-icon="bell"></span></button>
+              <details id="accountControl" class="account-control">
+                <summary id="accountButton" class="account-button" data-i18n-aria-label="app.account"><span class="account-avatar" aria-hidden="true" data-icon="user"></span><span class="account-copy"><span id="sessionUser">—</span><span id="sessionRole" class="account-role">—</span></span><span class="account-chevron" aria-hidden="true" data-icon="chevronDown"></span></summary>
+                <div class="account-menu">
+                  <button id="adminMenuButton" data-route="admin" data-capability="admin.manage" type="button" hidden><span data-icon="settings"></span><span data-i18n="nav.admin"></span></button>
+                  <button id="auditMenuButton" data-route="audit" data-capability="audit.read" type="button" hidden><span data-icon="history"></span><span data-i18n="nav.audit"></span></button>
+                  <button id="logoutButton" type="button"><span data-icon="logout"></span><span data-i18n="action.signOut"></span></button>
+                </div>
+              </details>
+            </div>
+          </header>
+
+          <div class="workspace-content">
+            <section id="mapWrap" class="map-workspace" data-i18n-aria-label="app.mapWorkspace">
+              <div id="leafletMap" class="leaflet-map" role="application" data-i18n-aria-label="app.regionMap"></div>
+              <form id="mapFilter" class="map-filter-island context-panel" data-i18n-aria-label="map.filter">
+                <div class="context-panel-head">
+                  <div><span class="surface-eyebrow" data-i18n="map.workspaceEyebrow">ОБЗОР СЕТИ</span><h2 data-i18n="nav.map">Карта</h2></div>
+                  <span class="live-chip"><span class="live-chip-dot" aria-hidden="true"></span><span data-i18n="map.live">LIVE</span></span>
+                </div>
+                <div class="map-search-wrap">
+                  <span class="field-leading-icon" aria-hidden="true" data-icon="search"></span>
+                  <label class="visually-hidden" for="schoolSearch" data-i18n="map.searchLabel"></label>
+                  <input id="schoolSearch" type="search" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="schoolSearchResults" aria-expanded="false" data-i18n-placeholder="map.searchPlaceholder" />
+                </div>
+                <div id="schoolSearchResults" class="school-search-results" role="listbox" data-i18n-aria-label="map.searchResults" hidden></div>
+                <p id="mapFilterStatus" class="map-filter-status" role="status" hidden></p>
+                <details class="map-filter-details">
+                  <summary><span class="field-leading-icon" aria-hidden="true" data-icon="filter"></span><span data-i18n="map.filter">Фильтры</span><span class="summary-chevron" aria-hidden="true" data-icon="chevronDown"></span></summary>
+                  <div class="map-filter-fields">
+                    <label for="districtFilter" data-i18n="field.district"></label><select id="districtFilter"></select>
+                    <label for="providerFilter" data-i18n="field.provider"></label><select id="providerFilter"></select>
+                    <label for="statusFilter" data-i18n="field.status"></label><select id="statusFilter"></select>
+                    <label for="coverageFilter" data-i18n="map.coverage"></label><select id="coverageFilter"><option value="all" data-i18n="map.allSchools"></option><option value="monitored" data-i18n="map.monitored"></option></select>
+                    <label for="mapListMode" data-i18n="map.state"></label><select id="mapListMode"><option value="current" data-i18n="map.current"></option><option value="historical" data-i18n="map.historical"></option></select>
+                    <button id="mapFiltersReset" class="link-action" type="button"><span data-icon="refresh"></span><span data-i18n="action.resetFilters"></span></button>
+                  </div>
+                </details>
+                <div class="context-panel-footer"><span class="context-stat"><strong id="mapVisibleSchoolCount">—</strong><span data-i18n="map.visibleSchools"></span></span><span class="context-stat attention"><strong id="mapAttentionCount">—</strong><span data-i18n="map.attentionSchools"></span></span></div>
+              </form>
+              <div id="mapTileStatus" class="map-tile-status" role="status" hidden></div>
+              <div class="map-tools" data-i18n-aria-label="map.controls"><button id="mapZoomIn" type="button" data-i18n-aria-label="action.zoomIn"><span data-icon="plus"></span></button><button id="mapZoomOut" type="button" data-i18n-aria-label="action.zoomOut"><span data-icon="minus"></span></button><button id="mapReset" type="button" data-i18n-aria-label="action.resetMap"><span data-icon="locate"></span></button></div>
+              <section id="mapPopup" class="map-popup hidden" role="dialog" aria-modal="false" aria-labelledby="mapPopupTitle" aria-describedby="mapPopupSummary" tabindex="-1" hidden>
+                <div class="map-popup-head"><div><span class="surface-eyebrow" data-i18n="map.selection">ВЫБОР НА КАРТЕ</span><h2 id="mapPopupTitle">—</h2><p id="mapPopupSummary">—</p></div><button id="mapPopupClose" class="icon-close" type="button" data-i18n-aria-label="action.closeMapCard"><span data-icon="x"></span></button></div>
+                <div id="mapPopupState" class="selection-state" role="status"></div><div id="mapPopupFields" class="map-popup-fields"></div><div class="map-popup-actions"><button id="mapPopupAddMonitoring" class="secondary-action" type="button" hidden></button><button id="mapPopupOpenLine" class="primary-action" type="button" hidden></button></div>
+              </section>
+              <div class="map-meta"><span id="mapModeLabel"></span><span id="mapFooterNote"></span><span class="visually-hidden"><b id="lineCount">0</b> <span data-i18n="map.lineCount"></span></span><span class="visually-hidden" id="mapVisibleCount">0</span></div>
+              <p id="mapError" class="state-message error" role="alert" hidden></p>
+            </section>
+            <div id="mapLiveStatus" class="visually-hidden" aria-live="polite"></div>
+            <span id="operationalStatus" class="visually-hidden" role="status"></span>
+            <span id="registryDataStatus" class="visually-hidden" role="status"></span>
+            <section id="incidentsSurface" class="incidents-surface" aria-live="polite" hidden></section>
+            <section id="reportsSurface" class="reports-surface" aria-live="polite" hidden></section>
+            <section id="notificationsSurface" class="notification-surface" role="dialog" aria-modal="false" aria-labelledby="notificationsTitle" tabindex="-1" hidden></section>
+            <section id="adminSurface" class="secondary-surface" aria-live="polite" tabindex="-1" hidden></section>
+            <section id="auditSurface" class="secondary-surface" aria-live="polite" tabindex="-1" hidden></section>
+          </div>
+        </section>
       </section>
+
       <div id="authBackdrop" class="auth-backdrop" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <form id="loginForm" class="auth-form">
-          <p class="eyebrow">LINKWATCH</p><h1 id="authTitle" data-i18n="auth.title"></h1><p id="authMessage" class="state-message"></p>
+          <div class="auth-brand"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span><span>LINKWATCH</span></div>
+          <p class="eyebrow" data-i18n="auth.eyebrow">ОПЕРАЦИОННЫЙ КОНТУР</p><h1 id="authTitle" data-i18n="auth.title"></h1><p id="authMessage" class="state-message"></p>
           <label for="loginUsername" data-i18n="field.username"></label><input id="loginUsername" name="username" autocomplete="username" required />
           <label for="loginPassword" data-i18n="field.password"></label><input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
-          <button id="loginSubmit" class="primary-action" type="submit" data-i18n="action.signIn"></button>
+          <button id="loginSubmit" class="primary-action" type="submit"><span data-icon="arrowRight"></span><span data-i18n="action.signIn"></span></button>
+          <p class="auth-footnote"><span class="auth-footnote-dot" aria-hidden="true"></span><span data-i18n="auth.secureWorkspace">Данные доступны только авторизованной рабочей группе</span></p>
         </form>
       </div>
       <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
       <aside id="detailDrawer" class="detail-drawer" role="dialog" aria-modal="true" aria-hidden="true" hidden aria-labelledby="drawerTitle" tabindex="-1">
-        <div class="drawer-head"><div><h2 id="drawerTitle">—</h2><p id="drawerSubtitle">—</p></div><button id="drawerClose" type="button" data-i18n-aria-label="action.closeLineCard">×</button></div>
+        <div class="drawer-head"><div><span class="surface-eyebrow" data-i18n="map.lineDetail">ДЕТАЛИ ЛИНИИ</span><h2 id="drawerTitle">—</h2><p id="drawerSubtitle">—</p></div><button id="drawerClose" class="icon-close" type="button" data-i18n-aria-label="action.closeLineCard"><span data-icon="x"></span></button></div>
         <div id="drawerState" class="selection-state" role="status"></div><div id="drawerStatus" class="drawer-section"></div><dl id="drawerContext" class="drawer-grid"></dl><dl id="drawerLine" class="drawer-grid"></dl><dl id="drawerMetrics" class="drawer-grid"></dl><dl id="drawerIncident" class="drawer-grid"></dl><section id="drawerEnrollment" class="drawer-section" aria-live="polite"></section>
       </aside>
       <div id="toastRegion" class="toast-region" aria-live="polite"></div>
     </main>
-    <script src="/static/vendor/leaflet/leaflet.js"></script><script src="/static/data-model.js"></script><script src="/static/map.js"></script><script type="module" src="/static/app.js?v=export-download-3"></script>
+    <script src="/static/vendor/leaflet/leaflet.js"></script><script src="/static/data-model.js"></script><script src="/static/map.js"></script><script type="module" src="/static/app.js?v=frontend-rebuild-1"></script>
   </body>
 </html>

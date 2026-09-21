@@ -1,6 +1,7 @@
 import { createApiClient } from "./core/api.mjs";
 import { createCapabilityState } from "./core/capabilities.mjs";
 import { createI18n } from "./core/i18n.mjs";
+import { hydrateIcons, iconMarkup } from "./core/icons.mjs";
 import { createPresentation, escapeHtml } from "./core/presentation.mjs";
 import { createShellRouter } from "./core/router.mjs";
 import { createSession } from "./core/session.mjs";
@@ -224,7 +225,17 @@ function localizeStaticContent() {
     control.setAttribute("aria-label", `${i18n.t("locale.switch")}: ${i18n.t(control.dataset.locale === "kk" ? "locale.kk" : "locale.ru")}`);
     control.setAttribute("title", i18n.t(control.dataset.locale === "kk" ? "locale.kk" : "locale.ru"));
   });
+  hydrateIcons();
   renderThemeControl();
+}
+
+function hydrateRenderedControls(root) {
+  if (!root) return;
+  hydrateIcons(root);
+  root.querySelectorAll(".icon-close").forEach((control) => {
+    if (!control.querySelector("svg")) control.replaceChildren();
+    if (!control.querySelector("svg")) control.insertAdjacentHTML("beforeend", iconMarkup("x", { size: 18 }));
+  });
 }
 
 function renderThemeControl() {
@@ -232,11 +243,12 @@ function renderThemeControl() {
   if (!control) return;
   const switchTo = theme.theme === "dark" ? "light" : "dark";
   const key = "theme.switchTo" + (switchTo === "light" ? "Light" : "Dark");
-  control.textContent = switchTo === "light" ? "☼" : "☾";
+  control.replaceChildren();
+  control.insertAdjacentHTML("beforeend", iconMarkup(switchTo === "light" ? "sun" : "moon", { size: 18 }));
   control.dataset.theme = theme.theme;
   control.setAttribute("aria-label", i18n.t(key));
   control.setAttribute("title", i18n.t(key));
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.theme === "light" ? "#eef0ee" : "#08131f");
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", theme.theme === "light" ? "oklch(96% 0.012 150)" : "oklch(20% 0.025 250)");
 }
 
 function refreshTheme() {
@@ -277,6 +289,8 @@ function renderRoute(snapshot = router.getState()) {
   const workspace = $("#authenticatedWorkspace");
   if (workspace) workspace.dataset.route = snapshot.view;
   document.documentElement.dataset.route = snapshot.view;
+  const routeTitle = $("#workspaceRouteTitle");
+  if (routeTitle) routeTitle.textContent = i18n.t("nav." + snapshot.view);
   document.querySelectorAll("[data-route]").forEach((button) => {
     const active = button.dataset.route === snapshot.view;
     if (active) button.setAttribute("aria-current", "page");
@@ -1085,7 +1099,7 @@ function renderIncidentCreateForm() {
   }).join("");
   const busy = view.createState === "saving";
   const error = view.createError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.createError)) + "</p>" : "";
-  return '<section class="incident-create-panel"><div class="incident-create-heading"><div><h2>' + escapeHtml(i18n.t("incidents.createTitle")) + '</h2><p>' + escapeHtml(i18n.t("incidents.subtitle")) + '</p></div><button class="icon-close" type="button" data-incident-create-cancel aria-label="' + escapeHtml(i18n.t("incidents.createCancel")) + '">×</button></div><form class="incident-create-form" data-incident-create><label>' + escapeHtml(i18n.t("incidents.createLine")) + '<select name="line_id" required' + (busy ? " disabled" : "") + ">" + lineOptions + '</select></label><label>' + escapeHtml(i18n.t("incidents.createType")) + '<select name="violation_type" required' + (busy ? " disabled" : "") + '><option value="MANUAL_REVIEW"' + (draft.violation_type === "MANUAL_REVIEW" ? " selected" : "") + '>' + escapeHtml(i18n.t("incidentType.MANUAL_REVIEW")) + '</option><option value="NO_INTERNET"' + (draft.violation_type === "NO_INTERNET" ? " selected" : "") + '>' + escapeHtml(i18n.t("incidentType.NO_INTERNET")) + '</option></select></label><label class="incident-create-wide">' + escapeHtml(i18n.t("incidents.createDescription")) + '<textarea name="description" required maxlength="4000"' + (busy ? " disabled" : "") + '>' + escapeHtml(draft.description) + '</textarea></label><label>' + escapeHtml(i18n.t("incidents.createAssignee")) + '<input name="assignee" maxlength="255" placeholder="' + escapeHtml(i18n.t("incidents.createAssigneePlaceholder")) + '" value="' + escapeHtml(draft.assignee) + '"' + (busy ? " disabled" : "") + '></label><div class="incident-create-actions"><button class="secondary-action" type="button" data-incident-create-cancel' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("incidents.createCancel")) + '</button><button class="primary-action" type="submit"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("incidents.createSubmit")) + '</button></div></form>' + error + '</section>';
+  return '<section class="incident-create-panel"><div class="incident-create-heading"><div><h2>' + escapeHtml(i18n.t("incidents.createTitle")) + '</h2><p>' + escapeHtml(i18n.t("incidents.subtitle")) + '</p></div><button class="icon-close" type="button" data-incident-create-cancel aria-label="' + escapeHtml(i18n.t("incidents.createCancel")) + '">' + iconMarkup("x", { size: 18 }) + '</button></div><form class="incident-create-form" data-incident-create><label>' + escapeHtml(i18n.t("incidents.createLine")) + '<select name="line_id" required' + (busy ? " disabled" : "") + ">" + lineOptions + '</select></label><label>' + escapeHtml(i18n.t("incidents.createType")) + '<select name="violation_type" required' + (busy ? " disabled" : "") + '><option value="MANUAL_REVIEW"' + (draft.violation_type === "MANUAL_REVIEW" ? " selected" : "") + '>' + escapeHtml(i18n.t("incidentType.MANUAL_REVIEW")) + '</option><option value="NO_INTERNET"' + (draft.violation_type === "NO_INTERNET" ? " selected" : "") + '>' + escapeHtml(i18n.t("incidentType.NO_INTERNET")) + '</option></select></label><label class="incident-create-wide">' + escapeHtml(i18n.t("incidents.createDescription")) + '<textarea name="description" required maxlength="4000"' + (busy ? " disabled" : "") + '>' + escapeHtml(draft.description) + '</textarea></label><label>' + escapeHtml(i18n.t("incidents.createAssignee")) + '<input name="assignee" maxlength="255" placeholder="' + escapeHtml(i18n.t("incidents.createAssigneePlaceholder")) + '" value="' + escapeHtml(draft.assignee) + '"' + (busy ? " disabled" : "") + '></label><div class="incident-create-actions"><button class="secondary-action" type="button" data-incident-create-cancel' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("incidents.createCancel")) + '</button><button class="primary-action" type="submit"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("incidents.createSubmit")) + '</button></div></form>' + error + '</section>';
 }
 
 function renderIncidentsPreservingScroll() {
@@ -1112,6 +1126,7 @@ function renderIncidentsSurface() {
   }
   if (view.state === "error") {
     root.innerHTML = '<div class="incidents-shell"><h1>' + escapeHtml(i18n.t("incidents.title")) + '</h1><p class="surface-state error" role="alert">' + escapeHtml(i18n.t("incidents.unavailable")) + '</p><button class="secondary-action" type="button" data-incidents-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + "</button></div>";
+    hydrateRenderedControls(root);
     bindIncidentSurfaceEvents(root);
     return;
   }
@@ -1130,6 +1145,7 @@ function renderIncidentsSurface() {
 
   const canCreate = state.capabilities.has("incident.create");
   root.innerHTML = '<div class="incidents-shell"><header class="incidents-header"><div><h1>' + escapeHtml(i18n.t("incidents.title")) + "</h1><p>" + escapeHtml(i18n.t("incidents.subtitle")) + '</p></div><div class="surface-header-actions">' + (canCreate ? '<button class="primary-action" type="button" data-incident-create-open>' + escapeHtml(i18n.t("incidents.create")) + '</button>' : "") + '<button class="secondary-action" type="button" data-incidents-refresh>' + escapeHtml(i18n.t("incidents.refresh")) + '</button></div></header>' + renderIncidentCreateForm() + '<div class="incident-filters">' + filters + '<span class="incident-count">' + escapeHtml(i18n.t("incidents.count", { count: items.length })) + '</span></div><div class="incidents-layout"><section class="incidents-list" aria-label="' + escapeHtml(i18n.t("incidents.title")) + '"><div class="incident-row incident-row-head" aria-hidden="true"><span>' + escapeHtml(i18n.t("field.status")) + "</span><span>" + escapeHtml(i18n.t("field.school")) + "</span><span>" + escapeHtml(i18n.t("field.line")) + "</span><span>" + escapeHtml(i18n.t("incidents.started")) + "</span><span>" + escapeHtml(i18n.t("incidents.duration")) + "</span><span>" + escapeHtml(i18n.t("incidents.lastUpdate")) + "</span></div>" + list + '</section><aside class="incident-detail" aria-live="polite">' + renderIncidentDetail() + "</aside></div></div>";
+  hydrateRenderedControls(root);
   bindIncidentSurfaceEvents(root);
 }
 
@@ -1346,10 +1362,7 @@ function renderNotificationButton() {
   const summary = notificationSummary(view.items, view.seenIDs);
   const count = summary.unseen.length;
   button.replaceChildren();
-  const icon = document.createElement("span");
-  icon.textContent = "♢";
-  icon.setAttribute("aria-hidden", "true");
-  button.appendChild(icon);
+  button.insertAdjacentHTML("beforeend", iconMarkup("bell", { size: 18 }));
   if (count > 0) {
     const indicator = document.createElement("span");
     indicator.className = "notification-indicator";
@@ -1366,7 +1379,7 @@ function renderNotificationButton() {
 
 function notificationHeader(view, withRefresh = false) {
   const refresh = withRefresh ? '<button type="button" class="secondary-action utility-refresh" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + "</button>" : "";
-  return '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div>' + refresh + '<button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">×</button></div></header>';
+  return '<header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div>' + refresh + '<button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">' + iconMarkup("x", { size: 18 }) + '</button></div></header>';
 }
 
 function ingestNotifications(items) {
@@ -1410,13 +1423,14 @@ function renderNotificationsSurface() {
       const notification = presentNotification(item, { i18n, presentation, capabilities: state.capabilities, pending });
       const serverRead = notificationIsServerRead(item);
       const scope = notification.scopeAvailable ? "" : '<p class="notification-scope">' + escapeHtml(i18n.t("notification.scopeUnavailable")) + "</p>";
+      const technical = notification.technical ? '<details class="notification-technical"><summary>' + escapeHtml(i18n.t("notification.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(notification.technical, null, 2)) + '</pre></details>' : "";
       const attempts = notification.attempts == null ? "" : '<small>' + escapeHtml(i18n.t("notification.attempts", { count: notification.attempts })) + "</small>";
       const next = notification.nextAttemptLabel ? '<small>' + escapeHtml(i18n.t("notification.nextAttempt")) + ": " + escapeHtml(notification.nextAttemptLabel) + "</small>" : "";
       const dispatch = availableNotification.actions?.canDispatch && notification.id != null ? '<button type="button" class="secondary-action" data-notification-dispatch="' + escapeHtml(notification.id) + '"' + (pending ? " disabled" : "") + '>' + escapeHtml(notificationDispatchLabel()) + "</button>" : "";
       const openIncidentAction = notification.incidentId && state.capabilities.canRead("incident") ? '<button type="button" class="link-action notification-open-incident" data-notification-incident="' + escapeHtml(notification.incidentId) + '">' + escapeHtml(i18n.t("notification.openIncident")) + "</button>" : "";
       const actionError = String(view.actionErrorId) === String(item?.id) && view.actionError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.actionError)) + "</p>" : "";
       const place = notification.placeLabel ? '<small class="notification-place">' + escapeHtml(notification.placeLabel) + "</small>" : "";
-      return '<article class="notification-item" data-server-read="' + String(serverRead) + '"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p>' + place + '<small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + '<div class="notification-actions">' + openIncidentAction + dispatch + '</div>' + actionError + '</article>';
+      return '<article class="notification-item" data-server-read="' + String(serverRead) + '"><div class="notification-item-head"><strong>' + escapeHtml(notification.sourceLabel) + '</strong><span>' + escapeHtml(notification.deliveryLabel) + '</span></div><p>' + escapeHtml(notification.message) + '</p>' + place + '<small>' + escapeHtml(notification.generatedLabel) + '</small>' + attempts + next + scope + technical + '<div class="notification-actions">' + openIncidentAction + dispatch + '</div>' + actionError + '</article>';
     }).join("");
     root.innerHTML = notificationHeader(view, true) + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("notification.empty")) + "</p>");
   }
@@ -1740,7 +1754,7 @@ function renderDeviceCredentialDialog(view) {
   const config = `LINKWATCH_SERVER_URL=${credential.serverURL}\nLINKWATCH_DEVICE_ID=${credential.deviceID}\nLINKWATCH_DEVICE_TOKEN=${credential.deviceToken}`;
   const cli = `LINKWATCH_SERVER_URL=${credential.serverURL} LINKWATCH_DEVICE_ID=${credential.deviceID} LINKWATCH_DEVICE_TOKEN=<token> linkwatch-agent run`;
   const field = (key, value) => '<div class="credential-field"><div><dt>' + escapeHtml(i18n.t(key)) + '</dt><dd><code>' + escapeHtml(value) + '</code></dd></div><button type="button" class="secondary-action" data-admin-copy="' + escapeHtml(value) + '">' + escapeHtml(i18n.t("admin.copy")) + '</button></div>';
-  return '<div class="admin-credential-backdrop" role="presentation"><section class="admin-credential-dialog" role="dialog" aria-modal="true" aria-labelledby="adminCredentialTitle"><header><div><h2 id="adminCredentialTitle">' + escapeHtml(i18n.t("admin.credentialsTitle")) + '</h2><p>' + escapeHtml(i18n.t("admin.credentialsWarning")) + '</p></div><button type="button" class="icon-close" data-admin-credentials-close aria-label="' + escapeHtml(i18n.t("admin.closeCredentials")) + '">×</button></header><dl>' + field("admin.deviceID", credential.deviceID) + field("admin.deviceToken", credential.deviceToken) + field("admin.serverURL", credential.serverURL) + '</dl><label class="credential-example"><span>' + escapeHtml(i18n.t("admin.configExample")) + '</span><textarea readonly>' + escapeHtml(config) + '</textarea><button type="button" class="secondary-action" data-admin-copy="' + escapeHtml(config) + '">' + escapeHtml(i18n.t("admin.copy")) + '</button></label><p class="credential-example-label">' + escapeHtml(i18n.t("admin.cliExample")) + '</p><code class="credential-cli">' + escapeHtml(cli) + '</code><button type="button" class="primary-action" data-admin-credentials-close>' + escapeHtml(i18n.t("admin.closeCredentials")) + '</button></section></div>';
+  return '<div class="admin-credential-backdrop" role="presentation"><section class="admin-credential-dialog" role="dialog" aria-modal="true" aria-labelledby="adminCredentialTitle"><header><div><h2 id="adminCredentialTitle">' + escapeHtml(i18n.t("admin.credentialsTitle")) + '</h2><p>' + escapeHtml(i18n.t("admin.credentialsWarning")) + '</p></div><button type="button" class="icon-close" data-admin-credentials-close aria-label="' + escapeHtml(i18n.t("admin.closeCredentials")) + '">' + iconMarkup("x", { size: 18 }) + '</button></header><dl>' + field("admin.deviceID", credential.deviceID) + field("admin.deviceToken", credential.deviceToken) + field("admin.serverURL", credential.serverURL) + '</dl><label class="credential-example"><span>' + escapeHtml(i18n.t("admin.configExample")) + '</span><textarea readonly>' + escapeHtml(config) + '</textarea><button type="button" class="secondary-action" data-admin-copy="' + escapeHtml(config) + '">' + escapeHtml(i18n.t("admin.copy")) + '</button></label><p class="credential-example-label">' + escapeHtml(i18n.t("admin.cliExample")) + '</p><code class="credential-cli">' + escapeHtml(cli) + '</code><button type="button" class="primary-action" data-admin-credentials-close>' + escapeHtml(i18n.t("admin.closeCredentials")) + '</button></section></div>';
 }
 
 function renderAdminDemoControls(view) {
@@ -1797,7 +1811,7 @@ function renderAdminSurface() {
   const rows = visibleItems.map((item) => {
     const id = adminRecordId(item);
     const presented = presentAdminRecord(view.resource, item, { i18n, presentation });
-    const cells = presented.fields.map((field) => '<div><dt>' + escapeHtml(field.label) + '</dt><dd>' + escapeHtml(field.value) + "</dd></div>").join("");
+    const cells = presented.fields.map((field) => '<div><dt>' + escapeHtml(field.label) + '</dt><dd>' + escapeHtml(field.value) + "</dd></div>").join("") + '<div class="admin-technical"><details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(presented.technical, null, 2)) + '</pre></details></div>';
     const edit = resourceDefinition?.supportsUpdate && view.resource !== "schedule" && id ? '<button type="button" class="link-action" data-admin-edit="' + escapeHtml(String(id)) + '"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.edit")) + "</button>" : "";
     const deviceDisabled = mutationBusy ? " disabled" : "";
     const deviceActions = view.resource === "devices" && id ? '<div class="admin-device-actions"><button type="button" class="link-action" data-admin-device-action="block" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.block")) + '</button><button type="button" class="link-action" data-admin-device-action="unblock" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.unblock")) + '</button><button type="button" class="link-action" data-admin-device-action="rotate-token" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.rotateToken")) + "</button></div>" : "";
@@ -1814,7 +1828,10 @@ function renderAdminSurface() {
   const toolbar = '<form class="admin-toolbar" data-admin-filter><label>' + escapeHtml(i18n.t("admin.resource")) + '<select data-admin-resource' + (mutationBusy ? " disabled" : "") + '>' + options + '</select></label><label class="admin-search-field">' + escapeHtml(i18n.t("admin.search")) + '<input type="search" name="search" value="' + escapeHtml(view.search) + '" placeholder="' + escapeHtml(i18n.t("admin.searchPlaceholder")) + '"></label><button type="submit" class="secondary-action">' + escapeHtml(i18n.t("admin.searchAction")) + '</button>' + (view.search ? '<button type="button" class="link-action admin-search-reset" data-admin-search-reset>' + escapeHtml(i18n.t("action.resetFilters")) + '</button>' : "") + '</form>';
   const records = rows ? '<div class="admin-records">' + rows + '</div>' : '<p class="surface-state">' + escapeHtml(i18n.t(view.search ? "admin.noSearchResults" : "admin.empty")) + '</p>';
   const preview = supportsImpactPreview && view.preview ? '<div class="admin-preview"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><p>' + escapeHtml(i18n.t("admin.previewReady")) + '</p><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("reports.measurements")) + '</dt><dd>' + escapeHtml(String(view.preview?.result?.measurements ?? view.preview?.input?.measurement_count ?? i18n.t("empty.noData"))) + '</dd></div><div><dt>' + escapeHtml(i18n.t("field.lines")) + '</dt><dd>' + escapeHtml(String(view.preview?.input?.line_count ?? i18n.t("empty.noData"))) + '</dd></div><div><dt>' + escapeHtml(i18n.t("admin.status")) + '</dt><dd>' + escapeHtml(presentation.status(view.preview?.status).label) + '</dd></div></dl></div>' : "";
+  const adminTechnicalDetails = '<details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(view.payload) + '</pre>' + (view.preview ? '<pre>' + escapeHtml(JSON.stringify(view.preview, null, 2)) + '</pre>' : "") + '</details>';
   root.innerHTML = '<div class="secondary-shell" data-admin-resource-context="' + escapeHtml(resourceContext) + '">' + header + renderAdminDemoControls(view) + toolbar + modeBar + editor + message + preview + '<h2 class="admin-list-title">' + escapeHtml(i18n.t("admin.records")) + '</h2>' + records + '</div>' + renderDeviceCredentialDialog(view);
+  hydrateRenderedControls(root);
+  root.querySelector(".admin-editor")?.insertAdjacentHTML("beforeend", adminTechnicalDetails);
   hydrateAdminEditorFields(root, view, resourceDefinition, editorMode);
   pruneUnavailableDeviceActions(root, view);
   bindAdminSurfaceEvents(root);
@@ -2101,7 +2118,7 @@ async function runAdminImpactPreview() {
   state.admin.mutationState = "saving";
   state.admin.preview = null;
   state.admin.message = "";
-  renderAdminPreservingScroll();
+  renderAdminSurface();
   try {
     state.admin.preview = objectPayload(await boundaries.admin.impactPreview(parsed.payload));
     state.admin.message = "admin.previewReady";
@@ -2145,7 +2162,7 @@ function auditMatchesSearch(item, query) {
 function renderAuditSelection(item) {
   if (!item) return '<aside class="audit-selection" aria-live="polite"><h2>' + escapeHtml(i18n.t("audit.title")) + '</h2><p class="surface-state">' + escapeHtml(i18n.t("audit.selectHint")) + "</p></aside>";
   const entry = presentAuditItem(item, { i18n, presentation });
-  const changes = entry.changes.length ? '<div class="audit-changes"><h3>' + escapeHtml(i18n.t("audit.changedFields")) + '</h3><dl>' + entry.changes.map((change) => '<div><dt>' + escapeHtml(change.label) + '</dt><dd><span>' + escapeHtml(change.before) + '</span><b aria-hidden="true">→</b><span>' + escapeHtml(change.after) + '</span></dd></div>').join("") + '</dl></div>' : "";
+  const changes = entry.changes.length ? '<div class="audit-changes"><h3>' + escapeHtml(i18n.t("audit.changedFields")) + '</h3><dl>' + entry.changes.map((change) => '<div><dt>' + escapeHtml(change.label) + '</dt><dd><span>' + escapeHtml(change.before) + '</span><b class="audit-change-arrow" aria-hidden="true">' + iconMarkup("arrowRight", { size: 14 }) + '</b><span>' + escapeHtml(change.after) + '</span></dd></div>').join("") + '</dl></div>' : "";
   const technicalPayload = entry.payload || {
     action: entry.rawAction,
     object_type: entry.rawObjectType,
