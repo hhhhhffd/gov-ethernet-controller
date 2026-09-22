@@ -1,9 +1,20 @@
 package api
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
+
+func TestNotificationDispatchRejectsNonPost(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/notifications/1/dispatch", nil)
+	(&Server{}).notificationDispatch(recorder, request, nil, "1")
+	if recorder.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET notification dispatch status = %d, want %d", recorder.Code, http.StatusMethodNotAllowed)
+	}
+}
 
 func TestSituationEvidenceStateExplicitAbsenceAndUnknown(t *testing.T) {
 	if got := situationEvidenceState(nil, nil); got != "NO_DATA" {

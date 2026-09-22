@@ -668,6 +668,12 @@ func (s *Server) providerCaseRoute(w http.ResponseWriter, r *http.Request, rest 
 		writeError(w, 404, "provider case not found")
 		return
 	}
+	if parts[1] == "send" || parts[1] == "retry" || parts[1] == "ai-draft" {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+	}
 	p, ok := s.principal(w, r)
 	if !ok {
 		return

@@ -464,6 +464,10 @@ func notificationLimit(value string) int {
 }
 
 func (s *Server) notificationDispatch(w http.ResponseWriter, r *http.Request, p *auth.Principal, id string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 	if !requireAdmin(w, p) {
 		return
 	}

@@ -690,13 +690,17 @@ func (s *Server) adminLines(w http.ResponseWriter, r *http.Request, p *auth.Prin
 	}
 	var payload linePayload
 	payload.Role = "PRIMARY"
-	payload.Status = "ACTIVE"
+	// A line becomes operational only after its monitoring point and contract
+	// are persisted. Keeping a newly created line inactive makes the admin
+	// onboarding sequence safe to retry and prevents a partially configured
+	// line from entering the active monitoring set.
+	payload.Status = "INACTIVE"
 	if err := decodeJSON(r, &payload); err != nil || payload.ID == "" || payload.OrganizationID == "" || payload.Role == "" {
 		writeError(w, 422, "invalid line payload")
 		return
 	}
 	if payload.Status == "" {
-		payload.Status = "ACTIVE"
+		payload.Status = "INACTIVE"
 	}
 	if payload.Role != "PRIMARY" && payload.Role != "RESERVE" && payload.Role != "INACTIVE" {
 		writeError(w, 422, "unsupported line role")
