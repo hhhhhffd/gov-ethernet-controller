@@ -7,7 +7,7 @@ test("UI-001 visible controls are bound or are native form controls", () => {
   const app = fs.readFileSync("web/app.js", "utf8");
   const staticButtons = [...html.matchAll(/<button[^>]*id="([^"]+)"[^>]*>/g)].map((match) => match[1]);
   for (const id of staticButtons) {
-    assert.ok(app.includes(`#${id}`) || id === "adminMenuButton" || id === "auditMenuButton", `${id} must be bound or route-gated`);
+    assert.ok(app.includes(`#${id}`), `${id} must be bound or route-gated`);
   }
   for (const marker of ["data-incidents-refresh", "data-reports-refresh", "data-notifications-refresh", "data-admin-refresh", "data-audit-refresh", "data-admin-device-action", "data-provider-case-send"]) {
     assert.match(app, new RegExp(marker));

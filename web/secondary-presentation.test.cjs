@@ -73,8 +73,9 @@ test("NOTIFICATION-002 utility is capability-gated and has real loading/error/em
 test("ADMIN-001 and AUDIT-001 keep secondary routes capability-gated", () => {
   const app = fs.readFileSync("web/app.js", "utf8");
   const html = fs.readFileSync("web/index.html", "utf8");
-  assert.match(html, /id="adminMenuButton"[^>]*data-capability="admin\.manage"/);
-  assert.match(html, /id="auditMenuButton"[^>]*data-capability="audit\.read"/);
+  assert.doesNotMatch(html, /id="adminMenuButton"|id="auditMenuButton"/);
+  assert.match(html, /data-route="admin"[^>]*data-capability="admin\.manage"/);
+  assert.match(html, /data-route="audit"[^>]*data-capability="audit\.read"/);
   assert.match(app, /boundaries\.admin\.save/);
   assert.match(app, /boundaries\.audit\.agentVersions/);
   assert.match(app, /presentAuditItem/);
