@@ -23,7 +23,6 @@
             <button class="reference-nav-item" data-route="situations" data-capability="incident.read" type="button" hidden><span class="nav-icon" data-icon="situation"></span><span class="nav-label" data-i18n="nav.situations">Ситуации</span></button>
             <button class="reference-nav-item" data-route="cases" type="button" hidden><span class="nav-icon" data-icon="case"></span><span class="nav-label" data-i18n="nav.cases">Обращения</span></button>
             <button class="reference-nav-item" data-route="reports" data-capability="report.read" type="button" hidden><span class="nav-icon" data-icon="barChart"></span><span class="nav-label" data-i18n="nav.reports">Отчёты</span></button>
-            <button class="reference-nav-item" data-route="notifications" data-capability="notification.read" type="button" hidden><span class="nav-icon" data-icon="bell"></span><span class="nav-label" data-i18n="nav.notifications">Уведомления</span></button>
             <button class="reference-nav-item" data-route="admin" data-capability="admin.manage" type="button" hidden><span class="nav-icon" data-icon="settings"></span><span class="nav-label" data-i18n="nav.admin">Администрирование</span></button>
             <button class="reference-nav-item" data-route="audit" data-capability="audit.read" type="button" hidden><span class="nav-icon" data-icon="history"></span><span class="nav-label" data-i18n="nav.audit">Аудит</span></button>
             <details id="navOverflow" class="nav-overflow">
@@ -34,10 +33,6 @@
               </div>
             </details>
           </nav>
-          <div class="app-rail-footer">
-            <span class="app-status-dot" aria-hidden="true"></span>
-            <span class="visually-hidden" id="railStatusText" data-i18n="app.connected">Система подключена</span>
-          </div>
         </aside>
 
         <section class="app-main">
@@ -119,6 +114,7 @@
       <div id="authBackdrop" class="auth-backdrop" role="dialog" aria-modal="true" aria-labelledby="authTitle">
         <form id="loginForm" class="auth-form">
           <div class="auth-brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 42 42"><path d="M12.2 20.2h-1.3a6.1 6.1 0 0 1 0-12.2h7.6a6.1 6.1 0 0 1 5.7 3.9"></path><path d="M29.8 21.8h1.3a6.1 6.1 0 0 1 0 12.2h-7.6a6.1 6.1 0 0 1-5.7-3.9"></path><path d="m15.7 26.3 10.6-10.6"></path><rect x="18.1" y="18.1" width="5.8" height="5.8" rx="2"></rect></svg></span><span>LINKWATCH</span></div>
+          <div class="auth-locale-switch locale-switch" role="group" data-i18n-aria-label="locale.switch"><button type="button" data-locale="ru" data-i18n="locale.ru"></button><button type="button" data-locale="kk" data-i18n="locale.kk"></button></div>
           <p class="eyebrow" data-i18n="auth.eyebrow">ОПЕРАЦИОННЫЙ КОНТУР</p><h1 id="authTitle" data-i18n="auth.title"></h1><p id="authMessage" class="state-message"></p>
           <label for="loginUsername" data-i18n="field.username"></label><input id="loginUsername" name="username" autocomplete="username" required />
           <label for="loginPassword" data-i18n="field.password"></label><input id="loginPassword" name="password" type="password" autocomplete="current-password" required />

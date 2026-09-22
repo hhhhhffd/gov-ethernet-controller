@@ -25,7 +25,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const OPERATIONAL_POLL_INTERVAL_MS = 5_000;
 const state = {
   capabilities: createCapabilityState(null), mapPopupContext: null, mapPopupTrigger: null, mapPopupAnchor: null, selectedSchool: null, enrollment: { open: false, state: "idle", pointID: "", lineID: "", result: null },
-  mapInitialized: false, mapLoaded: false, mapLoadPromise: null, operationalPollTimer: null, toastTimer: null, drawerTrigger: null, drawerFocusSet: false, drawerTab: "summary", schoolDetailStates: { lineID: "", state: "idle", items: [] },
+  mapInitialized: false, mapLoaded: false, mapLoadPromise: null, operationalPollTimer: null, toastTimer: null, drawerTrigger: null, drawerFocusSet: false, drawerRequestID: 0, drawerTab: "summary", schoolDetailStates: { lineID: "", state: "idle", items: [] },
   notificationsTrigger: null, searchActiveIndex: -1,
   incidents: createIncidentSurfaceState(),
   reports: createReportsSurfaceState(),
@@ -98,7 +98,6 @@ const router = createShellRouter({
     if (view === "reports") return state.capabilities.canRead("report");
     if (view === "admin") return state.capabilities.has("admin.manage");
     if (view === "audit") return state.capabilities.has("audit.read");
-    if (view === "notifications") return state.capabilities.has("notification.read");
     return true;
   },
   onChange: renderRoute,
@@ -316,7 +315,6 @@ function renderRoute(snapshot = router.getState()) {
   }
   if (["incidents", "situations"].includes(snapshot.view)) loadIncidents();
   if (snapshot.view === "reports") loadReports();
-  if (snapshot.view === "notifications") loadNotifications();
   if (snapshot.view === "cases") loadProviderCases();
   if (snapshot.view === "admin") loadAdminResource();
   if (snapshot.view === "audit") loadAuditLog();
@@ -334,7 +332,6 @@ function renderPrimaryNav() {
     situations: state.capabilities.canRead("incident"),
     cases: state.capabilities.canAny(["provider_case.draft", "provider_case.send"]),
     reports: state.capabilities.canRead("report"),
-    notifications: state.capabilities.has("notification.read"),
     admin: state.capabilities.has("admin.manage"),
     audit: state.capabilities.has("audit.read"),
   };
@@ -482,6 +479,7 @@ function reconcileOperationalMapSelection() {
 
 async function refreshOpenLineDetail() {
   if ($("#detailDrawer")?.hidden) return;
+  const requestID = state.drawerRequestID;
   const line = selectedLine(state.selectedSchool);
   if (!line?.id) return;
   const lineID = line.id;
@@ -489,7 +487,7 @@ async function refreshOpenLineDetail() {
     const payload = await lines.get(lineID);
     const current = state.selectedSchool;
     const currentLine = selectedLine(current);
-    if (!current || String(currentLine?.id) !== String(lineID)) return;
+    if (state.drawerRequestID !== requestID || $("#detailDrawer")?.hidden || !current || String(currentLine?.id) !== String(lineID)) return;
     state.selectedSchool = { ...current, detail: mergeLineDetail(currentLine, payload), detailState: "ready" };
     renderSchoolDrawer(state.selectedSchool);
   } catch (error) {
@@ -786,7 +784,7 @@ function lineSelector(linesAtSchool, selectedLineId) {
   return "<div><dt>" + escapeHtml(i18n.t("field.lines")) + "</dt><dd>" + linesAtSchool.map((line) => {
     const active = line.id === selectedLineId;
     const role = line.role ? presentation.role(line.role) : i18n.t("field.line");
-    return '<button type="button" class="map-member" data-popup-line-id="' + escapeHtml(line.id) + '" aria-pressed="' + active + '">' + '<span>' + escapeHtml(role) + '</span><small>' + escapeHtml([line.provider, presentation.connectionType(line.technology)].filter(Boolean).join(" · ")) + "</small></button>";
+    return '<button type="button" class="map-member" data-popup-line-id="' + escapeHtml(line.id) + '" aria-pressed="' + active + '">' + '<span>' + escapeHtml(role) + "</span></button>";
   }).join("") + "</dd></div>";
 }
 
@@ -917,10 +915,7 @@ function renderPopup(context) {
     const content = selected ? popupLine(selected) : null;
     title = popupSchoolName(selection?.school || school, selected || linesAtSchool[0]);
     summary = context.mode === "historical" ? i18n.t("map.historicalSource") : i18n.t("map.currentSource");
-    const technical = content?.technical?.length
-      ? '<details class="technical-details"><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><dl>' + mapFields(content.technical) + "</dl></details>"
-      : "";
-    fields.innerHTML = lineSelector(linesAtSchool, selection?.selectedLineId) + (content ? mapFields(content.fields) + technical : "");
+    fields.innerHTML = lineSelector(linesAtSchool, selection?.selectedLineId) + (content ? mapFields(content.fields) : "");
     if (stateElement) {
       stateElement.textContent = selected
         ? presentation.statusDescription(selected.linkwatchStatus || selected.status)
@@ -1407,6 +1402,7 @@ function bindEnrollmentPanel() {
 async function openSelectedSchoolDetail() {
   let selection = state.selectedSchool;
   if (!selection) return;
+  const requestID = ++state.drawerRequestID;
   state.drawerTab = "summary";
   state.schoolDetailStates = { lineID: "", state: "idle", items: [] };
   if (!state.drawerTrigger) state.drawerTrigger = state.mapPopupTrigger || (document.activeElement !== document.body ? document.activeElement : null);
@@ -1418,8 +1414,10 @@ async function openSelectedSchoolDetail() {
   renderSchoolDrawer(selection);
   try {
     const response = await lines.get(line.id);
+    if (state.drawerRequestID !== requestID || $("#detailDrawer")?.hidden) return;
     state.selectedSchool = { ...selection, detail: mergeLineDetail(line, response), detailState: "ready" };
   } catch (error) {
+    if (state.drawerRequestID !== requestID || $("#detailDrawer")?.hidden) return;
     state.selectedSchool = { ...selection, detailState: "error" };
   }
   renderSchoolDrawer();
@@ -1737,13 +1735,9 @@ function renderReportsSurface() {
   const preview = view.preview;
   const previewText = view.previewState === "error" ? i18n.t("reports.previewUnavailable") : preview ? i18n.t(preview.limited ? "reports.previewLimited" : "reports.previewRows", { count: preview.count }) : "";
   const exportPanel = '<section class="report-panel report-export"><h2>' + escapeHtml(i18n.t("reports.export")) + (canExport ? "</h2><form data-report-export><label>" + escapeHtml(i18n.t("reports.exportKind")) + '<select name="kind"><option value="raw">' + escapeHtml(i18n.t("reports.exportRaw")) + '</option><option value="aggregate">' + escapeHtml(i18n.t("reports.exportAggregate")) + '</select></label><label>' + escapeHtml(i18n.t("reports.exportFormat")) + '<select name="format"><option value="csv">CSV</option><option value="xlsx">XLSX</option><option value="json">JSON</option></select></label><button class="secondary-action" type="button" data-export-preview>' + escapeHtml(i18n.t("reports.preview")) + '</button><button class="primary-action" type="submit">' + escapeHtml(i18n.t("reports.download")) + "</button></form>" + (previewText ? '<p class="surface-state' + (view.previewState === "error" ? " error" : "") + '">' + escapeHtml(previewText) + (preview?.columns?.length ? " " + escapeHtml(i18n.t("reports.previewColumns")) + ": " + escapeHtml(reportColumnLabels(preview.columns).join(", ")) : "") + "</p>" : "") : '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.exportUnavailable")) + "</p>") + "</section>";
-  const reportTypes = [["aggregate", "reports.summary"], ["analytics", "reports.analytics"], ["passport", "reports.quality"], ["evidence", "reports.confirmation"], ["export", "reports.export"]];
-  if (!reportTypes.some(([type]) => type === view.reportType)) view.reportType = "aggregate";
-  const stage = view.reportType === "analytics" ? analyticsPanel : view.reportType === "passport" ? passportPanel : view.reportType === "evidence" ? evidencePanel : view.reportType === "export" ? exportPanel : '<div class="report-overview">' + aggregatePanel + '</div>';
-  const typeNav = reportTypes.map(([type, label]) => '<button type="button" class="report-type' + (view.reportType === type ? " active" : "") + '" data-report-type="' + escapeHtml(type) + '">' + escapeHtml(i18n.t(label)) + '</button>').join("");
-  root.innerHTML = '<div class="template-screen structural-surface workspace split template-workspace reports-workspace"><aside class="pane report-query-pane"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.reports")) + '</span><h1>' + escapeHtml(i18n.t("reports.title")) + '</h1><small>' + escapeHtml(i18n.t("reports.subtitle")) + '</small></div><button class="icon-button" type="button" data-reports-refresh aria-label="' + escapeHtml(i18n.t("reports.refresh")) + '">' + iconMarkup("refresh", { size: 17 }) + '</button></header><nav class="report-type-nav" aria-label="' + escapeHtml(i18n.t("reports.title")) + '">' + typeNav + '</nav>' + form + '</aside><main class="inspector report-stage" aria-live="polite">' + stage + '</main></div>';
-  const reportDetails = reportTechnicalDetails(reportDiagnostics);
-  if (reportDetails) root.querySelector(".reports-workspace")?.insertAdjacentHTML("beforeend", reportDetails);
+  const stage = '<div class="report-unified-stage"><div class="report-overview">' + aggregatePanel + '</div>' + analyticsPanel + passportPanel + evidencePanel + exportPanel + '</div>';
+  reportTechnicalDetails(reportDiagnostics);
+  root.innerHTML = '<div class="template-screen structural-surface workspace split template-workspace reports-workspace"><aside class="pane report-query-pane"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.reports")) + '</span><h1>' + escapeHtml(i18n.t("reports.title")) + '</h1><small>' + escapeHtml(i18n.t("reports.subtitle")) + '</small></div><button class="icon-button" type="button" data-reports-refresh aria-label="' + escapeHtml(i18n.t("reports.refresh")) + '">' + iconMarkup("refresh", { size: 17 }) + '</button></header>' + form + '</aside><main class="inspector report-stage" aria-live="polite">' + stage + '</main></div>';
   bindReportSurfaceEvents(root);
 }
 
@@ -1909,7 +1903,7 @@ function renderNotificationsState(root, view, stateName) {
   const loading = stateName === "loading";
   const message = i18n.t(loading ? "notification.loading" : "notification.unavailable");
   const action = loading ? "" : '<button type="button" class="primary-action" data-notifications-retry>' + escapeHtml(i18n.t("notification.refresh")) + "</button>";
-  root.innerHTML = '<div class="template-screen structural-surface workspace split template-workspace notification-workspace"><aside class="pane notification-list-pane"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.notifications")) + '</span><h1>' + escapeHtml(i18n.t("notification.title")) + '</h1></div><div class="panehead-actions"><button type="button" class="icon-button" data-notifications-refresh aria-label="' + escapeHtml(i18n.t("notification.refresh")) + '">' + iconMarkup("refresh", { size: 17 }) + '</button><button type="button" class="icon-button" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">' + iconMarkup("x", { size: 17 }) + '</button></div></header><div class="list template-list"><div class="surface-state' + (loading ? "" : " error") + '" role="status"><strong>' + escapeHtml(message) + '</strong>' + (loading ? "" : '<span>' + escapeHtml(i18n.t("notification.tryAgain")) + '</span>') + action + '</div></div></aside><section class="inspector template-inspector notification-inspector" aria-live="polite"><div class="empty-state"><strong>' + escapeHtml(i18n.t("notification.title")) + '</strong><span>' + escapeHtml(message) + '</span></div></section></div>';
+  root.innerHTML = '<div class="notification-popover notification-workspace"><header class="utility-header"><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><div><button type="button" class="secondary-action utility-refresh" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + '</button><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">' + iconMarkup("x", { size: 18 }) + '</button></div></header><div class="notification-list-pane"><div class="list template-list"><div class="surface-state' + (loading ? "" : " error") + '" role="status"><strong>' + escapeHtml(message) + '</strong>' + (loading ? "" : '<span>' + escapeHtml(i18n.t("notification.tryAgain")) + '</span>') + action + '</div></div></div></div>';
   root.querySelector("[data-notifications-close]")?.addEventListener("click", closeNotifications);
   root.querySelector("[data-notifications-refresh]")?.addEventListener("click", () => loadNotifications({ force: true }));
   root.querySelector("[data-notifications-retry]")?.addEventListener("click", () => loadNotifications({ force: true }));
@@ -1920,15 +1914,14 @@ function renderNotificationsSurface() {
   const button = $("#notificationsButton");
   const view = state.notifications;
   const allowed = state.capabilities.has("notification.read");
-  const routeActive = router.getState().view === "notifications";
   if (button) {
     button.hidden = !allowed;
-    button.setAttribute("aria-expanded", String(Boolean(allowed && (view.open || routeActive))));
+    button.setAttribute("aria-expanded", String(Boolean(allowed && view.open)));
   }
   renderNotificationButton();
   if (!root) return;
-  root.hidden = !allowed || (!view.open && !routeActive);
-  if (!allowed || (!view.open && !routeActive)) return;
+  root.hidden = !allowed || !view.open;
+  if (!allowed || !view.open) return;
   if (view.state === "idle" || view.state === "loading") {
     renderNotificationsState(root, view, "loading");
     return;
@@ -1939,32 +1932,25 @@ function renderNotificationsSurface() {
   }
   const availableStatuses = ["", ...new Set(["SENT", "PENDING", "FAILED", "GENERATED", "DELIVERING", "DELIVERY_FAILED", ...view.items.flatMap((item) => [item?.delivery_status, item?.status]).filter(Boolean).map((value) => String(value).toUpperCase())])];
   const filteredItems = view.items.filter((item) => !view.filterStatus || String(item?.delivery_status || item?.status || "").toUpperCase() === view.filterStatus);
-  if (!filteredItems.some((item) => String(item?.id) === String(view.selectedId))) view.selectedId = filteredItems[0]?.id || null;
   const rows = filteredItems.map((item) => {
     const notification = presentNotification(item, { i18n, presentation, capabilities: state.capabilities });
-    const selected = String(view.selectedId) === String(item?.id);
-    return '<article class="listitem notification-listitem' + (selected ? ' selected sel' : '') + '" data-notification-select="' + escapeHtml(item?.id) + '" data-server-read="' + String(notificationIsServerRead(item)) + '"><span class="noticeicon">' + iconMarkup(notification.sourceLabel === i18n.t("field.providerCase") ? "case" : "bell", { size: 17 }) + '</span><h3>' + escapeHtml(notification.sourceLabel) + '</h3><p>' + escapeHtml(notification.message) + '</p><div class="meta"><span class="status-pill notification-delivery">' + escapeHtml(notification.deliveryLabel) + '</span><span>' + escapeHtml(notification.generatedLabel) + '</span></div></article>';
+    const availableNotification = presentNotification(item, { i18n, presentation, capabilities: state.capabilities });
+    const pending = view.actionState !== "idle" && String(view.actionId) === String(item?.id);
+    const notificationMeta = '<span>' + escapeHtml(i18n.t("notification.channel")) + ': ' + escapeHtml(notification.channelLabel) + '</span><span>' + escapeHtml(i18n.t("notification.recipient")) + ': ' + escapeHtml(notification.recipientLabel) + '</span><span class="status-pill notification-delivery">' + escapeHtml(notification.deliveryLabel) + '</span><span>' + escapeHtml(notification.generatedLabel) + '</span>';
+    const openIncident = notification.incidentId && state.capabilities.canRead("incident")
+      ? '<button type="button" class="notification-open" data-notification-incident="' + escapeHtml(notification.incidentId) + '"><span class="notification-open-copy"><h3>' + escapeHtml(notification.sourceLabel) + '</h3><p>' + escapeHtml(notification.message) + '</p><span class="meta">' + notificationMeta + '</span></span></button>'
+      : '<div class="notification-open notification-open-static"><span class="notification-open-copy"><h3>' + escapeHtml(notification.sourceLabel) + '</h3><p>' + escapeHtml(notification.message) + '</p><span class="meta">' + notificationMeta + '</span></span></div>';
+    const dispatch = availableNotification.actions?.canDispatch && notification.id != null
+      ? '<button type="button" class="secondary-action" data-notification-dispatch="' + escapeHtml(notification.id) + '"' + (pending ? " disabled" : "") + '>' + escapeHtml(notificationDispatchLabel()) + '</button>'
+      : "";
+    const actionError = String(view.actionErrorId) === String(item?.id) && view.actionError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.actionError)) + '</p>' : "";
+    return '<article class="listitem notification-listitem" data-server-read="' + String(notificationIsServerRead(item)) + '"><span class="noticeicon">' + iconMarkup(notification.sourceLabel === i18n.t("field.providerCase") ? "case" : "bell", { size: 17 }) + '</span>' + openIncident + (dispatch || actionError ? '<div class="notification-row-actions">' + dispatch + actionError + '</div>' : "") + '</article>';
   }).join("");
-  const selectedItem = filteredItems.find((item) => String(item?.id) === String(view.selectedId)) || null;
-  let detail = '<div class="empty-state"><strong>' + escapeHtml(i18n.t("notification.title")) + '</strong><span>' + escapeHtml(i18n.t("incidents.select")) + '</span></div>';
-  if (selectedItem) {
-    const pending = view.actionState !== "idle" && String(view.actionId) === String(selectedItem?.id);
-    const availableNotification = presentNotification(selectedItem, { i18n, presentation, capabilities: state.capabilities });
-    const notification = presentNotification(selectedItem, { i18n, presentation, capabilities: state.capabilities, pending });
-    const scope = notification.scopeAvailable ? "" : '<p class="notification-scope">' + escapeHtml(i18n.t("notification.scopeUnavailable")) + '</p>';
-    const technical = notification.technical ? '<details class="notification-technical"><summary>' + escapeHtml(i18n.t("notification.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(notification.technical, null, 2)) + '</pre></details>' : "";
-    const attempts = notification.attempts == null ? "" : '<div><dt>' + escapeHtml(i18n.t("notification.attempts", { count: notification.attempts })) + '</dt><dd>' + escapeHtml(notification.nextAttemptLabel || i18n.t("empty.value")) + '</dd></div>';
-    const dispatch = availableNotification.actions?.canDispatch && notification.id != null ? '<button type="button" class="primary-action" data-notification-dispatch="' + escapeHtml(notification.id) + '"' + (pending ? " disabled" : "") + '>' + escapeHtml(notificationDispatchLabel()) + '</button>' : '';
-    const openIncidentAction = notification.incidentId && state.capabilities.canRead("incident") ? '<button type="button" class="secondary-action" data-notification-incident="' + escapeHtml(notification.incidentId) + '">' + escapeHtml(i18n.t("notification.openIncident")) + '</button>' : '';
-    const actionError = String(view.actionErrorId) === String(selectedItem?.id) && view.actionError ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(view.actionError)) + '</p>' : '';
-    detail = '<article class="notification-detail"><div class="inspector-top"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("notification.title")) + '</span><h2>' + escapeHtml(notification.sourceLabel) + '</h2><div class="inspector-sub">' + escapeHtml(notification.generatedLabel) + '</div></div><span class="status-pill notification-delivery">' + escapeHtml(notification.deliveryLabel) + '</span></div><p class="inspector-copy">' + escapeHtml(notification.message) + '</p><dl class="facts"><div class="fact"><span>' + escapeHtml(i18n.t("field.channel")) + '</span><b>' + escapeHtml(selectedItem?.channel || selectedItem?.delivery_channel || i18n.t("empty.value")) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("field.recipient")) + '</span><b>' + escapeHtml(selectedItem?.recipient || selectedItem?.recipient_label || selectedItem?.recipient_scope || i18n.t("empty.value")) + '</b></div>' + attempts + '</dl>' + scope + technical + '<div class="form-actions">' + openIncidentAction + dispatch + '</div>' + actionError + '</article>';
-  }
   const filterButtons = availableStatuses.map((status) => '<button type="button" class="' + (view.filterStatus === status ? "on" : "") + '" data-notification-filter="' + escapeHtml(status) + '">' + escapeHtml(status ? presentation.deliveryStatus(status) : i18n.t("incidents.anyStatus")) + '</button>').join("");
-  root.innerHTML = '<div class="template-screen structural-surface workspace split template-workspace notification-workspace"><aside class="pane notification-list-pane"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.notifications")) + '</span><h1>' + escapeHtml(i18n.t("notification.title")) + '</h1><small>' + escapeHtml(String(filteredItems.length)) + '</small></div><div class="panehead-actions"><button type="button" class="icon-button" data-notifications-refresh aria-label="' + escapeHtml(i18n.t("notification.refresh")) + '">' + iconMarkup("refresh", { size: 17 }) + '</button><button type="button" class="icon-button" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">' + iconMarkup("x", { size: 17 }) + '</button></div></header><div class="segmented template-segmented notification-filters" role="group">' + filterButtons + '</div><div class="list template-list">' + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("notification.empty")) + '</p>') + '</div></aside><section class="inspector template-inspector notification-inspector" aria-live="polite">' + detail + '</section></div>';
+  root.innerHTML = '<div class="notification-popover notification-workspace"><header class="utility-header"><div><h2 id="notificationsTitle">' + escapeHtml(i18n.t("notification.title")) + '</h2><small>' + escapeHtml(String(filteredItems.length)) + '</small></div><div><button type="button" class="secondary-action utility-refresh" data-notifications-refresh>' + escapeHtml(i18n.t("notification.refresh")) + '</button><button type="button" class="icon-close" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">' + iconMarkup("x", { size: 18 }) + '</button></div></header><div class="segmented template-segmented notification-filters" role="group">' + filterButtons + '</div><div class="list template-list notification-list">' + (rows || '<p class="surface-state">' + escapeHtml(i18n.t("notification.empty")) + '</p>') + '</div></div>';
   root.querySelector("[data-notifications-close]")?.addEventListener("click", closeNotifications);
   root.querySelector("[data-notifications-refresh]")?.addEventListener("click", () => loadNotifications({ force: true }));
   root.querySelectorAll("[data-notification-filter]").forEach((button) => button.addEventListener("click", () => { view.filterStatus = button.dataset.notificationFilter || ""; renderNotificationsSurface(); }));
-  root.querySelectorAll("[data-notification-select]").forEach((item) => item.addEventListener("click", (event) => { if (event.target.closest("button, a")) return; view.selectedId = item.dataset.notificationSelect || null; renderNotificationsSurface(); }));
   root.querySelectorAll("[data-notification-dispatch]").forEach((button) => button.addEventListener("click", () => dispatchNotification(button.dataset.notificationDispatch)));
   root.querySelectorAll("[data-notification-incident]").forEach((button) => button.addEventListener("click", () => openIncident(button.dataset.notificationIncident)));
 }
@@ -1977,10 +1963,6 @@ function closeNotifications(restoreFocus = true) {
   state.notifications.actionError = "";
   state.notifications.actionErrorId = null;
   state.notificationsTrigger = null;
-  if (router.getState().view === "notifications") {
-    router.navigate("map");
-    return;
-  }
   renderNotificationsSurface();
   if (restoreFocus && trigger?.isConnected) trigger.focus();
 }
@@ -2009,10 +1991,6 @@ async function loadNotifications({ force = false, background = false } = {}) {
 
 function toggleNotifications() {
   if (!state.capabilities.has("notification.read")) return;
-  if (router.getState().view === "notifications") {
-    closeNotifications();
-    return;
-  }
   if (state.notifications.open) {
     closeNotifications();
     return;
@@ -2122,7 +2100,7 @@ function adminIntegerField(field, resource = state.admin.resource) {
 }
 
 function adminEditorFieldLabel(field) {
-  return i18n.t(ADMIN_EDITOR_FIELD_KEYS[field] || "admin.details");
+  return i18n.t(ADMIN_EDITOR_FIELD_KEYS[field] || "admin.record");
 }
 
 function adminEditorSource(view) {
@@ -2372,14 +2350,14 @@ function renderAdminReadOnlyEditor(resource, item) {
   const fields = presented.fields.length
     ? '<dl class="detail-grid">' + presented.fields.map((field) => '<div><dt>' + escapeHtml(field.label) + '</dt><dd>' + escapeHtml(field.value) + '</dd></div>').join("") + '</dl>'
     : '<p class="surface-state">' + escapeHtml(i18n.t("empty.noData")) + '</p>';
-  return '<article class="admin-editor admin-readonly-editor"><div class="inspector-top"><div><span class="surface-eyebrow">' + escapeHtml(adminResourceLabel(resource)) + '</span><h2>' + escapeHtml(i18n.t("admin.details")) + '</h2><div class="inspector-sub">' + escapeHtml(i18n.t("admin.resourceCapability")) + '</div></div><span class="status-pill">' + escapeHtml(i18n.t("admin.details")) + '</span></div>' + fields + '</article>';
+  return '<article class="admin-editor admin-readonly-editor"><div class="inspector-top"><div><span class="surface-eyebrow">' + escapeHtml(adminResourceLabel(resource)) + '</span><h2>' + escapeHtml(i18n.t("admin.record")) + '</h2><div class="inspector-sub">' + escapeHtml(i18n.t("admin.resourceCapability")) + '</div></div><span class="status-pill">' + escapeHtml(adminResourceLabel(resource)) + '</span></div>' + fields + '</article>';
 }
 
 function renderAdminActionPanel(view, selectedAdminItem) {
   if (["policies", "contracts", "lines"].includes(view.resource)) {
     const proposalKind = view.resource === "contracts" ? "contract" : "policy";
     const proposalSource = selectedAdminItem ? JSON.stringify(selectedAdminItem, null, 2) : "{}";
-    return '<section class="admin-action-panel"><div class="sectionhead"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><span>' + escapeHtml(i18n.t("admin.previewReady")) + '</span></div><form data-admin-impact-form><label>' + escapeHtml(i18n.t("field.line")) + '<textarea name="line_ids" required placeholder="line-id-1, line-id-2"></textarea></label><div class="admin-action-dates"><label>' + escapeHtml(i18n.t("reports.from")) + '<input name="from" type="datetime-local" required></label><label>' + escapeHtml(i18n.t("reports.to")) + '<input name="to" type="datetime-local" required></label></div>' + (view.resource === "lines" ? '<label>' + escapeHtml(i18n.t("admin.details")) + '<select name="proposal_kind"><option value="policy">' + escapeHtml(i18n.t("admin.resources.policies")) + '</option><option value="contract">' + escapeHtml(i18n.t("admin.resources.contracts")) + '</option></select></label>' : '') + '<label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="proposal" required spellcheck="false">' + escapeHtml(proposalSource) + '</textarea></label><button type="submit" class="secondary-action"' + (view.mutationState === "saving" ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.impactPreview")) + '</button></form></section>';
+    return '<section class="admin-action-panel"><div class="sectionhead"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><span>' + escapeHtml(i18n.t("admin.previewReady")) + '</span></div><form data-admin-impact-form><label>' + escapeHtml(i18n.t("field.line")) + '<textarea name="line_ids" required placeholder="line-id-1, line-id-2"></textarea></label><div class="admin-action-dates"><label>' + escapeHtml(i18n.t("reports.from")) + '<input name="from" type="datetime-local" required></label><label>' + escapeHtml(i18n.t("reports.to")) + '<input name="to" type="datetime-local" required></label></div>' + (view.resource === "lines" ? '<label>' + escapeHtml(i18n.t("admin.proposalKind")) + '<select name="proposal_kind"><option value="policy">' + escapeHtml(i18n.t("admin.resources.policies")) + '</option><option value="contract">' + escapeHtml(i18n.t("admin.resources.contracts")) + '</option></select></label>' : '') + '<label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="proposal" required spellcheck="false">' + escapeHtml(proposalSource) + '</textarea></label><button type="submit" class="secondary-action"' + (view.mutationState === "saving" ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.impactPreview")) + '</button></form></section>';
   }
   if (["agent-versions", "devices"].includes(view.resource)) {
     return '<section class="admin-action-panel"><div class="sectionhead"><h2>' + escapeHtml(i18n.t("admin.agentUpdate")) + '</h2><span>' + escapeHtml(i18n.t("admin.confirmDestructive")) + '</span></div><form data-admin-agent-update-form><label>' + escapeHtml(i18n.t("admin.payload")) + '<textarea name="manifest" required spellcheck="false" placeholder="{&quot;signed_payload&quot;: ...}"></textarea></label><label>' + escapeHtml(i18n.t("admin.deviceID")) + '<textarea name="device_ids" required placeholder="device-id-1, device-id-2"></textarea></label><button type="submit" class="secondary-action"' + (view.mutationState === "saving" ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.agentUpdate")) + '</button></form></section>';
@@ -2431,7 +2409,7 @@ function renderAdminSurface() {
   const rows = visibleItems.map((item) => {
     const id = adminRecordId(item);
     const presented = presentAdminRecord(view.resource, item, { i18n, presentation });
-    const cells = presented.fields.map((field) => '<div><dt>' + escapeHtml(field.label) + '</dt><dd>' + escapeHtml(field.value) + "</dd></div>").join("") + '<div class="admin-technical"><details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(JSON.stringify(presented.technical, null, 2)) + '</pre></details></div>';
+    const cells = presented.fields.map((field) => '<div><dt>' + escapeHtml(field.label) + '</dt><dd>' + escapeHtml(field.value) + "</dd></div>").join("");
     const edit = resourceDefinition?.supportsUpdate && view.resource !== "schedule" && id ? '<button type="button" class="link-action" data-admin-edit="' + escapeHtml(String(id)) + '"' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.edit")) + "</button>" : "";
     const deviceDisabled = mutationBusy ? " disabled" : "";
     const deviceActions = view.resource === "devices" && id ? '<div class="admin-device-actions"><button type="button" class="link-action" data-admin-device-action="block" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.block")) + '</button><button type="button" class="link-action" data-admin-device-action="unblock" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.unblock")) + '</button><button type="button" class="link-action" data-admin-device-action="rotate-token" data-admin-device-id="' + escapeHtml(String(id)) + '"' + deviceDisabled + '>' + escapeHtml(i18n.t("admin.rotateToken")) + "</button></div>" : "";
@@ -2449,17 +2427,15 @@ function renderAdminSurface() {
       : '<div class="admin-editor"><p class="surface-state">' + escapeHtml(i18n.t("admin.resourceCapability")) + '</p></div>';
   const createLabel = resourceDefinition?.supportsRegistration && view.resource === "devices" ? i18n.t("admin.registerDevice") : i18n.t("admin.createNew");
   const canStartCreate = resourceDefinition?.supportsCreate || (view.resource === "devices" && resourceDefinition?.supportsRegistration);
-  const modeHint = editorMode === "update" ? "admin.editModeHint" : editorMode === "view" ? "admin.details" : "admin.createModeHint";
+  const modeHint = editorMode === "update" ? "admin.editModeHint" : editorMode === "view" ? "admin.record" : "admin.createModeHint";
   const modeBar = canStartCreate ? '<div class="admin-mode-bar"><button type="button" class="secondary-action" data-admin-create' + (mutationBusy ? " disabled" : "") + '>' + escapeHtml(createLabel) + '</button><span>' + escapeHtml(i18n.t(modeHint)) + '</span></div>' : "";
   const toolbar = '<form class="admin-toolbar" data-admin-filter><label>' + escapeHtml(i18n.t("admin.resource")) + '<select data-admin-resource' + (mutationBusy ? " disabled" : "") + '>' + options + '</select></label><label class="admin-search-field">' + escapeHtml(i18n.t("admin.search")) + '<input type="search" name="search" value="' + escapeHtml(view.search) + '" placeholder="' + escapeHtml(i18n.t("admin.searchPlaceholder")) + '"></label><button type="submit" class="secondary-action">' + escapeHtml(i18n.t("admin.searchAction")) + '</button>' + (view.search ? '<button type="button" class="link-action admin-search-reset" data-admin-search-reset>' + escapeHtml(i18n.t("action.resetFilters")) + '</button>' : "") + '</form>';
   const records = rows ? '<div class="admin-records">' + rows + '</div>' : '<p class="surface-state">' + escapeHtml(i18n.t(view.search ? "admin.noSearchResults" : "admin.empty")) + '</p>';
   const preview = supportsImpactPreview && view.preview ? '<div class="admin-preview"><h2>' + escapeHtml(i18n.t("admin.impactPreview")) + '</h2><p>' + escapeHtml(i18n.t("admin.previewReady")) + '</p><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("reports.measurements")) + '</dt><dd>' + escapeHtml(String(view.preview?.result?.measurements ?? view.preview?.input?.measurement_count ?? i18n.t("empty.noData"))) + '</dd></div><div><dt>' + escapeHtml(i18n.t("field.lines")) + '</dt><dd>' + escapeHtml(String(view.preview?.input?.line_count ?? i18n.t("empty.noData"))) + '</dd></div><div><dt>' + escapeHtml(i18n.t("admin.status")) + '</dt><dd>' + escapeHtml(presentation.status(view.preview?.status).label) + '</dd></div></dl></div>' : "";
   const actionPanel = renderAdminActionPanel(view, selectedAdminItem);
-  const adminTechnicalDetails = '<details><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><pre>' + escapeHtml(view.payload) + '</pre>' + (view.preview ? '<pre>' + escapeHtml(JSON.stringify(view.preview, null, 2)) + '</pre>' : "") + '</details>';
   const resourceNav = '<nav class="admin-resource-nav" aria-label="' + escapeHtml(i18n.t("admin.resource")) + '">' + allowedResources.map((resource) => '<button type="button" class="resource-nav-item' + (resource.key === view.resource ? " active" : "") + '" data-admin-resource-choice="' + escapeHtml(resource.key) + '"><span>' + escapeHtml(adminResourceLabel(resource.key)) + '</span><small>' + escapeHtml(resource.key === view.resource ? String(visibleItems.length) : "") + '</small></button>').join("") + '</nav>';
   root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace" data-admin-resource-context="' + escapeHtml(resourceContext) + '"><aside class="pane admin-resource-pane">' + header + resourceNav + '</aside><section class="pane admin-record-pane"><div class="catalog-toolbar"><div><span class="surface-eyebrow">' + escapeHtml(adminResourceLabel(view.resource)) + '</span><h2>' + escapeHtml(i18n.t("admin.records")) + '</h2></div>' + modeBar + '</div>' + toolbar + renderAdminDemoControls(view) + '<div class="admin-record-list">' + records + '</div></section><aside class="inspector admin-editor-pane">' + editor + actionPanel + message + preview + '</aside></div>' + renderDeviceCredentialDialog(view);
   hydrateRenderedControls(root);
-  root.querySelector(".admin-editor")?.insertAdjacentHTML("beforeend", adminTechnicalDetails);
   hydrateAdminEditorFields(root, view, resourceDefinition, editorMode);
   pruneUnavailableDeviceActions(root, view);
   bindAdminSurfaceEvents(root);
@@ -2901,7 +2877,7 @@ function renderAuditSelection(item) {
     object_id: entry.rawObject,
     actor_id: entry.rawActor,
   };
-  const technical = '<details><summary>' + escapeHtml(i18n.t("audit.technical")) + '</summary><pre>' + escapeHtml(JSON.stringify(technicalPayload, null, 2)) + '</pre></details>';
+  const technical = '<details class="audit-technical-card"><summary>' + escapeHtml(i18n.t("audit.systemEvent")) + '</summary><pre>' + escapeHtml(JSON.stringify(technicalPayload, null, 2)) + '</pre></details>';
   return '<article class="audit-selection" aria-live="polite"><h2>' + escapeHtml(entry.actionLabel) + '</h2><dl class="detail-grid">'
     + '<div><dt>' + escapeHtml(i18n.t("audit.description")) + '</dt><dd>' + escapeHtml(entry.description) + '</dd></div>'
     + '<div><dt>' + escapeHtml(i18n.t("audit.action")) + '</dt><dd>' + escapeHtml(entry.actionLabel) + '</dd></div>'
@@ -2937,7 +2913,7 @@ function renderAuditSurface() {
     const rows = filteredItems.map((item) => {
       const entry = presentAuditItem(item, { i18n, presentation });
       const selectedClass = String(view.selectedId) === String(entry.id) ? " selected" : "";
-      return '<article class="audit-record' + selectedClass + '"><button type="button" class="audit-record-trigger" data-audit-select="' + escapeHtml(entry.id) + '" aria-pressed="' + String(String(view.selectedId) === String(entry.id)) + '"><span class="audit-record-head"><strong>' + escapeHtml(entry.actionLabel) + '</strong><span>' + escapeHtml(entry.atLabel) + '</span></span><span class="audit-record-description">' + escapeHtml(entry.description) + '</span><span class="audit-record-summary"><span>' + escapeHtml(i18n.t("audit.object")) + ': ' + escapeHtml(entry.objectLabel) + '</span><span>' + escapeHtml(i18n.t("audit.actor")) + ': ' + escapeHtml(entry.actorLabel) + '</span></span><span class="audit-record-open">' + escapeHtml(i18n.t("audit.openDetails")) + '</span></button></article>';
+      return '<article class="audit-record' + selectedClass + '"><button type="button" class="audit-record-trigger" data-audit-select="' + escapeHtml(entry.id) + '" aria-pressed="' + String(String(view.selectedId) === String(entry.id)) + '"><span class="audit-record-head"><strong>' + escapeHtml(entry.actionLabel) + '</strong><span>' + escapeHtml(entry.atLabel) + '</span></span><span class="audit-record-description">' + escapeHtml(entry.description) + '</span><span class="audit-record-summary"><span>' + escapeHtml(i18n.t("audit.object")) + ': ' + escapeHtml(entry.objectLabel) + '</span><span>' + escapeHtml(i18n.t("audit.actor")) + ': ' + escapeHtml(entry.actorLabel) + '</span></span></button></article>';
     }).join("");
     const content = view.state === "loading" ? '<p class="surface-state" role="status">' + escapeHtml(i18n.t("audit.loading")) + '</p>' : view.state === "error" ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t("audit.unavailable")) + '</p>' : rows || '<p class="surface-state">' + escapeHtml(i18n.t(view.search ? "audit.noSearchResults" : "audit.empty")) + '</p>';
     const loadMore = view.hasMore ? '<button type="button" class="secondary-action audit-load-more" data-audit-load-more' + (view.loadingMore ? " disabled" : "") + '>' + escapeHtml(i18n.t(view.loadingMore ? "audit.loadingMore" : "audit.loadMore")) + '</button>' : "";
@@ -3095,9 +3071,9 @@ function renderIncidentDetail() {
   const lineAvailable = Boolean(map.getLine(detail.line_id));
   const canComment = incidentActionsState.canComment;
   const commentFeedback = view.commentMessage ? '<p class="action-feedback ' + (view.commentState === "error" ? "error" : "success") + '" role="status">' + escapeHtml(i18n.t(view.commentMessage)) + "</p>" : "";
-  const commentForm = canComment ? '<form class="incident-comment-form" data-incident-comment><label for="incidentComment">' + escapeHtml(i18n.t("incidents.comment")) + '</label><textarea id="incidentComment" required maxlength="4000" placeholder="' + escapeHtml(i18n.t("incidents.commentPlaceholder")) + '"></textarea><button class="secondary-action" type="submit"' + (view.commentState === "saving" ? " disabled" : "") + '>' + escapeHtml(i18n.t(view.commentState === "success" ? "incidents.commentSent" : "incidents.sendComment")) + "</button>" + commentFeedback + "</form>" : "";
+  const commentForm = canComment ? '<form class="incident-comment-form" data-incident-comment><label class="visually-hidden" for="incidentComment">' + escapeHtml(i18n.t("incidents.comment")) + '</label><textarea id="incidentComment" required maxlength="4000" placeholder="' + escapeHtml(i18n.t("incidents.commentPlaceholder")) + '"></textarea><button class="secondary-action" type="submit"' + (view.commentState === "saving" ? " disabled" : "") + '>' + escapeHtml(i18n.t(view.commentState === "success" ? "incidents.commentSent" : "incidents.sendComment")) + "</button>" + commentFeedback + "</form>" : "";
   const closedNotice = incidentActionsState.closed ? '<p class="closed-readonly" role="status">' + escapeHtml(i18n.t("incidents.closedReadOnly")) + "</p>" : "";
-  return '<div class="inspector-top"><div><span class="surface-eyebrow">' + escapeHtml(incident.severityLabel) + '</span><h2>' + escapeHtml(incident.school) + ' · ' + escapeHtml(incident.typeLabel) + '</h2><div class="inspector-sub">' + escapeHtml(incident.number) + ' · ' + escapeHtml(incident.startedLabel) + '</div></div><span class="status-pill severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.statusLabel) + '</span></div>' + closedNotice + '<div class="facts"><div class="fact"><span>' + escapeHtml(i18n.t("field.assignee")) + '</span><b>' + escapeHtml(detail.assignee || i18n.t("empty.noData")) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("field.line")) + '</span><b>' + escapeHtml(incident.line) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("incidents.confirmed")) + '</span><b>' + escapeHtml(confirmed) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("incidents.recovery")) + '</span><b>' + escapeHtml(recovery.label) + '</b></div></div><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("incidents.what")) + '</h3><span>' + escapeHtml(incident.source || i18n.t("empty.noData")) + '</span></div><p class="inspector-copy">' + escapeHtml(detail.description || incident.typeLabel) + '</p>' + (lineAvailable ? '<button class="secondary-action" type="button" data-incident-open-line="' + escapeHtml(detail.line_id) + '">' + escapeHtml(i18n.t("incidents.openLine")) + '</button>' : '') + '</section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("incidents.timelineGroup")) + '</h3><span>' + escapeHtml(incident.lastUpdateLabel) + '</span></div><ol class="timeline incident-timeline">' + timeline + '</ol></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("incidents.comment")) + '</h3></div><div class="composer">' + commentForm + '</div></section>' + renderIncidentActionControls(detail) + renderProviderCaseContext(detail) + renderSituationContext(detail.id);
+  return '<div class="inspector-top"><div><span class="surface-eyebrow">' + escapeHtml(incident.severityLabel) + '</span><h2>' + escapeHtml(incident.school) + ' · ' + escapeHtml(incident.typeLabel) + '</h2><div class="inspector-sub">' + escapeHtml(incident.number) + ' · ' + escapeHtml(incident.startedLabel) + '</div></div><span class="status-pill severity-' + escapeHtml(incident.severity.toLowerCase()) + '">' + escapeHtml(incident.statusLabel) + '</span></div>' + closedNotice + '<div class="facts"><div class="fact"><span>' + escapeHtml(i18n.t("field.assignee")) + '</span><b>' + escapeHtml(detail.assignee || i18n.t("empty.noData")) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("field.line")) + '</span><b>' + escapeHtml(incident.line) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("incidents.confirmed")) + '</span><b>' + escapeHtml(confirmed) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("incidents.recovery")) + '</span><b>' + escapeHtml(recovery.label) + '</b></div></div><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("incidents.what")) + '</h3><span>' + escapeHtml(incident.source || i18n.t("empty.noData")) + '</span></div><p class="inspector-copy">' + escapeHtml(incident.description || incident.typeLabel) + '</p>' + (lineAvailable ? '<button class="secondary-action" type="button" data-incident-open-line="' + escapeHtml(detail.line_id) + '">' + escapeHtml(i18n.t("incidents.openLine")) + '</button>' : '') + '</section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("incidents.timelineGroup")) + '</h3><span>' + escapeHtml(incident.lastUpdateLabel) + '</span></div><ol class="timeline incident-timeline">' + timeline + '</ol></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("incidents.comment")) + '</h3></div><div class="composer">' + commentForm + '</div></section>' + renderIncidentActionControls(detail) + renderProviderCaseContext(detail) + renderSituationContext(detail.id);
 }
 
 function renderProviderCaseContext(incident) {
@@ -3157,6 +3133,38 @@ function renderSituationContext(incidentId) {
   return '<section class="situation-context"><h3>' + escapeHtml(i18n.t("situation.contextTitle")) + "</h3><p class=\"detail-muted\">" + escapeHtml(i18n.t("situation.contextHint")) + "</p><ul>" + rows + "</ul></section>";
 }
 
+const SITUATION_FACTOR_LABELS = Object.freeze({
+  provider_id: "field.provider",
+  provider: "field.provider",
+  violation_type: "incidents.createType",
+  source_type: "field.source",
+  manual_review: "situation.manualReview",
+  participant_count: "situation.participants",
+  affected_participants: "situation.participants",
+  evidence_state: "situation.evidence",
+});
+
+function situationFactorEntries(situation) {
+  const factors = situation?.factors && typeof situation.factors === "object" ? situation.factors : {};
+  return Object.entries(factors)
+    .filter(([key, value]) => !/^(object|objects|object_id|object_type)$/i.test(key) && value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => {
+      const normalized = String(key).toLowerCase();
+      const labelKey = SITUATION_FACTOR_LABELS[normalized];
+      const label = labelKey && i18n.has(labelKey)
+        ? i18n.t(labelKey)
+        : normalized.replace(/_/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+      let display = value;
+      if (normalized === "provider_id") display = situation.provider_name || i18n.t("empty.noData");
+      else if (normalized === "violation_type") {
+        const type = String(value).toUpperCase();
+        display = i18n.has("incidentType." + type) ? i18n.t("incidentType." + type) : value;
+      } else if (normalized === "manual_review" && typeof value === "boolean") display = i18n.t(value ? "admin.yes" : "admin.no");
+      else if (typeof value === "object") display = value.label || value.name || value.title || i18n.t("empty.noData");
+      return [label, String(display)];
+    });
+}
+
 function renderSituationActionControls(situation, members) {
   const view = incidentSurfaceState();
   const available = situationActions(situation, state.capabilities, "idle");
@@ -3165,7 +3173,7 @@ function renderSituationActionControls(situation, members) {
   const disabled = actions.isPending ? " disabled" : "";
   const controls = [];
   if (actions.canLiveVerify) {
-    controls.push('<form class="situation-action-form" data-situation-action-form data-situation-action="live-verify"><button class="secondary-action" type="submit"' + disabled + '>' + escapeHtml(actionCopy("situationLiveVerify")) + "</button></form>");
+    controls.push('<form class="situation-action-form situation-live-verify" data-situation-action-form data-situation-action="live-verify"><button class="secondary-action" type="submit"' + disabled + '>' + escapeHtml(actionCopy("situationLiveVerify")) + "</button></form>");
   }
   const mergeTargets = view.situations.filter((item) => String(item?.id) !== String(situation?.id) && String(item?.status || "OPEN").toUpperCase() === "OPEN");
   if (actions.canMerge && mergeTargets.length) {
@@ -3197,7 +3205,6 @@ function renderSituationDetail() {
   if (view.situationState === "loading") return '<p class="surface-state">' + escapeHtml(i18n.t("situation.loading")) + "</p>";
   if (view.situationState === "error" || !view.situation) return '<p class="surface-state error">' + escapeHtml(i18n.t("situation.unavailable")) + "</p>";
   const situation = view.situation;
-  const factors = situation.factors || {};
   const members = Array.isArray(situation.incidents) ? situation.incidents : [];
   const evidence = situation.evidence?.state || "UNKNOWN";
   const comparison = view.situationComparison;
@@ -3210,9 +3217,9 @@ function renderSituationDetail() {
       : treatmentRows.length || controlRows.length
         ? renderSituationComparisonRows(i18n.t("situation.treatment"), treatmentRows) + renderSituationComparisonRows(i18n.t("situation.controls"), controlRows)
         : '<p class="detail-muted">' + escapeHtml(i18n.t("reports.empty")) + '</p>';
-  const factorEntries = Object.entries(factors).filter(([key, value]) => value !== undefined && value !== null && value !== "");
+  const factorEntries = situationFactorEntries(situation);
   const back = router.getState().view === "incidents" ? '<button class="link-action back-action" type="button" data-situation-back>' + escapeHtml(i18n.t("situation.backToIncident")) + '</button>' : "";
-  return '<article class="inspector">' + back + '<div class="inspector-top"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.situations")) + '</span><h2>' + escapeHtml(i18n.t("situation.detailTitle")) + ' #' + escapeHtml(situation.id) + '</h2><div class="inspector-sub">' + escapeHtml(i18n.t("situation.readOnly")) + '</div></div><span class="status-pill">' + escapeHtml(String(situation.status || evidence)) + '</span></div><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.factors")) + '</h3><span>' + escapeHtml(i18n.t("situation.evidence")) + '</span></div><div class="factorgrid">' + (factorEntries.length ? factorEntries.map(([key, value]) => '<div class="factor"><span>' + escapeHtml(key) + '</span><b>' + escapeHtml(typeof value === "object" ? JSON.stringify(value) : value) + '</b></div>').join('') : '<p class="detail-muted">' + escapeHtml(i18n.t("empty.noData")) + '</p>') + '</div></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.evidence")) + '</h3><span>' + escapeHtml(i18n.has("situation.evidence." + evidence) ? i18n.t("situation.evidence." + evidence) : i18n.t("situation.evidence.UNKNOWN")) + '</span></div><p class="inspector-copy">' + escapeHtml(situation.reason || i18n.t("situation.readOnly")) + '</p></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.memberIncidents")) + '</h3><span>' + escapeHtml(String(members.length)) + '</span></div><div class="memberlist">' + (members.length ? members.map((item) => '<button class="member" type="button" data-situation-incident-id="' + escapeHtml(item.id) + '"><span><b>' + escapeHtml(item.incident_no || item.number || item.id) + '</b><small>' + escapeHtml(item.school_name || item.organization_name || i18n.t("school.noOfficialName")) + '</small></span><span class="status-pill">' + escapeHtml(presentation.incidentStatus(item.status)) + '</span></button>').join('') : '<p class="detail-muted">' + escapeHtml(i18n.t("situation.empty")) + '</p>') + '</div></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("reports.analytics")) + '</h3><button class="secondary-action" type="button" data-situation-comparison>' + escapeHtml(i18n.t("reports.apply")) + '</button></div>' + comparisonBody + '</section>' + renderSituationActionControls(situation, members) + '</article>';
+  return '<article class="inspector">' + back + '<div class="inspector-top"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.situations")) + '</span><h2>' + escapeHtml(i18n.t("situation.detailTitle")) + ' #' + escapeHtml(situation.id) + '</h2><div class="inspector-sub">' + escapeHtml(i18n.t("situation.readOnly")) + '</div></div><span class="status-pill">' + escapeHtml(String(situation.status || evidence)) + '</span></div><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.factors")) + '</h3><span>' + escapeHtml(i18n.t("situation.evidence")) + '</span></div><div class="factorgrid">' + (factorEntries.length ? factorEntries.map(([key, value]) => '<div class="factor"><span>' + escapeHtml(key) + '</span><b>' + escapeHtml(value) + '</b></div>').join('') : '<p class="detail-muted">' + escapeHtml(i18n.t("empty.noData")) + '</p>') + '</div></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.evidence")) + '</h3><span>' + escapeHtml(i18n.has("situation.evidence." + evidence) ? i18n.t("situation.evidence." + evidence) : i18n.t("situation.evidence.UNKNOWN")) + '</span></div><p class="inspector-copy">' + escapeHtml(situation.reason || i18n.t("situation.readOnly")) + '</p></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.memberIncidents")) + '</h3><span>' + escapeHtml(String(members.length)) + '</span></div><div class="memberlist">' + (members.length ? members.map((item) => '<button class="member" type="button" data-situation-incident-id="' + escapeHtml(item.id) + '"><span><b>' + escapeHtml(item.incident_no || item.number || item.id) + '</b><small>' + escapeHtml(item.school_name || item.organization_name || i18n.t("school.noOfficialName")) + '</small></span><span class="status-pill">' + escapeHtml(presentation.incidentStatus(item.status)) + '</span></button>').join('') : '<p class="detail-muted">' + escapeHtml(i18n.t("situation.empty")) + '</p>') + '</div></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("reports.analytics")) + '</h3><button class="secondary-action" type="button" data-situation-comparison>' + escapeHtml(i18n.t("reports.apply")) + '</button></div>' + comparisonBody + '</section>' + renderSituationActionControls(situation, members) + '</article>';
 }
 
 function incidentActionAllowed(actions, action) {
@@ -3834,6 +3841,7 @@ async function openIncident(id) {
 }
 
 function closeDrawer(restoreFocus = true) {
+  state.drawerRequestID += 1;
   $("#detailDrawer")?.classList.remove("open");
   if ($("#detailDrawer")) $("#detailDrawer").hidden = true;
   if ($("#drawerBackdrop")) $("#drawerBackdrop").hidden = true;

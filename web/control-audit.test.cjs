@@ -63,9 +63,9 @@ test("UI-004 capability-gated workflow controls use real helpers and pending sta
 test("UI-005 admin and notification diagnostics stay out of primary human copy", () => {
   const app = fs.readFileSync("web/app.js", "utf8");
   assert.match(app, /presentAdminRecord\(view\.resource, item/);
-  assert.match(app, /<details><summary>.*admin\.details/);
-  assert.match(app, /JSON\.stringify\(presented\.technical/);
-  assert.match(app, /JSON\.stringify\(view\.preview/);
+  assert.doesNotMatch(app, /adminTechnicalDetails/);
+  assert.doesNotMatch(app, /class="admin-technical"/);
+  assert.match(app, /view\.preview\?\.result/);
   assert.doesNotMatch(app, /function adminFieldLabel\(/);
   assert.doesNotMatch(app, /function adminDisplayValue\(/);
   assert.doesNotMatch(app, /<p>\" \+ escapeHtml\(item\.message\)/);

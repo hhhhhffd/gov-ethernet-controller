@@ -23,7 +23,7 @@ test("CONTENT-002 normal surfaces have concise empty/error copy and real retry c
 
 test("CONTENT-003 technical values are confined to explicit details or diagnostics", () => {
   const source = fs.readFileSync("web/app.js", "utf8");
-  assert.match(source, /<details><summary.*audit\.technical/);
-  assert.match(source, /<details><summary.*admin\.details/);
+  assert.match(source, /<details class="audit-technical-card"><summary.*audit\.systemEvent/);
+  assert.doesNotMatch(source, /<details><summary.*admin\.details/);
   assert.doesNotMatch(source, /textContent\s*=\s*[^;]*source_type/);
 });

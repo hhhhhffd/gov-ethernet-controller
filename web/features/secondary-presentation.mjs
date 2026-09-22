@@ -39,6 +39,14 @@ const NOTIFICATION_SOURCE_KEYS = Object.freeze({
   MEASUREMENT: "field.metrics",
 });
 
+const NOTIFICATION_CHANNEL_KEYS = Object.freeze({
+  WEB: "notification.channelWeb",
+  WEBHOOK: "notification.channelWebhook",
+  TELEGRAM: "notification.channelTelegram",
+  EMAIL: "notification.channelEmail",
+  SMS: "notification.channelSms",
+});
+
 const ADMIN_FIELD_LABEL_KEYS = Object.freeze({
   id: "admin.recordId",
   school_id: "field.registryNumber",
@@ -148,6 +156,12 @@ function humanObjectLabel(value, i18n) {
 function humanNotificationSource(value, i18n) {
   const key = NOTIFICATION_SOURCE_KEYS[code(value)];
   return key ? i18n.t(key) : i18n.t("notification.source");
+}
+
+function humanNotificationChannel(value, i18n) {
+  const normalized = code(value);
+  const key = NOTIFICATION_CHANNEL_KEYS[normalized];
+  return key ? i18n.t(key) : normalized ? i18n.t("notification.channelOther") : i18n.t("empty.noData");
 }
 
 function humanScopeLabel(value, i18n) {
@@ -298,6 +312,8 @@ export function presentNotification(item, { i18n, presentation, capabilities, pe
     messageIsLocalized: message.localized,
     sourceLabel: humanNotificationSource(source, i18n),
     deliveryLabel: presentation.deliveryStatus(item?.status),
+    channelLabel: humanNotificationChannel(item?.channel || item?.delivery_channel, i18n),
+    recipientLabel: place || i18n.t("notification.scopeUnavailable"),
     generatedLabel: presentation.formatDate(item?.generated_at || item?.created_at, true),
     nextAttemptLabel: deliveryFailed && item?.next_attempt_at ? presentation.formatDate(item.next_attempt_at, true) : "",
     attempts: item?.delivery_attempts,

@@ -82,6 +82,20 @@ export function formatIncidentDuration(minutes, i18n) {
   return remainder ? i18n.t("incident.durationHoursMinutes", { hours, minutes: remainder }) : i18n.t("incident.durationHours", { count: hours });
 }
 
+function humanIncidentDescription(item, { i18n, presentation }) {
+  const raw = String(item?.description || item?.summary || "").trim();
+  if (!raw) return "";
+  const threshold = raw.match(/no\s+threshold\s+violation\s*download\s*([\d.,]+)\s*\(\s*<\s*[\d.,]+\s*\)\s*;\s*upload\s*([\d.,]+)\s*\(\s*<\s*[\d.,]+\s*\)/i);
+  if (threshold) {
+    return i18n.t("incident.thresholdWithinRange", {
+      download: presentation.formatNumber(threshold[1], i18n.t("unit.mbps")),
+      upload: presentation.formatNumber(threshold[2], i18n.t("unit.mbps")),
+    });
+  }
+  if (/^no\s+threshold\s+violation/i.test(raw)) return i18n.t("incident.technicalDescription");
+  return raw;
+}
+
 export function presentIncident(item, { i18n, presentation, now = Date.now() }) {
   const status = code(item?.status);
   const severity = code(item?.severity);
@@ -98,6 +112,7 @@ export function presentIncident(item, { i18n, presentation, now = Date.now() }) 
     severityLabel: label(i18n, "severity", severity),
     type,
     typeLabel: label(i18n, "incidentType", type),
+    description: humanIncidentDescription(item, { i18n, presentation }),
     school: item?.school_name || item?.organization_name || i18n.t("school.noOfficialName"),
     line: item?.line_name || item?.line_label || (item?.line_id ? i18n.t("field.line") : i18n.t("empty.value")),
     lineId: item?.line_id || "",
