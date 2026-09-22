@@ -730,6 +730,10 @@ function showToast(messageKey, tone = "", params = {}) {
 function mapFields(fields) {
   return fields.map(([label, value]) => "<div><dt>" + escapeHtml(label) + "</dt><dd>" + escapeHtml(value ?? presentation.empty()) + "</dd></div>").join("");
 }
+function technicalDetails(fields) {
+  if (!Array.isArray(fields) || !fields.length) return "";
+  return '<details class="technical-details"><summary>' + escapeHtml(i18n.t("admin.details")) + "</summary><dl>" + mapFields(fields) + "</dl></details>";
+}
 function popupSchoolName(school, line) { return presentation.schoolName(school, line?.school_name); }
 function popupLine(line) {
   const status = presentation.status(line.linkwatchStatus || line.status);
@@ -782,8 +786,7 @@ function lineSelector(linesAtSchool, selectedLineId) {
   return "<div><dt>" + escapeHtml(i18n.t("field.lines")) + "</dt><dd>" + linesAtSchool.map((line) => {
     const active = line.id === selectedLineId;
     const role = line.role ? presentation.role(line.role) : i18n.t("field.line");
-    return '<button type="button" class="map-member" data-popup-line-id="' + escapeHtml(line.id) + '" aria-pressed="' + active + '">'
-      + escapeHtml(role) + '<small>' + escapeHtml([line.provider, presentation.connectionType(line.technology)].filter(Boolean).join(" · ")) + "</small></button>";
+    return '<button type="button" class="map-member" data-popup-line-id="' + escapeHtml(line.id) + '" aria-pressed="' + active + '">' + '<span>' + escapeHtml(role) + '</span><small>' + escapeHtml([line.provider, presentation.connectionType(line.technology)].filter(Boolean).join(" · ")) + "</small></button>";
   }).join("") + "</dd></div>";
 }
 
@@ -1029,6 +1032,13 @@ function onboardingPoint(points, lineID) {
   return sameLine.find((item) => item?.active !== false) || sameLine[0] || null;
 }
 
+function onboardingDateISO(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
+}
+
 async function runSchoolMonitoringSetup(event) {
   event.preventDefault();
   const view = state.admin;
@@ -1043,6 +1053,9 @@ async function runSchoolMonitoringSetup(event) {
   const technology = String(values.technology || "FIBER").trim().toUpperCase();
   const location = String(values.location || school.address || "").trim();
   const contractNo = String(values.contract_no || "").trim();
+  const validFrom = onboardingDateISO(values.valid_from);
+  const validTo = onboardingDateISO(values.valid_to);
+  const contractDate = onboardingDateISO(values.contract_date);
   if (!providerID && !providerName) {
     onboarding.error = "admin.onboardingNoProvider";
     onboarding.state = "error";
@@ -1130,7 +1143,12 @@ async function runSchoolMonitoringSetup(event) {
       setOnboardingStep("contract");
       const contracts = await boundaries.admin.list("contracts", "line_id=" + encodeURIComponent(line.id));
       const existingContract = contracts.find((item) => String(item?.contract_no || "") === contractNo);
-      if (!existingContract) await boundaries.admin.create("contracts", { line_id: line.id, valid_from: new Date().toISOString(), contract_no: contractNo });
+      if (!existingContract) {
+        const contractPayload = { line_id: line.id, valid_from: validFrom || new Date().toISOString(), contract_no: contractNo };
+        if (validTo) contractPayload.valid_to = validTo;
+        if (contractDate) contractPayload.contract_date = contractDate;
+        await boundaries.admin.create("contracts", contractPayload);
+      }
     }
 
     setOnboardingStep("activation");
@@ -1197,7 +1215,7 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
   const line = selection.detail || selected;
   const drawerState = $("#drawerState");
   $("#drawerTitle").textContent = popupSchoolName(school, line) || presentation.empty();
-  $("#drawerSubtitle").textContent = school?.registryId ? i18n.t("school.registryNumber", { number: school.registryId }) : presentation.empty();
+  $("#drawerSubtitle").textContent = knownValue(school?.address || school?.district);
   drawerState.textContent = selection.detailState === "loading" ? i18n.t("school.detailLoading") : selection.detailState === "error" ? i18n.t("school.detailUnavailable") : "";
   drawerState.className = "selection-state" + (selection.detailState === "error" ? " error" : "");
   const tabs = [["summary", i18n.t("map.lineDetail")], ["measurements", i18n.t("field.metrics")], ["states", i18n.t("field.status")], ["device", i18n.t("field.device")], ["incidents", i18n.t("nav.incidents")]];
@@ -1205,19 +1223,22 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
   if (tabsRoot) tabsRoot.innerHTML = tabs.map(([key, label]) => '<button type="button" class="detail-tab' + (state.drawerTab === key ? " active" : "") + '" data-drawer-tab="' + escapeHtml(key) + '" role="tab" aria-selected="' + String(state.drawerTab === key) + '">' + escapeHtml(label) + '</button>').join("");
   $("#drawerContext").innerHTML = mapFields([
     [i18n.t("field.officialIdentity"), popupSchoolName(school, line)],
-    [i18n.t("field.registryNumber"), school?.registryId],
     [i18n.t("field.address"), knownValue(school?.address)],
+  ]);
+  $("#drawerTechnical").innerHTML = technicalDetails([
+    [i18n.t("field.registryNumber"), school?.registryId],
     [i18n.t("field.coordinates"), coordinateText(school)],
     [i18n.t("field.coordinateSource"), presentation.coordinateSource(school?.coordinateSource)],
     [i18n.t("field.registryProvenance"), registryProvenance(school)],
   ]);
+  $("#drawerLineTechnical").innerHTML = "";
   if (!selected) {
     $("#drawerStatus").innerHTML = selection.registryOnly
       ? '<span class="status-badge no-data">' + escapeHtml(presentation.status("NOT_MONITORED").label) + "</span><p>" + escapeHtml(presentation.statusDescription("NOT_MONITORED")) + "</p>"
       : "<p>" + escapeHtml(i18n.t("school.chooseLine")) + "</p>";
     $("#drawerLine").innerHTML = lineSelector(selection.lines, null);
     $("#drawerMetrics").innerHTML = "";
-    $("#drawerIncident").innerHTML = "";
+    $("#drawerIncident").innerHTML = '<div class="empty-state"><strong>' + escapeHtml(i18n.t("nav.incidents")) + '</strong><span>' + escapeHtml(i18n.t("school.chooseLine")) + '</span></div>';
     $("#drawerMeasurements").innerHTML = '<p class="detail-muted">' + escapeHtml(i18n.t("school.chooseLine")) + '</p>';
     $("#drawerStates").innerHTML = '<p class="detail-muted">' + escapeHtml(i18n.t("school.chooseLine")) + '</p>';
     $("#drawerDevice").innerHTML = "";
@@ -1226,10 +1247,15 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
     $("#drawerStatus").innerHTML = '<span class="status-badge ' + escapeHtml(status.tone) + '">' + escapeHtml(status.label) + "</span><p>" + escapeHtml(presentation.statusDescription(status.code)) + "</p>";
     const contractNumber = line.contract?.contract_no;
     $("#drawerLine").innerHTML = lineSelector(selection.lines, selected.id) + mapFields([
-      [i18n.t("field.line"), line.id], [i18n.t("field.provider"), knownValue(line.provider === "—" ? null : line.provider)],
+      [i18n.t("field.provider"), knownValue(line.provider === "—" ? null : line.provider)],
       [i18n.t("field.connectionType"), presentation.connectionType(line.technology)], [i18n.t("field.lineRole"), presentation.role(line.role)],
       [i18n.t("field.lastObserved"), line.latest?.at ? presentation.formatDate(line.latest.at, true) : i18n.t("school.notObserved")],
       ...(contractNumber ? [[i18n.t("field.contract"), contractNumber]] : []),
+    ]);
+    $("#drawerLineTechnical").innerHTML = technicalDetails([
+      [i18n.t("field.line"), line.id],
+      [i18n.t("field.status"), line.status],
+      ...(line.technology_id ? [[i18n.t("field.connectionType"), line.technology_id]] : []),
     ]);
     const metricLabels = { download: ["field.download", "unit.mbps"], upload: ["field.upload", "unit.mbps"], ping: ["field.ping", "unit.ms"], jitter: ["field.jitter", "unit.ms"], loss: ["field.loss", "unit.percent"] };
     const metrics = availableMetrics(line);
@@ -1237,7 +1263,7 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
       ? mapFields(metrics.map(([metric, value]) => [i18n.t(metricLabels[metric][0]), presentation.formatNumber(value, i18n.t(metricLabels[metric][1]))]))
       : mapFields([[i18n.t("field.metrics"), i18n.t("school.metricsUnavailable")]]);
     const incident = activeIncident(line);
-    $("#drawerIncident").innerHTML = incident ? mapFields([[i18n.t("field.activeIncident"), incident.incident_no || incident.number || incident.id], [i18n.t("field.incidentStatus"), presentation.incidentStatus(incident.status)]]) + '<button class="link-action" type="button" data-open-incident-id="' + escapeHtml(incident.id) + '">' + escapeHtml(i18n.t("nav.incidents")) + "</button>" : "";
+    $("#drawerIncident").innerHTML = incident ? mapFields([[i18n.t("field.activeIncident"), incident.incident_no || incident.number || incident.id], [i18n.t("field.incidentStatus"), presentation.incidentStatus(incident.status)]]) + '<button class="link-action" type="button" data-open-incident-id="' + escapeHtml(incident.id) + '">' + escapeHtml(i18n.t("nav.incidents")) + "</button>" : '<div class="empty-state"><strong>' + escapeHtml(i18n.t("nav.incidents")) + '</strong><span>' + escapeHtml(i18n.t("incidents.empty")) + '</span></div>';
     const measurements = Array.isArray(line.measurements) ? line.measurements : [];
     $("#drawerMeasurements").innerHTML = measurements.length ? '<div class="sectionhead"><h3>' + escapeHtml(i18n.t("field.metrics")) + '</h3><span>' + escapeHtml(String(measurements.length)) + '</span></div><div class="detail-table"><table><thead><tr><th>' + escapeHtml(i18n.t("field.lastObserved")) + '</th><th>' + escapeHtml(i18n.t("field.download")) + '</th><th>' + escapeHtml(i18n.t("field.upload")) + '</th><th>' + escapeHtml(i18n.t("field.ping")) + '</th><th>' + escapeHtml(i18n.t("field.loss")) + '</th></tr></thead><tbody>' + measurements.slice(0, 20).map((measurement) => '<tr><td>' + escapeHtml(presentation.formatDate(measurement.observed_at || measurement.at, true)) + '</td><td>' + escapeHtml(presentation.formatNumber(measurement.download, i18n.t("unit.mbps"))) + '</td><td>' + escapeHtml(presentation.formatNumber(measurement.upload, i18n.t("unit.mbps"))) + '</td><td>' + escapeHtml(presentation.formatNumber(measurement.ping, i18n.t("unit.ms"))) + '</td><td>' + escapeHtml(presentation.formatNumber(measurement.packet_loss ?? measurement.loss, i18n.t("unit.percent"))) + '</td></tr>').join("") + '</tbody></table></div>' : '<p class="detail-muted">' + escapeHtml(i18n.t("school.metricsUnavailable")) + '</p>';
     const stateView = state.schoolDetailStates.lineID === String(selected.id) ? state.schoolDetailStates : null;
@@ -2296,14 +2322,16 @@ function renderAdminOnboardingSurface(root, view, allowedResources, header) {
   const resultPanel = onboarding.state === "success" && result ? '<section class="onboarding-result"><h2>' + escapeHtml(i18n.t("admin.onboardingResult")) + '</h2><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("admin.onboardingProviderValue")) + '</dt><dd>' + escapeHtml(result.provider?.name || result.provider?.id || i18n.t("empty.value")) + '</dd></div><div><dt>' + escapeHtml(i18n.t("admin.onboardingLineValue")) + '</dt><dd>' + escapeHtml(result.line?.id || i18n.t("empty.value")) + '</dd></div><div><dt>' + escapeHtml(i18n.t("admin.onboardingPointValue")) + '</dt><dd>' + escapeHtml(result.point?.location || result.point?.id || i18n.t("empty.value")) + '</dd></div><div><dt>' + escapeHtml(i18n.t("admin.onboardingExpires")) + '</dt><dd>' + escapeHtml(presentation.formatDate(enrollment?.expires_at, true)) + '</dd></div></dl><label class="onboarding-code"><span>' + escapeHtml(i18n.t("admin.onboardingEnrollmentCode")) + '</span><div><code>' + escapeHtml(enrollment?.code || i18n.t("empty.value")) + '</code><button type="button" class="secondary-action" data-onboarding-copy>' + escapeHtml(i18n.t("admin.copy")) + '</button></div></label><p class="surface-state" role="status">' + escapeHtml(i18n.t("admin.onboardingSuccess")) + '</p></section>' : "";
   const errorPanel = onboarding.state === "error" ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(onboarding.error || "admin.onboardingFailed")) + (onboarding.step ? '<span>' + escapeHtml(i18n.t("admin.onboardingStep") + ": " + currentStep) + '</span>' : "") + '</p>' : "";
   const running = onboarding.state === "running";
-  const form = '<form class="school-onboarding-form" data-school-onboarding><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingProvider")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingExistingProvider")) + '<select name="provider_id"' + (running ? " disabled" : "") + '>' + providerOptions + '</select></label><label>' + escapeHtml(i18n.t("admin.onboardingProviderName")) + '<input name="provider_name" type="text"' + (running ? " disabled" : "") + '></label><label>' + escapeHtml(i18n.t("admin.onboardingSupportContact")) + '<input name="support_contact" type="text"' + (running ? " disabled" : "") + '></label></fieldset><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingLine")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingRole")) + '<select name="role"' + (running ? " disabled" : "") + '><option value="PRIMARY">' + escapeHtml(presentation.role("PRIMARY")) + '</option><option value="RESERVE">' + escapeHtml(presentation.role("RESERVE")) + '</option></select></label><label>' + escapeHtml(i18n.t("admin.onboardingTechnology")) + '<input name="technology" value="FIBER" required' + (running ? " disabled" : "") + '></label></fieldset><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingPoint")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingLocation")) + '<input name="location" value="' + escapeHtml(school.address || "") + '" required' + (running ? " disabled" : "") + '></label></fieldset><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingContract")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingContractNo")) + '<input name="contract_no" type="text"' + (running ? " disabled" : "") + '></label></fieldset><div class="form-actions"><button type="submit" class="primary-action"' + (running ? " disabled" : "") + '>' + escapeHtml(running ? i18n.t("admin.onboardingRunning") : onboarding.state === "error" ? i18n.t("admin.onboardingRetry") : i18n.t("admin.onboardingStart")) + '</button><button type="button" class="secondary-action" data-school-onboarding-cancel' + (running ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.onboardingCancel")) + '</button></div></form>';
+  const form = onboarding.state === "success"
+    ? '<div class="onboarding-complete"><p class="detail-muted">' + escapeHtml(i18n.t("admin.onboardingSuccess")) + '</p><button type="button" class="secondary-action" data-school-onboarding-cancel>' + escapeHtml(i18n.t("admin.onboardingCancel")) + '</button></div>'
+    : '<form class="school-onboarding-form" data-school-onboarding><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingProvider")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingExistingProvider")) + '<select name="provider_id"' + (running ? " disabled" : "") + '>' + providerOptions + '</select></label><label>' + escapeHtml(i18n.t("admin.onboardingProviderName")) + '<input name="provider_name" type="text"' + (running ? " disabled" : "") + '></label><label>' + escapeHtml(i18n.t("admin.onboardingSupportContact")) + '<input name="support_contact" type="text"' + (running ? " disabled" : "") + '></label></fieldset><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingLine")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingRole")) + '<select name="role"' + (running ? " disabled" : "") + '><option value="PRIMARY">' + escapeHtml(presentation.role("PRIMARY")) + '</option><option value="RESERVE">' + escapeHtml(presentation.role("RESERVE")) + '</option></select></label><label>' + escapeHtml(i18n.t("admin.onboardingTechnology")) + '<input name="technology" value="FIBER" required' + (running ? " disabled" : "") + '></label></fieldset><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingPoint")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingLocation")) + '<input name="location" value="' + escapeHtml(school.address || "") + '" required' + (running ? " disabled" : "") + '></label></fieldset><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingContract")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingContractNo")) + '<input name="contract_no" type="text"' + (running ? " disabled" : "") + '></label><label>' + escapeHtml(i18n.t("admin.onboardingValidFrom")) + '<input name="valid_from" type="datetime-local"' + (running ? " disabled" : "") + '></label><label>' + escapeHtml(i18n.t("admin.onboardingValidTo")) + '<input name="valid_to" type="datetime-local"' + (running ? " disabled" : "") + '></label><label>' + escapeHtml(i18n.t("admin.onboardingContractDate")) + '<input name="contract_date" type="datetime-local"' + (running ? " disabled" : "") + '></label></fieldset><div class="form-actions"><button type="submit" class="primary-action"' + (running ? " disabled" : "") + '>' + escapeHtml(running ? i18n.t("admin.onboardingRunning") : onboarding.state === "error" ? i18n.t("admin.onboardingRetry") : i18n.t("admin.onboardingStart")) + '</button><button type="button" class="secondary-action" data-school-onboarding-cancel' + (running ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.onboardingCancel")) + '</button></div></form>';
   const nav = '<nav class="admin-resource-nav" aria-label="' + escapeHtml(i18n.t("admin.resource")) + '">' + allowedResources.map((resource) => '<button type="button" class="resource-nav-item' + (resource.key === view.resource ? " active" : "") + '" data-admin-onboarding-resource="' + escapeHtml(resource.key) + '"><span>' + escapeHtml(adminResourceLabel(resource.key)) + '</span></button>').join("") + '</nav>';
   if (view.state === "loading" || view.state === "idle") {
     root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><p class="surface-state" role="status">' + escapeHtml(i18n.t("admin.loading")) + '</p></section><aside class="inspector admin-editor-pane"></aside></div>';
   } else if (view.state === "error") {
     root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><p class="surface-state error" role="alert">' + escapeHtml(i18n.t("admin.unavailable")) + '</p></section><aside class="inspector admin-editor-pane"></aside></div>';
   } else {
-    root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.admin")) + '</span><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><small>' + escapeHtml(i18n.t("admin.onboardingSubtitle")) + '</small></div></header><section class="onboarding-school-card"><span class="surface-eyebrow">' + escapeHtml(i18n.t("school.registry")) + '</span><h2>' + escapeHtml(popupSchoolName(school)) + '</h2><p>' + escapeHtml(school.school_id || school.registryId || i18n.t("empty.value")) + ' · ' + escapeHtml(school.district || i18n.t("empty.value")) + '</p><p>' + escapeHtml(school.address || i18n.t("empty.value")) + '</p></section><ol class="onboarding-steps">' + progress + '</ol>' + errorPanel + '</section><aside class="inspector admin-editor-pane">' + form + resultPanel + '</aside></div>';
+    root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.admin")) + '</span><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><small>' + escapeHtml(i18n.t("admin.onboardingSubtitle")) + '</small></div></header><section class="onboarding-school-card"><span class="surface-eyebrow">' + escapeHtml(i18n.t("school.registry")) + '</span><h2>' + escapeHtml(popupSchoolName(school)) + '</h2><p>' + escapeHtml(school.school_id || school.registryId || i18n.t("empty.value")) + ' · ' + escapeHtml(school.district || i18n.t("empty.value")) + '</p><p>' + escapeHtml(school.address || i18n.t("empty.value")) + '</p><p>' + escapeHtml(i18n.t("field.coordinates")) + ': ' + escapeHtml(coordinateText(school)) + '</p></section><ol class="onboarding-steps">' + progress + '</ol>' + errorPanel + '</section><aside class="inspector admin-editor-pane">' + form + resultPanel + '</aside></div>';
   }
   root.querySelector("[data-admin-refresh]")?.addEventListener("click", () => loadAdminResource({ force: true, preserveMessage: true }));
   root.querySelector("[data-school-onboarding]")?.addEventListener("submit", runSchoolMonitoringSetup);
