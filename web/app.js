@@ -135,7 +135,11 @@ function createNotificationsSurfaceState() {
 }
 
 function createAdminSurfaceState() {
-  return { state: "idle", resource: "organizations", items: [], relationships: { organizations: [], providers: [], lines: [], "monitoring-points": [] }, selectedId: "", editorIntent: "create", draftID: "", payload: "{}", search: "", mutationState: "idle", message: "", onboardingRegistryId: "", loadPromise: null, preview: null, credential: null, demoAction: "idle", demoError: "" };
+  return { state: "idle", resource: "organizations", items: [], relationships: { organizations: [], providers: [], lines: [], "monitoring-points": [] }, selectedId: "", editorIntent: "create", draftID: "", payload: "{}", search: "", mutationState: "idle", message: "", onboardingRegistryId: "", onboarding: createAdminOnboardingState(), loadPromise: null, preview: null, credential: null, demoAction: "idle", demoError: "" };
+}
+
+function createAdminOnboardingState() {
+  return { active: false, school: null, state: "idle", step: "", error: "", result: null };
 }
 
 function createAuditSurfaceState() {
@@ -729,24 +733,21 @@ function mapFields(fields) {
 function popupSchoolName(school, line) { return presentation.schoolName(school, line?.school_name); }
 function popupLine(line) {
   const status = presentation.status(line.linkwatchStatus || line.status);
-  const latest = line.latest || {};
-  const metrics = [
-    ["download", latest.download, "field.download", "unit.mbps"],
-    ["upload", latest.upload, "field.upload", "unit.mbps"],
-    ["ping", latest.ping, "field.ping", "unit.ms"],
-    ["jitter", latest.jitter, "field.jitter", "unit.ms"],
-    ["loss", latest.loss ?? latest.packet_loss, "field.loss", "unit.percent"],
-  ].filter(([, value]) => value !== undefined && value !== null && value !== "");
+  const role = line.role ? presentation.role(line.role) : i18n.t("field.line");
   const reason = status.tone !== "healthy" ? presentation.statusDescription(status.code) : "";
   return {
     title: popupSchoolName(line.registrySchool, line),
     fields: [
-      [i18n.t("field.line"), line.id], [i18n.t("field.provider"), line.provider],
+      [i18n.t("field.line"), role], [i18n.t("field.provider"), line.provider],
       [i18n.t("field.connectionType"), presentation.connectionType(line.technology)],
-      [i18n.t("field.lineRole"), presentation.role(line.role)], [i18n.t("field.status"), status.label],
       [i18n.t("field.lastObserved"), presentation.formatDate(line.latest?.at, true)],
       ...(reason ? [[i18n.t("field.problemReason"), reason]] : []),
-      ...(metrics.length ? [[i18n.t("field.metrics"), metrics.map(([, value, label, unit]) => presentation.formatNumber(value, i18n.t(unit)) + " · " + i18n.t(label)).join(", ")]] : []),
+    ],
+    technical: [
+      [i18n.t("admin.recordId"), line.id],
+      [i18n.t("field.status"), status.label],
+      [i18n.t("field.registryNumber"), line.registryId || line.registrySchool?.registryId],
+      ...(line.technology_id ? [[i18n.t("field.connectionType"), line.technology_id]] : []),
     ],
   };
 }
@@ -754,10 +755,10 @@ function popupLine(line) {
 function popupMetricsMarkup(line) {
   const latest = line?.latest || {};
   const metrics = [
-    [i18n.t("field.download"), latest.download, "unit.mbps"],
-    [i18n.t("field.upload"), latest.upload, "unit.mbps"],
-    [i18n.t("field.ping"), latest.ping, "unit.ms"],
-    [i18n.t("field.loss"), latest.loss ?? latest.packet_loss, "unit.percent"],
+    [i18n.t("map.metricDownload"), latest.download, "unit.mbps"],
+    [i18n.t("map.metricUpload"), latest.upload, "unit.mbps"],
+    [i18n.t("map.metricPing"), latest.ping, "unit.ms"],
+    [i18n.t("map.metricLoss"), latest.loss ?? latest.packet_loss, "unit.percent"],
   ].filter(([, value]) => value !== undefined && value !== null && value !== "");
   return metrics.map(([label, value, unit]) => '<div><span>' + escapeHtml(label) + '</span><b>' + escapeHtml(presentation.formatNumber(value, i18n.t(unit))) + '</b></div>').join("");
 }
@@ -780,8 +781,9 @@ function lineSelector(linesAtSchool, selectedLineId) {
   if (linesAtSchool.length < 2) return "";
   return "<div><dt>" + escapeHtml(i18n.t("field.lines")) + "</dt><dd>" + linesAtSchool.map((line) => {
     const active = line.id === selectedLineId;
+    const role = line.role ? presentation.role(line.role) : i18n.t("field.line");
     return '<button type="button" class="map-member" data-popup-line-id="' + escapeHtml(line.id) + '" aria-pressed="' + active + '">'
-      + escapeHtml(line.id) + " · " + escapeHtml(presentation.status(line.linkwatchStatus || line.status).label) + "</button>";
+      + escapeHtml(role) + '<small>' + escapeHtml([line.provider, presentation.connectionType(line.technology)].filter(Boolean).join(" · ")) + "</small></button>";
   }).join("") + "</dd></div>";
 }
 
@@ -872,7 +874,6 @@ function renderPopup(context) {
   const popup = $("#mapPopup");
   const openLineButton = $("#mapPopupOpenLine");
   const addMonitoringButton = $("#mapPopupAddMonitoring");
-  const prepareCaseButton = $("#mapPopupPrepareCase");
   const fields = $("#mapPopupFields");
   const metrics = $("#mapPopupMetrics");
   if (!popup || !fields) return;
@@ -886,11 +887,6 @@ function renderPopup(context) {
   if (addMonitoringButton) {
     addMonitoringButton.hidden = true;
     addMonitoringButton.textContent = "";
-  }
-  if (prepareCaseButton) {
-    prepareCaseButton.hidden = true;
-    prepareCaseButton.textContent = "";
-    prepareCaseButton.dataset.lineId = "";
   }
   if (metrics) {
     metrics.hidden = true;
@@ -918,7 +914,10 @@ function renderPopup(context) {
     const content = selected ? popupLine(selected) : null;
     title = popupSchoolName(selection?.school || school, selected || linesAtSchool[0]);
     summary = context.mode === "historical" ? i18n.t("map.historicalSource") : i18n.t("map.currentSource");
-    fields.innerHTML = lineSelector(linesAtSchool, selection?.selectedLineId) + (content ? mapFields(content.fields) : "");
+    const technical = content?.technical?.length
+      ? '<details class="technical-details"><summary>' + escapeHtml(i18n.t("admin.details")) + '</summary><dl>' + mapFields(content.technical) + "</dl></details>"
+      : "";
+    fields.innerHTML = lineSelector(linesAtSchool, selection?.selectedLineId) + (content ? mapFields(content.fields) + technical : "");
     if (stateElement) {
       stateElement.textContent = selected
         ? presentation.statusDescription(selected.linkwatchStatus || selected.status)
@@ -930,11 +929,6 @@ function renderPopup(context) {
     if (metrics && selected) {
       metrics.innerHTML = popupMetricsMarkup(selected);
       metrics.hidden = !metrics.childElementCount;
-    }
-    if (prepareCaseButton && selected && state.capabilities.has("provider_case.draft")) {
-      prepareCaseButton.textContent = i18n.t("providerCase.prepare");
-      prepareCaseButton.hidden = false;
-      prepareCaseButton.dataset.lineId = selected.id;
     }
   }
   $("#mapPopupTitle").textContent = title;
@@ -981,11 +975,13 @@ function openProviderCaseCreateForLine(lineID) {
 
 async function startSchoolMonitoringSetup() {
   if (!state.capabilities.has("admin.manage") || state.mapPopupContext?.kind !== "registry") return;
-  const payload = registrySchoolAdminPayload(state.mapPopupContext.school);
+  const school = state.mapPopupContext.school;
+  const payload = registrySchoolAdminPayload(school);
   if (!payload.school_id || !payload.name || !payload.district) {
     showToast("admin.registryDataIncomplete", "warn");
     return;
   }
+  state.admin.onboarding = { active: true, school: { ...school, ...payload }, state: "idle", step: "", error: "", result: null };
   state.admin.resource = "organizations";
   state.admin.selectedId = "";
   state.admin.editorIntent = "create";
@@ -997,20 +993,172 @@ async function startSchoolMonitoringSetup() {
   closeMapPopup(false);
   router.navigate("admin");
   await loadAdminResource({ force: true, preserveMessage: true });
-  const existing = state.admin.items.find((item) => String(item?.school_id || "") === payload.school_id);
-  if (existing) {
-    const existingID = String(adminRecordId(existing));
-    state.admin.selectedId = existingID;
-    state.admin.editorIntent = "update";
-    state.admin.draftID = "";
-    state.admin.payload = JSON.stringify(writableAdminPayload("organizations", existing, { id: existingID, operation: "update" }), null, 2);
-    state.admin.onboardingRegistryId = "";
-    state.admin.message = "admin.schoolAlreadyManaged";
-  } else {
-    state.admin.message = "admin.registryPrefillHint";
+  renderAdminPreservingScroll();
+  globalThis.requestAnimationFrame?.(() => $("[data-school-onboarding]")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+}
+
+function onboardingStepLabel(step) {
+  return { organization: i18n.t("field.school"), provider: i18n.t("admin.onboardingProvider"), line: i18n.t("admin.onboardingLine"), point: i18n.t("admin.onboardingPoint"), contract: i18n.t("admin.onboardingContract"), activation: i18n.t("admin.onboardingLine"), enrollment: i18n.t("admin.onboardingEnrollmentCode") }[step] || i18n.t("admin.onboardingTitle");
+}
+
+function setOnboardingStep(step) {
+  state.admin.onboarding.step = step;
+  renderAdminPreservingScroll();
+}
+
+function onboardingOrganization(organizations, schoolID) {
+  return (Array.isArray(organizations) ? organizations : []).find((item) => String(item?.school_id || "") === String(schoolID)) || null;
+}
+
+function onboardingProvider(providers, providerID, providerName) {
+  const byID = providerID ? providers.find((item) => String(item?.id || "") === String(providerID)) : null;
+  if (byID) return byID;
+  const normalizedName = String(providerName || "").trim().toLocaleLowerCase();
+  return normalizedName ? providers.find((item) => String(item?.name || "").trim().toLocaleLowerCase() === normalizedName) || null : null;
+}
+
+function onboardingLine(linesForSetup, organizationID, role, providerID) {
+  return (Array.isArray(linesForSetup) ? linesForSetup : []).find((item) => String(item?.organization_id || "") === String(organizationID)
+    && String(item?.role || "") === String(role)
+    && String(item?.status || "") !== "DELETED"
+    && (!providerID || String(item?.provider_id || "") === String(providerID))) || null;
+}
+
+function onboardingPoint(points, lineID) {
+  const sameLine = (Array.isArray(points) ? points : []).filter((item) => String(item?.line_id || "") === String(lineID));
+  return sameLine.find((item) => item?.active !== false) || sameLine[0] || null;
+}
+
+async function runSchoolMonitoringSetup(event) {
+  event.preventDefault();
+  const view = state.admin;
+  const onboarding = view.onboarding;
+  if (!onboarding.active || onboarding.state === "running") return;
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  const school = onboarding.school || {};
+  const providerID = String(values.provider_id || "").trim();
+  const providerName = String(values.provider_name || "").trim();
+  const supportContact = String(values.support_contact || "").trim();
+  const role = String(values.role || "PRIMARY").trim().toUpperCase();
+  const technology = String(values.technology || "FIBER").trim().toUpperCase();
+  const location = String(values.location || school.address || "").trim();
+  const contractNo = String(values.contract_no || "").trim();
+  if (!providerID && !providerName) {
+    onboarding.error = "admin.onboardingNoProvider";
+    onboarding.state = "error";
+    renderAdminPreservingScroll();
+    return;
+  }
+  if (!location || !technology) {
+    onboarding.error = "admin.payloadInvalid";
+    onboarding.state = "error";
+    renderAdminPreservingScroll();
+    return;
+  }
+  onboarding.state = "running";
+  onboarding.error = "";
+  onboarding.result = null;
+  renderAdminPreservingScroll();
+  try {
+    setOnboardingStep("organization");
+    let organizations = await boundaries.admin.list("organizations");
+    let organization = onboardingOrganization(organizations, school.school_id || school.registryId);
+    if (!organization) {
+      const organizationPayload = registrySchoolAdminPayload(school);
+      try {
+        organization = objectPayload(await boundaries.admin.create("organizations", organizationPayload));
+      } catch (error) {
+        if (Number(error?.status) !== 409) throw error;
+        organizations = await boundaries.admin.list("organizations");
+        organization = onboardingOrganization(organizations, school.school_id || school.registryId);
+        if (!organization) throw error;
+      }
+    }
+    if (!organization?.id) throw new Error("organization was not returned");
+
+    setOnboardingStep("provider");
+    let providers = await boundaries.admin.list("providers");
+    let provider = onboardingProvider(providers, providerID, providerName);
+    if (!provider && providerName) {
+      const newProvider = { id: adminGeneratedID("providers"), name: providerName, support_contact: supportContact, active: true };
+      try {
+        provider = objectPayload(await boundaries.admin.create("providers", newProvider));
+      } catch (error) {
+        if (Number(error?.status) !== 409) throw error;
+        providers = await boundaries.admin.list("providers");
+        provider = onboardingProvider(providers, providerID, providerName);
+        if (!provider) throw error;
+      }
+    }
+    if (!provider?.id) throw new Error("provider was not returned");
+
+    setOnboardingStep("line");
+    let managedLines = await boundaries.admin.list("lines");
+    let line = onboardingLine(managedLines, organization.id, role, provider.id);
+    const linePayload = { id: adminGeneratedID("lines"), organization_id: organization.id, provider_id: provider.id, role, technology, status: "INACTIVE" };
+    if (!line) {
+      try {
+        line = objectPayload(await boundaries.admin.create("lines", linePayload));
+      } catch (error) {
+        if (Number(error?.status) !== 409) throw error;
+        managedLines = await boundaries.admin.list("lines");
+        line = onboardingLine(managedLines, organization.id, role, provider.id);
+        if (!line) throw error;
+      }
+    }
+    if (!line?.id) throw new Error("line was not returned");
+
+    setOnboardingStep("point");
+    let points = await boundaries.admin.list("monitoring-points");
+    let point = onboardingPoint(points, line.id);
+    const pointPayload = { id: adminGeneratedID("monitoring-points"), line_id: line.id, location, is_primary: true, active: true };
+    if (!point) {
+      try {
+        point = objectPayload(await boundaries.admin.create("monitoring-points", pointPayload));
+      } catch (error) {
+        if (Number(error?.status) !== 409) throw error;
+        points = await boundaries.admin.list("monitoring-points");
+        point = onboardingPoint(points, line.id);
+        if (!point) throw error;
+      }
+    } else if (point.active === false || point.is_primary !== true || point.location !== location) {
+      point = objectPayload(await boundaries.admin.update("monitoring-points", point.id, { id: point.id, line_id: line.id, location, is_primary: true, active: true }));
+    }
+    if (!point?.id) throw new Error("monitoring point was not returned");
+
+    if (contractNo) {
+      setOnboardingStep("contract");
+      const contracts = await boundaries.admin.list("contracts", "line_id=" + encodeURIComponent(line.id));
+      const existingContract = contracts.find((item) => String(item?.contract_no || "") === contractNo);
+      if (!existingContract) await boundaries.admin.create("contracts", { line_id: line.id, valid_from: new Date().toISOString(), contract_no: contractNo });
+    }
+
+    setOnboardingStep("activation");
+    const activePayload = { id: line.id, organization_id: organization.id, provider_id: provider.id, role, technology, ...(line.technology_id ? { technology_id: line.technology_id } : {}), status: "ACTIVE" };
+    if (String(line.status || "") !== "ACTIVE" || String(line.role || "") !== role || String(line.technology || "") !== technology || String(line.provider_id || "") !== String(provider.id)) {
+      line = objectPayload(await boundaries.admin.update("lines", line.id, activePayload));
+    }
+
+    setOnboardingStep("enrollment");
+    const enrollment = objectPayload(await boundaries.admin.createEnrollmentCode(point.id));
+    onboarding.result = { organization, provider, line, point, enrollment };
+    onboarding.state = "success";
+    onboarding.step = "";
+    view.onboardingRegistryId = "";
+    view.message = "";
+    await Promise.allSettled([refreshMap(), loadAdminResource({ force: true, preserveMessage: true })]);
+  } catch (error) {
+    onboarding.state = "error";
+    onboarding.error = "admin.onboardingFailed";
   }
   renderAdminPreservingScroll();
-  globalThis.requestAnimationFrame?.(() => $("#adminEditor")?.scrollIntoView({ behavior: "smooth", block: "start" }));
+}
+
+function cancelSchoolMonitoringSetup() {
+  state.admin.onboarding = createAdminOnboardingState();
+  state.admin.onboardingRegistryId = "";
+  state.admin.message = "";
+  router.navigate("map");
 }
 
 function openMapPopup(context, trigger = null) {
@@ -1489,6 +1637,22 @@ function renderReportTable(title, headers, rows) {
   return '<section class="report-panel report-table-wrap"><h2>' + escapeHtml(title) + '</h2><table class="report-table"><thead><tr>' + headers.map((header) => "<th>" + escapeHtml(header) + "</th>").join("") + "</tr></thead><tbody>" + rows.map((row) => "<tr>" + row.map((value) => "<td>" + escapeHtml(value) + "</td>").join("") + "</tr>").join("") + "</tbody></table></section>";
 }
 
+function renderReportFacts(rows) {
+  return '<dl class="report-grid">' + rows.map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(value) + '</dd></div>').join("") + "</dl>";
+}
+
+function reportDynamicsLabel(status) {
+  const key = { AVAILABLE: "reports.dynamicsAvailable", INSUFFICIENT_DATA: "reports.dynamicsInsufficient", INCOMPARABLE: "reports.dynamicsIncomparable", NO_DATA: "reports.dynamicsNoData" }[String(status || "").toUpperCase()];
+  return key ? i18n.t(key) : i18n.t("reports.valueUnavailable");
+}
+
+function reportAvailabilityStateLabel(value) {
+  const code = String(value || "").toUpperCase();
+  if (code === "AVAILABLE" || code === "OK") return i18n.t("reports.availabilityAvailable");
+  if (code === "NO_DATA" || code === "UNKNOWN") return i18n.t("reports.availabilityNoDataState");
+  return code ? presentation.status(code).label : i18n.t("reports.valueUnavailable");
+}
+
 function renderReportsSurface() {
   const root = $("#reportsSurface");
   if (!root) return;
@@ -1513,14 +1677,43 @@ function renderReportsSurface() {
   const rankingRows = Array.isArray(analytics?.ranking) ? analytics.ranking.map((item) => [item.line_id || i18n.t("empty.value"), reportNumber(item.measurements, "", reportDiagnostics, "analytics.ranking.measurements"), reportNumber(item.valid_evidence, "", reportDiagnostics, "analytics.ranking.valid_evidence"), reportPercentage(item.contract_compliance, reportDiagnostics, "analytics.ranking.contract_compliance")]) : [];
   const analyticsPanel = view.analyticsState === "error" ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.analytics")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<div class="report-tables">' + renderReportTable(i18n.t("reports.trend"), [i18n.t("reports.to"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.availability")], trendRows) + renderReportTable(i18n.t("reports.ranking"), [i18n.t("field.line"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.contract")], rankingRows) + "</div>";
   const evidence = reportEvidenceSummary(passport, { i18n, presentation });
-  const qualityPanel = view.passportState === "error" ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2><dl class="report-grid"><div><dt>' + escapeHtml(i18n.t("reports.baseline")) + "</dt><dd>" + escapeHtml(reportAvailability(passport?.baseline_compliance, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.contract")) + "</dt><dd>" + escapeHtml(reportAvailability(passport?.contract_compliance, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.incidents")) + "</dt><dd>" + escapeHtml(reportNumber(passport?.incidents?.count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.evidenceCount")) + "</dt><dd>" + escapeHtml(reportNumber(evidence.count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.evidenceProvenance")) + "</dt><dd>" + escapeHtml(evidence.provenance) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.lastVerified")) + "</dt><dd>" + escapeHtml(evidence.lastVerified) + "</dd></div></dl>" + (passport?.sufficient_data === false ? '<p class="report-note">' + escapeHtml(i18n.t("reports.insufficient")) + "</p>" : "") + '<div class="report-evidence-action"><button class="secondary-action" type="button" data-evidence-preview>' + escapeHtml(i18n.t("reports.evidencePreview")) + '</button><p class="report-note">' + escapeHtml(i18n.t("reports.evidenceHtmlOnly")) + "</p></div></section>";
+  const passportIncident = passport?.incidents || {};
+  const availabilityPeriod = passport?.availability_period || {};
+  const passportDynamics = passport?.dynamics || {};
+  const passportRows = [
+    [i18n.t("reports.measurementsReceived"), reportNumber(passport?.measurements_received)],
+    [i18n.t("reports.measurementsExpected"), reportNumber(passport?.measurements_expected)],
+    [i18n.t("reports.completeness"), reportAvailability(passport?.data_completeness_pct, i18n)],
+    [i18n.t("reports.baseline"), reportAvailability(passport?.baseline_compliance, i18n)],
+    [i18n.t("reports.contract"), reportAvailability(passport?.contract_compliance, i18n)],
+    [i18n.t("reports.availability"), reportAvailability(passport?.availability_pct, i18n)],
+    [i18n.t("reports.availabilityThreshold"), reportAvailability(passport?.availability_threshold, i18n)],
+    [i18n.t("reports.availabilityState"), reportAvailabilityStateLabel(passport?.availability_status)],
+    [i18n.t("reports.availabilityObserved"), reportNumber(passport?.observed_duration_minutes, i18n.t("reports.minutes"))],
+    [i18n.t("reports.availabilityUnavailable"), reportNumber(passport?.unavailable_duration_minutes, i18n.t("reports.minutes"))],
+    [i18n.t("reports.availabilityNoData"), reportNumber(passport?.no_data_duration_minutes, i18n.t("reports.minutes"))],
+    [i18n.t("reports.availabilityValid"), reportNumber(passport?.availability_valid_count ?? availabilityPeriod.valid_count)],
+    [i18n.t("reports.availabilityInvalid"), reportNumber(passport?.availability_invalid_count ?? availabilityPeriod.invalid_count)],
+    [i18n.t("reports.availabilityUnknown"), reportNumber(passport?.availability_unknown_count ?? availabilityPeriod.unknown_count)],
+    [i18n.t("reports.incidents"), reportNumber(passportIncident.count)],
+    [i18n.t("reports.incidentsDuration"), reportNumber(passportIncident.total_duration_minutes, i18n.t("reports.minutes"))],
+    [i18n.t("reports.incidentsRecurrence"), reportNumber(passportIncident.recurrence_count)],
+    [i18n.t("reports.incidentsRecovery"), reportNumber(passportIncident.confirmed_recovery_count)],
+    [i18n.t("reports.sufficientData"), passport?.sufficient_data == null ? i18n.t("reports.valueUnavailable") : i18n.t(passport.sufficient_data ? "reports.yes" : "reports.no")],
+  ];
+  const dynamicsRows = [[i18n.t("reports.dynamicsStatus"), reportDynamicsLabel(passportDynamics.status)]];
+  if (passportDynamics.current) dynamicsRows.push([i18n.t("reports.availability") + " · " + i18n.t("reports.current"), reportAvailability(passportDynamics.current.availability_pct, i18n)]);
+  if (passportDynamics.previous) dynamicsRows.push([i18n.t("reports.availability") + " · " + i18n.t("reports.previous"), reportAvailability(passportDynamics.previous.availability_pct, i18n)]);
+  if (passportDynamics.delta?.availability_pct !== undefined) dynamicsRows.push([i18n.t("reports.availability") + " · Δ", reportAvailability(passportDynamics.delta.availability_pct, i18n)]);
+  const passportPanel = view.passportState === "error" ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<section class="report-panel report-passport"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2>' + renderReportFacts(passportRows) + '<p class="report-note">' + escapeHtml(i18n.t("reports.historicalOnly")) + '</p><section class="report-subpanel"><h3>' + escapeHtml(i18n.t("reports.dynamics")) + '</h3>' + renderReportFacts(dynamicsRows) + '</section></section>';
+  const evidencePanel = '<section class="report-panel evidence-stage"><h2>' + escapeHtml(i18n.t("reports.confirmation")) + '</h2>' + renderReportFacts([[i18n.t("reports.evidenceCount"), reportNumber(evidence.count)], [i18n.t("reports.evidenceProvenance"), evidence.provenance], [i18n.t("reports.lastVerified"), evidence.lastVerified]]) + '<p class="report-note">' + escapeHtml(i18n.t("reports.evidenceHtmlOnly")) + '</p><div class="report-evidence-action"><button class="secondary-action" type="button" data-evidence-preview>' + escapeHtml(i18n.t("reports.evidencePreview")) + '</button></div></section>';
   const canExport = state.capabilities.has("report.export");
   const preview = view.preview;
   const previewText = view.previewState === "error" ? i18n.t("reports.previewUnavailable") : preview ? i18n.t(preview.limited ? "reports.previewLimited" : "reports.previewRows", { count: preview.count }) : "";
   const exportPanel = '<section class="report-panel report-export"><h2>' + escapeHtml(i18n.t("reports.export")) + (canExport ? "</h2><form data-report-export><label>" + escapeHtml(i18n.t("reports.exportKind")) + '<select name="kind"><option value="raw">' + escapeHtml(i18n.t("reports.exportRaw")) + '</option><option value="aggregate">' + escapeHtml(i18n.t("reports.exportAggregate")) + '</select></label><label>' + escapeHtml(i18n.t("reports.exportFormat")) + '<select name="format"><option value="csv">CSV</option><option value="xlsx">XLSX</option><option value="json">JSON</option></select></label><button class="secondary-action" type="button" data-export-preview>' + escapeHtml(i18n.t("reports.preview")) + '</button><button class="primary-action" type="submit">' + escapeHtml(i18n.t("reports.download")) + "</button></form>" + (previewText ? '<p class="surface-state' + (view.previewState === "error" ? " error" : "") + '">' + escapeHtml(previewText) + (preview?.columns?.length ? " " + escapeHtml(i18n.t("reports.previewColumns")) + ": " + escapeHtml(reportColumnLabels(preview.columns).join(", ")) : "") + "</p>" : "") : '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.exportUnavailable")) + "</p>") + "</section>";
   const reportTypes = [["aggregate", "reports.summary"], ["analytics", "reports.analytics"], ["passport", "reports.quality"], ["evidence", "reports.confirmation"], ["export", "reports.export"]];
   if (!reportTypes.some(([type]) => type === view.reportType)) view.reportType = "aggregate";
-  const stage = view.reportType === "analytics" ? analyticsPanel : view.reportType === "passport" ? qualityPanel : view.reportType === "evidence" ? '<section class="report-panel evidence-stage"><h2>' + escapeHtml(i18n.t("reports.confirmation")) + '</h2><p class="report-note">' + escapeHtml(i18n.t("reports.evidenceHtmlOnly")) + '</p>' + qualityPanel + '</section>' : view.reportType === "export" ? exportPanel : '<div class="report-overview">' + aggregatePanel + qualityPanel + '</div>';
+  const stage = view.reportType === "analytics" ? analyticsPanel : view.reportType === "passport" ? passportPanel : view.reportType === "evidence" ? evidencePanel : view.reportType === "export" ? exportPanel : '<div class="report-overview">' + aggregatePanel + '</div>';
   const typeNav = reportTypes.map(([type, label]) => '<button type="button" class="report-type' + (view.reportType === type ? " active" : "") + '" data-report-type="' + escapeHtml(type) + '">' + escapeHtml(i18n.t(label)) + '</button>').join("");
   root.innerHTML = '<div class="template-screen structural-surface workspace split template-workspace reports-workspace"><aside class="pane report-query-pane"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.reports")) + '</span><h1>' + escapeHtml(i18n.t("reports.title")) + '</h1><small>' + escapeHtml(i18n.t("reports.subtitle")) + '</small></div><button class="icon-button" type="button" data-reports-refresh aria-label="' + escapeHtml(i18n.t("reports.refresh")) + '">' + iconMarkup("refresh", { size: 17 }) + '</button></header><nav class="report-type-nav" aria-label="' + escapeHtml(i18n.t("reports.title")) + '">' + typeNav + '</nav>' + form + '</aside><main class="inspector report-stage" aria-live="polite">' + stage + '</main></div>';
   const reportDetails = reportTechnicalDetails(reportDiagnostics);
@@ -1686,6 +1879,16 @@ function ingestNotifications(items) {
   if (view.open) markNotificationsSeen(nextItems);
 }
 
+function renderNotificationsState(root, view, stateName) {
+  const loading = stateName === "loading";
+  const message = i18n.t(loading ? "notification.loading" : "notification.unavailable");
+  const action = loading ? "" : '<button type="button" class="primary-action" data-notifications-retry>' + escapeHtml(i18n.t("notification.refresh")) + "</button>";
+  root.innerHTML = '<div class="template-screen structural-surface workspace split template-workspace notification-workspace"><aside class="pane notification-list-pane"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.notifications")) + '</span><h1>' + escapeHtml(i18n.t("notification.title")) + '</h1></div><div class="panehead-actions"><button type="button" class="icon-button" data-notifications-refresh aria-label="' + escapeHtml(i18n.t("notification.refresh")) + '">' + iconMarkup("refresh", { size: 17 }) + '</button><button type="button" class="icon-button" data-notifications-close aria-label="' + escapeHtml(notificationCloseLabel()) + '">' + iconMarkup("x", { size: 17 }) + '</button></div></header><div class="list template-list"><div class="surface-state' + (loading ? "" : " error") + '" role="status"><strong>' + escapeHtml(message) + '</strong>' + (loading ? "" : '<span>' + escapeHtml(i18n.t("notification.tryAgain")) + '</span>') + action + '</div></div></aside><section class="inspector template-inspector notification-inspector" aria-live="polite"><div class="empty-state"><strong>' + escapeHtml(i18n.t("notification.title")) + '</strong><span>' + escapeHtml(message) + '</span></div></section></div>';
+  root.querySelector("[data-notifications-close]")?.addEventListener("click", closeNotifications);
+  root.querySelector("[data-notifications-refresh]")?.addEventListener("click", () => loadNotifications({ force: true }));
+  root.querySelector("[data-notifications-retry]")?.addEventListener("click", () => loadNotifications({ force: true }));
+}
+
 function renderNotificationsSurface() {
   const root = $("#notificationsSurface");
   const button = $("#notificationsButton");
@@ -1700,6 +1903,14 @@ function renderNotificationsSurface() {
   if (!root) return;
   root.hidden = !allowed || (!view.open && !routeActive);
   if (!allowed || (!view.open && !routeActive)) return;
+  if (view.state === "idle" || view.state === "loading") {
+    renderNotificationsState(root, view, "loading");
+    return;
+  }
+  if (view.state === "error") {
+    renderNotificationsState(root, view, "error");
+    return;
+  }
   const availableStatuses = ["", ...new Set(["SENT", "PENDING", "FAILED", "GENERATED", "DELIVERING", "DELIVERY_FAILED", ...view.items.flatMap((item) => [item?.delivery_status, item?.status]).filter(Boolean).map((value) => String(value).toUpperCase())])];
   const filteredItems = view.items.filter((item) => !view.filterStatus || String(item?.delivery_status || item?.status || "").toUpperCase() === view.filterStatus);
   if (!filteredItems.some((item) => String(item?.id) === String(view.selectedId))) view.selectedId = filteredItems[0]?.id || null;
@@ -2066,6 +2277,61 @@ function renderAdminDemoControls(view) {
   return '<section class="admin-demo-panel"><div><h2>' + escapeHtml(i18n.t("admin.demoTitle")) + '</h2><p>' + escapeHtml(i18n.t("admin.demoDescription")) + '</p></div><div class="admin-demo-actions"><button type="button" class="secondary-action" data-admin-demo="healthy"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoHealthy")) + '</button><button type="button" class="secondary-action" data-admin-demo="degrade"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoDegrade")) + '</button><button type="button" class="secondary-action" data-admin-demo="recover"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoRecover")) + '</button><button type="button" class="secondary-action" data-admin-demo="outage"' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoOutage")) + '</button><button type="button" class="secondary-action" data-admin-demo-reset' + (busy ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.demoReset")) + '</button></div>' + error + '</section>';
 }
 
+function renderAdminOnboardingSurface(root, view, allowedResources, header) {
+  const onboarding = view.onboarding;
+  const school = onboarding.school || {};
+  const relationships = view.relationships || {};
+  const providers = Array.isArray(relationships.providers) ? relationships.providers : [];
+  const existingOrganization = onboardingOrganization(relationships.organizations, school.school_id || school.registryId);
+  const steps = ["organization", "provider", "line", "point", "contract", "activation", "enrollment"];
+  const currentStep = onboardingStepLabel(onboarding.step);
+  const progress = steps.map((step) => {
+    const complete = onboarding.state === "success" || (step === "organization" && existingOrganization);
+    const current = onboarding.state === "running" && step === onboarding.step;
+    return '<li class="onboarding-step' + (complete ? " complete" : current ? " current" : "") + '"><span>' + (complete ? "✓" : "") + '</span><div><b>' + escapeHtml(onboardingStepLabel(step)) + '</b>' + (current ? '<small>' + escapeHtml(i18n.t("admin.onboardingRunning")) + '</small>' : "") + '</div></li>';
+  }).join("");
+  const providerOptions = ['<option value="">' + escapeHtml(i18n.t("admin.onboardingNewProvider")) + '</option>'].concat(providers.filter((provider) => provider?.id).map((provider) => '<option value="' + escapeHtml(String(provider.id)) + '">' + escapeHtml(String(provider.name || provider.id)) + '</option>')).join("");
+  const result = onboarding.result;
+  const enrollment = result?.enrollment;
+  const resultPanel = onboarding.state === "success" && result ? '<section class="onboarding-result"><h2>' + escapeHtml(i18n.t("admin.onboardingResult")) + '</h2><dl class="detail-grid"><div><dt>' + escapeHtml(i18n.t("admin.onboardingProviderValue")) + '</dt><dd>' + escapeHtml(result.provider?.name || result.provider?.id || i18n.t("empty.value")) + '</dd></div><div><dt>' + escapeHtml(i18n.t("admin.onboardingLineValue")) + '</dt><dd>' + escapeHtml(result.line?.id || i18n.t("empty.value")) + '</dd></div><div><dt>' + escapeHtml(i18n.t("admin.onboardingPointValue")) + '</dt><dd>' + escapeHtml(result.point?.location || result.point?.id || i18n.t("empty.value")) + '</dd></div><div><dt>' + escapeHtml(i18n.t("admin.onboardingExpires")) + '</dt><dd>' + escapeHtml(presentation.formatDate(enrollment?.expires_at, true)) + '</dd></div></dl><label class="onboarding-code"><span>' + escapeHtml(i18n.t("admin.onboardingEnrollmentCode")) + '</span><div><code>' + escapeHtml(enrollment?.code || i18n.t("empty.value")) + '</code><button type="button" class="secondary-action" data-onboarding-copy>' + escapeHtml(i18n.t("admin.copy")) + '</button></div></label><p class="surface-state" role="status">' + escapeHtml(i18n.t("admin.onboardingSuccess")) + '</p></section>' : "";
+  const errorPanel = onboarding.state === "error" ? '<p class="surface-state error" role="alert">' + escapeHtml(i18n.t(onboarding.error || "admin.onboardingFailed")) + (onboarding.step ? '<span>' + escapeHtml(i18n.t("admin.onboardingStep") + ": " + currentStep) + '</span>' : "") + '</p>' : "";
+  const running = onboarding.state === "running";
+  const form = '<form class="school-onboarding-form" data-school-onboarding><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingProvider")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingExistingProvider")) + '<select name="provider_id"' + (running ? " disabled" : "") + '>' + providerOptions + '</select></label><label>' + escapeHtml(i18n.t("admin.onboardingProviderName")) + '<input name="provider_name" type="text"' + (running ? " disabled" : "") + '></label><label>' + escapeHtml(i18n.t("admin.onboardingSupportContact")) + '<input name="support_contact" type="text"' + (running ? " disabled" : "") + '></label></fieldset><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingLine")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingRole")) + '<select name="role"' + (running ? " disabled" : "") + '><option value="PRIMARY">' + escapeHtml(presentation.role("PRIMARY")) + '</option><option value="RESERVE">' + escapeHtml(presentation.role("RESERVE")) + '</option></select></label><label>' + escapeHtml(i18n.t("admin.onboardingTechnology")) + '<input name="technology" value="FIBER" required' + (running ? " disabled" : "") + '></label></fieldset><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingPoint")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingLocation")) + '<input name="location" value="' + escapeHtml(school.address || "") + '" required' + (running ? " disabled" : "") + '></label></fieldset><fieldset><legend>' + escapeHtml(i18n.t("admin.onboardingContract")) + '</legend><label>' + escapeHtml(i18n.t("admin.onboardingContractNo")) + '<input name="contract_no" type="text"' + (running ? " disabled" : "") + '></label></fieldset><div class="form-actions"><button type="submit" class="primary-action"' + (running ? " disabled" : "") + '>' + escapeHtml(running ? i18n.t("admin.onboardingRunning") : onboarding.state === "error" ? i18n.t("admin.onboardingRetry") : i18n.t("admin.onboardingStart")) + '</button><button type="button" class="secondary-action" data-school-onboarding-cancel' + (running ? " disabled" : "") + '>' + escapeHtml(i18n.t("admin.onboardingCancel")) + '</button></div></form>';
+  const nav = '<nav class="admin-resource-nav" aria-label="' + escapeHtml(i18n.t("admin.resource")) + '">' + allowedResources.map((resource) => '<button type="button" class="resource-nav-item' + (resource.key === view.resource ? " active" : "") + '" data-admin-onboarding-resource="' + escapeHtml(resource.key) + '"><span>' + escapeHtml(adminResourceLabel(resource.key)) + '</span></button>').join("") + '</nav>';
+  if (view.state === "loading" || view.state === "idle") {
+    root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><p class="surface-state" role="status">' + escapeHtml(i18n.t("admin.loading")) + '</p></section><aside class="inspector admin-editor-pane"></aside></div>';
+  } else if (view.state === "error") {
+    root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><p class="surface-state error" role="alert">' + escapeHtml(i18n.t("admin.unavailable")) + '</p></section><aside class="inspector admin-editor-pane"></aside></div>';
+  } else {
+    root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.admin")) + '</span><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><small>' + escapeHtml(i18n.t("admin.onboardingSubtitle")) + '</small></div></header><section class="onboarding-school-card"><span class="surface-eyebrow">' + escapeHtml(i18n.t("school.registry")) + '</span><h2>' + escapeHtml(popupSchoolName(school)) + '</h2><p>' + escapeHtml(school.school_id || school.registryId || i18n.t("empty.value")) + ' · ' + escapeHtml(school.district || i18n.t("empty.value")) + '</p><p>' + escapeHtml(school.address || i18n.t("empty.value")) + '</p></section><ol class="onboarding-steps">' + progress + '</ol>' + errorPanel + '</section><aside class="inspector admin-editor-pane">' + form + resultPanel + '</aside></div>';
+  }
+  root.querySelector("[data-admin-refresh]")?.addEventListener("click", () => loadAdminResource({ force: true, preserveMessage: true }));
+  root.querySelector("[data-school-onboarding]")?.addEventListener("submit", runSchoolMonitoringSetup);
+  root.querySelector("[data-school-onboarding-cancel]")?.addEventListener("click", cancelSchoolMonitoringSetup);
+  root.querySelector("[data-onboarding-copy]")?.addEventListener("click", async () => {
+    try {
+      if (!navigator.clipboard?.writeText || !enrollment?.code) throw new Error("clipboard unavailable");
+      await navigator.clipboard.writeText(enrollment.code);
+      showToast("admin.copied");
+    } catch (error) {
+      showToast("admin.copyFailed", "warn");
+    }
+  });
+  root.querySelectorAll("[data-admin-onboarding-resource]").forEach((button) => button.addEventListener("click", () => {
+    const resource = button.dataset.adminOnboardingResource;
+    if (!resource || resource === view.resource) return;
+    view.onboarding = createAdminOnboardingState();
+    view.onboardingRegistryId = "";
+    view.resource = resource;
+    view.selectedId = "";
+    view.editorIntent = resource === "devices" ? "register" : resource === "schedule" ? "update" : "create";
+    view.draftID = "";
+    view.payload = "{}";
+    view.message = "";
+    loadAdminResource({ force: true });
+  }));
+}
+
 function renderAdminPreservingScroll() {
   const root = $("#adminSurface");
   const scrollTop = root?.scrollTop || 0;
@@ -2110,6 +2376,10 @@ function renderAdminSurface() {
   if (!allowedResources.some((resource) => resource.key === view.resource)) view.resource = allowedResources[0]?.key || "organizations";
   const options = allowedResources.map((resource) => '<option value="' + escapeHtml(resource.key) + '"' + (resource.key === view.resource ? " selected" : "") + '>' + escapeHtml(adminResourceLabel(resource.key)) + '</option>').join("");
   const header = '<header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.admin")) + '</span><h1>' + escapeHtml(i18n.t("admin.title")) + '</h1><small>' + escapeHtml(i18n.t("admin.subtitle")) + '</small></div><button type="button" class="icon-button" data-admin-refresh aria-label="' + escapeHtml(i18n.t("admin.refresh")) + '">' + iconMarkup("refresh", { size: 17 }) + '</button></header>';
+  if (view.onboarding?.active) {
+    renderAdminOnboardingSurface(root, view, allowedResources, header);
+    return;
+  }
   if (view.state === "loading" || view.state === "idle") {
     root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace"><aside class="pane admin-resource-pane">' + header + '<p class="surface-state" role="status">' + escapeHtml(i18n.t("admin.loading")) + '</p></aside><section class="pane"></section><aside class="inspector"></aside></div>';
     root.querySelector("[data-admin-refresh]")?.addEventListener("click", () => loadAdminResource({ force: true }));
@@ -2827,7 +3097,12 @@ function renderSelectedProviderCase() {
   const item = presentProviderCase(providerView.detail, { i18n, presentation });
   const actions = providerCaseActions(providerView.detail, state.capabilities);
   const detail = providerView.detail;
-  const metadata = '<div class="facts"><div class="fact"><span>' + escapeHtml(i18n.t("providerCase.source")) + '</span><b>' + escapeHtml(item.sourceLabel) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("providerCase.status")) + '</span><b>' + escapeHtml(item.statusLabel) + ' · ' + escapeHtml(item.deliveryLabel) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("field.school")) + '</span><b>' + escapeHtml(detail.organization_name || detail.school_name || i18n.t("school.noOfficialName")) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("field.provider")) + '</span><b>' + escapeHtml(detail.provider_name || i18n.t("empty.value")) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("field.line")) + '</span><b>' + escapeHtml(detail.line_id || i18n.t("empty.value")) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("providerCase.createdAt")) + '</span><b>' + escapeHtml(item.createdAtLabel) + '</b></div></div><dl class="detail-grid provider-case-fields"><div><dt>' + escapeHtml(i18n.t("providerCase.lastVerified")) + '</dt><dd>' + escapeHtml(item.lastVerifiedLabel) + '</dd></div><div><dt>' + escapeHtml(i18n.t("providerCase.provenance")) + '</dt><dd>' + escapeHtml(item.provenanceLabel) + '</dd></div>' + (item.externalReference ? '<div><dt>' + escapeHtml(i18n.t("providerCase.reference")) + '</dt><dd>' + escapeHtml(item.externalReference) + '</dd></div>' : '') + (item.status === "SENT" ? '<div><dt>' + escapeHtml(i18n.t("providerCase.sentAt")) + '</dt><dd>' + escapeHtml(item.sentAtLabel) + '</dd></div>' : '') + '</dl>';
+  const summary = incidentSurfaceState().cases.find((candidate) => String(candidate?.id) === String(providerView.selectedId)) || {};
+  const schoolName = detail.organization_name || detail.school_name || summary.organization_name || summary.school_name || i18n.t("school.noOfficialName");
+  const providerName = detail.provider_name || summary.provider_name || i18n.t("empty.value");
+  const lineID = detail.line_id || summary.line_id || detail.incident?.line_id || i18n.t("empty.value");
+  const incidentReference = detail.incident_no || summary.incident_no || detail.incident?.incident_no || (detail.incident_id || summary.incident_id ? i18n.t("incidents.number") + " #" + (detail.incident_id || summary.incident_id) : "");
+  const metadata = '<div class="facts"><div class="fact"><span>' + escapeHtml(i18n.t("providerCase.source")) + '</span><b>' + escapeHtml(item.sourceLabel) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("providerCase.status")) + '</span><b>' + escapeHtml(item.statusLabel) + ' · ' + escapeHtml(item.deliveryLabel) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("field.school")) + '</span><b>' + escapeHtml(schoolName) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("field.provider")) + '</span><b>' + escapeHtml(providerName) + '</b></div><div class="fact"><span>' + escapeHtml(i18n.t("field.line")) + '</span><b>' + escapeHtml(lineID) + '</b></div>' + (incidentReference ? '<div class="fact"><span>' + escapeHtml(i18n.t("field.incident")) + '</span><b>' + escapeHtml(incidentReference) + '</b></div>' : "") + '<div class="fact"><span>' + escapeHtml(i18n.t("providerCase.createdAt")) + '</span><b>' + escapeHtml(item.createdAtLabel) + '</b></div></div><dl class="detail-grid provider-case-fields"><div><dt>' + escapeHtml(i18n.t("providerCase.lastVerified")) + '</dt><dd>' + escapeHtml(item.lastVerifiedLabel) + '</dd></div><div><dt>' + escapeHtml(i18n.t("providerCase.provenance")) + '</dt><dd>' + escapeHtml(item.provenanceLabel) + '</dd></div>' + (item.externalReference ? '<div><dt>' + escapeHtml(i18n.t("providerCase.reference")) + '</dt><dd>' + escapeHtml(item.externalReference) + '</dd></div>' : '') + (item.status === "SENT" ? '<div><dt>' + escapeHtml(i18n.t("providerCase.sentAt")) + '</dt><dd>' + escapeHtml(item.sentAtLabel) + '</dd></div>' : '') + '</dl>';
   const automatic = providerView.generated?.provider ? '<p class="detail-muted">' + escapeHtml(i18n.t("providerCase.automaticDraft")) + "</p>" : "";
   const closedNotice = actions.parentClosed ? '<p class="closed-readonly" role="status">' + escapeHtml(i18n.t("providerCase.closedReadOnly")) + "</p>" : "";
   const draft = item.text ? '<label class="provider-case-text"><span>' + escapeHtml(i18n.t("providerCase.text")) + '</span><textarea data-provider-case-text maxlength="32768"' + (actions.canEdit ? "" : " readonly") + ">" + escapeHtml(item.text) + "</textarea></label>" : '<p class="provider-case-error">' + escapeHtml(i18n.t("providerCase.textUnavailable")) + "</p>";
@@ -3620,7 +3895,6 @@ function bindEvents() {
   $("#mapPopupClose")?.addEventListener("click", () => closeMapPopup());
   $("#mapPopupOpenLine")?.addEventListener("click", openSelectedSchoolDetail);
   $("#mapPopupAddMonitoring")?.addEventListener("click", startSchoolMonitoringSetup);
-  $("#mapPopupPrepareCase")?.addEventListener("click", (event) => openProviderCaseCreateForLine(event.currentTarget.dataset.lineId));
   $("#drawerClose")?.addEventListener("click", closeDrawer);
   $("#drawerBackdrop")?.addEventListener("click", closeDrawer);
   $("#mapZoomIn")?.addEventListener("click", () => mapControlAction("zoomIn"));

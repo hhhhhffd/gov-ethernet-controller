@@ -164,6 +164,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .account-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; display: grid; min-width: 210px; gap: 3px; padding: 8px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface-raised); box-shadow: var(--shadow-float); }
 .account-menu button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 38px; padding: 0 10px; border-radius: 7px; background: transparent; color: var(--color-ink-secondary); text-align: start; }
 .account-menu button:hover { background: var(--color-surface-strong); color: var(--color-ink); }
+.account-menu .account-menu-route-legacy { display: none !important; }
 .workspace-content { position: relative; min-height: 0; flex: 1; overflow: hidden; }
 
 /* Map workspace */
@@ -448,9 +449,9 @@ form label { color: var(--color-ink-secondary); font-size: 12px; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 /* Route and viewport reconciliation */
-.workspace[data-route="incidents"] #mapWrap, .workspace[data-route="reports"] #mapWrap, .workspace[data-route="admin"] #mapWrap, .workspace[data-route="audit"] #mapWrap { visibility: hidden; opacity: 0; pointer-events: none; transform: translateY(4px); }
+.workspace[data-route="incidents"] #mapWrap, .workspace[data-route="situations"] #mapWrap, .workspace[data-route="cases"] #mapWrap, .workspace[data-route="reports"] #mapWrap, .workspace[data-route="admin"] #mapWrap, .workspace[data-route="audit"] #mapWrap { visibility: hidden; opacity: 0; pointer-events: none; transform: translateY(4px); }
 .workspace[data-route="map"] .incidents-surface, .workspace[data-route="map"] .reports-surface, .workspace[data-route="map"] .secondary-surface { display: none; }
-.workspace[data-route="incidents"] .reports-surface, .workspace[data-route="incidents"] .secondary-surface, .workspace[data-route="reports"] .incidents-surface, .workspace[data-route="reports"] .secondary-surface, .workspace[data-route="admin"] .incidents-surface, .workspace[data-route="admin"] .reports-surface, .workspace[data-route="admin"] #auditSurface, .workspace[data-route="audit"] .incidents-surface, .workspace[data-route="audit"] .reports-surface, .workspace[data-route="audit"] #adminSurface { display: none; }
+.workspace[data-route="incidents"] .reports-surface, .workspace[data-route="incidents"] .secondary-surface, .workspace[data-route="situations"] .reports-surface, .workspace[data-route="situations"] .secondary-surface, .workspace[data-route="cases"] .reports-surface, .workspace[data-route="cases"] .secondary-surface, .workspace[data-route="reports"] .incidents-surface, .workspace[data-route="reports"] .secondary-surface, .workspace[data-route="admin"] .incidents-surface, .workspace[data-route="admin"] .reports-surface, .workspace[data-route="admin"] #auditSurface, .workspace[data-route="audit"] .incidents-surface, .workspace[data-route="audit"] .reports-surface, .workspace[data-route="audit"] #adminSurface { display: none; }
 
 @media (max-width: 1199px) {
   .app-rail { flex-basis: 64px; width: 64px; padding-inline: 6px; }
@@ -1285,13 +1286,13 @@ body { background: var(--color-canvas); color: var(--color-ink-secondary); font-
 /* The map follows the template's actual two-part screen: a persistent school
    panel and a Leaflet canvas. The panel is in the grid, not painted over the
    map as a legacy floating card. */
-.map-screen.map-workspace { display: grid; grid-template-columns: var(--panel-width) minmax(0, 1fr); }
-.map-screen .map-panel { position: relative; inset: auto; z-index: 10; grid-column: 1; width: auto; max-height: none; border: 0; border-inline-end: 1px solid var(--color-border); border-radius: 0; box-shadow: none; }
-.map-screen .map-area { position: relative; min-width: 0; min-height: 0; overflow: hidden; grid-column: 2; }
-.map-screen .map-area .leaflet-map { position: absolute; inset: 0; }
-.map-screen .map-area .map-meta { left: 18px; }
-.map-screen .map-popup.mapcard { width: min(360px, calc(100% - 28px)); border-radius: 18px; }
-.map-screen .map-popup .map-popup-fields { padding-inline: 18px; }
+.map-workspace { display: grid; grid-template-columns: var(--panel-width) minmax(0, 1fr); }
+.map-workspace .map-panel { position: relative; inset: auto; z-index: 10; grid-column: 1; width: auto; max-height: none; border: 0; border-inline-end: 1px solid var(--color-border); border-radius: 0; box-shadow: none; }
+.map-workspace .map-area { position: relative; min-width: 0; min-height: 0; overflow: hidden; grid-column: 2; }
+.map-workspace .map-area .leaflet-map { position: absolute; inset: 0; }
+.map-workspace .map-area .map-meta { left: 18px; }
+.map-workspace .map-popup.mapcard { width: min(360px, calc(100% - 28px)); border-radius: 18px; }
+.map-workspace .map-popup .map-popup-fields { padding-inline: 18px; }
 .metricsline { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; padding: 0 18px 11px; }
 .metricsline > div { min-width: 0; padding: 8px 7px; border-radius: 8px; background: var(--color-surface-strong); }
 .metricsline span, .metricsline b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1299,9 +1300,9 @@ body { background: var(--color-canvas); color: var(--color-ink-secondary); font-
 .metricsline b { margin-top: 3px; color: var(--color-ink); font-size: 10.5px; }
 
 @media (max-width: 760px) {
-  .map-screen.map-workspace { display: block; }
-  .map-screen .map-panel { position: absolute; inset: 0 0 auto; z-index: 10; width: auto; max-height: min(430px, 100%); border-inline-end: 0; border-bottom: 1px solid var(--color-border); }
-  .map-screen .map-area { position: absolute; inset: 0; }
-  .map-screen .map-area .leaflet-map { inset: min(430px, 100%) 0 0; }
-  .map-screen .map-area .map-meta { left: 12px; }
+  .map-workspace { display: block; }
+  .map-workspace .map-panel { position: absolute; inset: 0 0 auto; z-index: 10; width: auto; max-height: min(430px, 100%); border-inline-end: 0; border-bottom: 1px solid var(--color-border); }
+  .map-workspace .map-area { position: absolute; inset: 0; }
+  .map-workspace .map-area .leaflet-map { inset: min(430px, 100%) 0 0; }
+  .map-workspace .map-area .map-meta { left: 12px; }
 }

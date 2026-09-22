@@ -219,14 +219,21 @@
   function constrainPopupToViewport() {
     const popup = state.popupElement;
     if (!popupIsOpen(popup) || !popup?.style) return;
-    const container = document.getElementById?.("mapArea") || document.getElementById?.("mapWrap") || document.getElementById?.("leafletMap");
+    const mapArea = document.getElementById?.("mapArea");
+    const mapAreaRect = mapArea?.getBoundingClientRect?.();
+    // A few embedded map shells expose the inner map node but not the actual
+    // workspace bounds. Use the outer workspace when its rectangle is the only
+    // reliable viewport boundary; otherwise the popup can grow past the screen.
+    const container = Number.isFinite(Number(mapAreaRect?.bottom))
+      ? mapArea
+      : document.getElementById?.("mapWrap") || mapArea || document.getElementById?.("leafletMap");
     // The fixed map workspace must not become a scroll container when focus moves into the popup.
     if (container && Number(container.scrollTop) !== 0) container.scrollTop = 0;
     const popupRect = popup.getBoundingClientRect?.();
     const popupTop = Number(popupRect?.top);
     if (!Number.isFinite(popupTop)) return;
     const containerRect = container?.getBoundingClientRect?.();
-    const containerBottom = Number(containerRect?.bottom);
+    const containerBottom = Number(containerRect?.bottom ?? (Number(containerRect?.top) + Number(containerRect?.height)));
     const viewportBottom = Number.isFinite(containerBottom) ? containerBottom : Number(window.innerHeight);
     if (!Number.isFinite(viewportBottom)) return;
     const availableHeight = Math.max(0, Math.floor(viewportBottom - popupTop - POPUP_VIEWPORT_MARGIN_PIXELS));

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="rgb(241 243 242)" />
     <title>LINKWATCH</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='10' fill='%23111111'/%3E%3Cpath d='M8 15h5a4 4 0 0 0 0-8H9a4 4 0 0 0 0 8m16 2h-5a4 4 0 0 0 0 8h4a4 4 0 0 0 0-8M12 20l8-8' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round'/%3E%3Ccircle cx='16' cy='16' r='2' fill='%234bd28c'/%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
@@ -56,8 +57,8 @@
               <details id="accountControl" class="account-control">
                 <summary id="accountButton" class="account-button" data-i18n-aria-label="app.account"><span class="account-avatar" aria-hidden="true" data-icon="user"></span><span class="account-copy"><span id="sessionUser">—</span><span id="sessionRole" class="account-role">—</span></span><span class="account-chevron" aria-hidden="true" data-icon="chevronDown"></span></summary>
                 <div class="account-menu">
-                  <button id="adminMenuButton" data-route="admin" data-capability="admin.manage" type="button" hidden><span data-icon="settings"></span><span data-i18n="nav.admin"></span></button>
-                  <button id="auditMenuButton" data-route="audit" data-capability="audit.read" type="button" hidden><span data-icon="history"></span><span data-i18n="nav.audit"></span></button>
+                  <button id="adminMenuButton" class="account-menu-route-legacy" data-route="admin" data-capability="admin.manage" type="button" hidden><span data-icon="settings"></span><span data-i18n="nav.admin"></span></button>
+                  <button id="auditMenuButton" class="account-menu-route-legacy" data-route="audit" data-capability="audit.read" type="button" hidden><span data-icon="history"></span><span data-i18n="nav.audit"></span></button>
                   <button id="logoutButton" type="button"><span data-icon="logout"></span><span data-i18n="action.signOut"></span></button>
                 </div>
               </details>
@@ -65,7 +66,7 @@
           </header>
 
           <div class="workspace-content">
-            <section id="mapWrap" class="map-workspace map-screen" data-i18n-aria-label="app.mapWorkspace">
+            <section id="mapWrap" class="map-workspace" data-i18n-aria-label="app.mapWorkspace">
               <form id="mapFilter" class="map-filter-island context-panel map-panel" data-i18n-aria-label="map.filter">
                 <div class="context-panel-head">
                   <div><span class="surface-eyebrow" data-i18n="map.workspaceEyebrow">ОБЗОР СЕТИ</span><h2 data-i18n="nav.map">Карта</h2></div>
@@ -99,7 +100,7 @@
                 <div class="map-tools" data-i18n-aria-label="map.controls"><button id="mapZoomIn" type="button" data-i18n-aria-label="action.zoomIn"><span data-icon="plus"></span></button><button id="mapZoomOut" type="button" data-i18n-aria-label="action.zoomOut"><span data-icon="minus"></span></button><button id="mapReset" type="button" data-i18n-aria-label="action.resetMap"><span data-icon="locate"></span></button></div>
                 <section id="mapPopup" class="map-popup mapcard hidden" role="dialog" aria-modal="false" aria-labelledby="mapPopupTitle" aria-describedby="mapPopupSummary" tabindex="-1" hidden>
                   <div class="map-popup-head"><div><span class="surface-eyebrow" data-i18n="map.selection">ВЫБОР НА КАРТЕ</span><h2 id="mapPopupTitle">—</h2><p id="mapPopupSummary">—</p></div><button id="mapPopupClose" class="icon-close" type="button" data-i18n-aria-label="action.closeMapCard"><span data-icon="x"></span></button></div>
-                  <div id="mapPopupState" class="selection-state" role="status"></div><div id="mapPopupMetrics" class="metricsline" hidden></div><div id="mapPopupFields" class="map-popup-fields"></div><div class="map-popup-actions"><button id="mapPopupAddMonitoring" class="secondary-action" type="button" hidden></button><button id="mapPopupPrepareCase" class="secondary-action" type="button" hidden></button><button id="mapPopupOpenLine" class="primary-action" type="button" hidden></button></div>
+                  <div id="mapPopupState" class="selection-state" role="status"></div><div id="mapPopupMetrics" class="metricsline" hidden></div><div id="mapPopupFields" class="map-popup-fields"></div><div class="map-popup-actions"><button id="mapPopupAddMonitoring" class="secondary-action" type="button" hidden></button><button id="mapPopupOpenLine" class="primary-action" type="button" hidden></button></div>
                 </section>
                 <div class="map-meta"><span id="mapModeLabel"></span><span id="mapFooterNote"></span><span class="visually-hidden"><b id="lineCount">0</b> <span data-i18n="map.lineCount"></span></span><span class="visually-hidden" id="mapVisibleCount">0</span></div>
                 <p id="mapError" class="state-message error" role="alert" hidden></p>
