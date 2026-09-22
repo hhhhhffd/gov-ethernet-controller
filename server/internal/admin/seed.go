@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -19,6 +20,12 @@ const (
 	demoRegistrySchoolAddress   = "Восточно-Казахстанская область,город Усть-Каменогорск,Переулок Западный,14"
 	demoRegistrySchoolLatitude  = 49.988825
 	demoRegistrySchoolLongitude = 82.575407
+	demoSituationTitle          = "Связанные нарушения интернет-линий"
+	demoSituationProviderID     = "provider-a"
+	demoSituationDistrict       = "Несколько районов"
+	demoSituationViolationType  = "NO_INTERNET"
+	demoSituationIncidentNo32   = "INC-900101"
+	demoSituationIncidentNo7    = "INC-900102"
 )
 
 var DemoUserTokens = map[string]string{
@@ -119,6 +126,114 @@ func SeedDemo(ctx context.Context, db *database.DB) error {
 	for _, item := range scopes {
 		if _, err := db.Pool.Exec(ctx, `INSERT INTO role_scopes(user_id,scope_type,scope_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING`, item.user, item.typ, item.id); err != nil {
 			return err
+		}
+	}
+	if err := seedDemoSituation(ctx, db, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func seedDemoSituation(ctx context.Context, db *database.DB, now time.Time) error {
+	startAt := now.Truncate(15 * time.Minute)
+	incidents := []struct {
+		number, lineID, description string
+	}{
+		{demoSituationIncidentNo32, "line-99-primary", "В школе №99 зафиксировано нарушение доступа к интернету."},
+		{demoSituationIncidentNo7, "line-07-primary", "В школе №7 зафиксировано нарушение доступа к интернету."},
+	}
+
+	incidentIDs := make([]int64, 0, len(incidents))
+	violationType := demoSituationViolationType
+	for _, item := range incidents {
+		openingSnapshot, err := json.Marshal(map[string]string{"manual_description": item.description})
+		if err != nil {
+			return fmt.Errorf("marshal demo incident snapshot: %w", err)
+		}
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO incidents(incident_no,line_id,source,violation_type,status,recovery_state,started_at,opening_snapshot_json,created_at)
+            VALUES ($1,$2,'AUTO',$3,'IN_PROGRESS','NONE',$4,$5::jsonb,$4)
+            ON CONFLICT DO NOTHING`, item.number, item.lineID, violationType, startAt, string(openingSnapshot)); err != nil {
+			return fmt.Errorf("seed demo incident %s: %w", item.number, err)
+		}
+
+		var incidentID int64
+		var actualViolationType string
+		var actualStartedAt time.Time
+		var seededIncident bool
+		if err := db.Pool.QueryRow(ctx, `SELECT id,violation_type,started_at,true FROM incidents WHERE incident_no=$1
+            UNION ALL
+            SELECT id,violation_type,started_at,false FROM incidents
+            WHERE line_id=$2 AND status IN ('NEW','SENT_TO_PROVIDER','IN_PROGRESS','WAITING_INFO','RESOLVED')
+              AND NOT EXISTS (SELECT 1 FROM incidents WHERE incident_no=$1)
+            ORDER BY id DESC LIMIT 1`, item.number, item.lineID).Scan(&incidentID, &actualViolationType, &actualStartedAt, &seededIncident); err != nil {
+			return fmt.Errorf("find demo incident %s: %w", item.number, err)
+		}
+		incidentIDs = append(incidentIDs, incidentID)
+		if len(incidentIDs) == 1 {
+			if seededIncident {
+				violationType = demoSituationViolationType
+				startAt = now.Truncate(15 * time.Minute)
+			} else {
+				violationType = actualViolationType
+				startAt = actualStartedAt.UTC().Truncate(15 * time.Minute)
+			}
+		}
+		if seededIncident {
+			if _, err := db.Pool.Exec(ctx, `UPDATE incidents
+                SET line_id=$2,source='AUTO',violation_type=$3,status='IN_PROGRESS',recovery_state='NONE',started_at=$4,
+                    confirmed_at=NULL,resolved_at=NULL,closed_at=NULL,duration_minutes=NULL,opening_snapshot_json=$5::jsonb
+                WHERE incident_no=$1`, item.number, item.lineID, violationType, startAt, string(openingSnapshot)); err != nil {
+				return fmt.Errorf("refresh demo incident %s: %w", item.number, err)
+			}
+		}
+	}
+
+	reason, err := json.Marshal(map[string]interface{}{
+		"provider":            "Провайдер А",
+		"provider_id":         demoSituationProviderID,
+		"district":            demoSituationDistrict,
+		"violation_type":      violationType,
+		"time_window_minutes": 15,
+		"minimum_members":     len(incidentIDs),
+		"member_count":        len(incidentIDs),
+		"manual_action":       nil,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal demo situation reason: %w", err)
+	}
+	var situationID int64
+	if err := db.Pool.QueryRow(ctx, `SELECT COALESCE((
+        SELECT s.id
+        FROM situations s
+        WHERE s.title=$1
+           OR EXISTS (
+                SELECT 1
+                FROM situation_members sm
+                JOIN incidents i ON i.id=sm.incident_id
+                WHERE sm.situation_id=s.id AND i.incident_no IN ($2,$3)
+           )
+        ORDER BY CASE WHEN s.title=$1 THEN 0 ELSE 1 END,s.id DESC
+        LIMIT 1
+    ),0)`, demoSituationTitle, demoSituationIncidentNo32, demoSituationIncidentNo7).Scan(&situationID); err != nil {
+		return fmt.Errorf("find demo situation: %w", err)
+	}
+	if situationID == 0 {
+		if err := db.Pool.QueryRow(ctx, `INSERT INTO situations(title,status,provider_id,district,violation_type,start_at,reason_json,created_at,updated_at)
+			VALUES ($1,'OPEN',$2,$3,$4,$5,$6::jsonb,$7,$7) RETURNING id`, demoSituationTitle, demoSituationProviderID, demoSituationDistrict, violationType, startAt, string(reason), now).Scan(&situationID); err != nil {
+			return fmt.Errorf("seed demo situation: %w", err)
+		}
+	} else if _, err := db.Pool.Exec(ctx, `UPDATE situations
+        SET title=$1,status='OPEN',provider_id=$2,district=$3,violation_type=$4,start_at=$5,reason_json=$6::jsonb,updated_at=$7
+        WHERE id=$8`, demoSituationTitle, demoSituationProviderID, demoSituationDistrict, violationType, startAt, string(reason), now, situationID); err != nil {
+		return fmt.Errorf("refresh demo situation: %w", err)
+	}
+
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM situation_members WHERE situation_id=$1`, situationID); err != nil {
+		return fmt.Errorf("reset demo situation members: %w", err)
+	}
+	for _, incidentID := range incidentIDs {
+		if _, err := db.Pool.Exec(ctx, `INSERT INTO situation_members(situation_id,incident_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`, situationID, incidentID); err != nil {
+			return fmt.Errorf("link demo incident %d to situation: %w", incidentID, err)
 		}
 	}
 	return nil
