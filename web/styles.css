@@ -1483,17 +1483,15 @@ body { font-size: 15px; }
   align-items: start;
 }
 .report-unified-stage > .report-measures,
-.report-unified-stage > .report-analytics,
-.report-unified-stage > .report-export {
+.report-unified-stage > .report-analytics {
   grid-column: 1 / -1;
 }
 .report-unified-stage > .report-passport { grid-column: span 7; }
-.report-unified-stage > .evidence-stage { grid-column: span 5; }
+.report-unified-stage > .report-side-stack { grid-column: span 5; }
 .report-unified-stage > .report-measures,
 .report-unified-stage > .report-analytics,
 .report-unified-stage > .report-passport,
-.report-unified-stage > .evidence-stage,
-.report-unified-stage > .report-export {
+.report-unified-stage > .report-side-stack {
   min-width: 0;
 }
 .report-unified-stage .report-panel > h2 {
@@ -1689,7 +1687,7 @@ body { font-size: 15px; }
 
 @media (max-width: 900px) {
   .report-unified-stage > .report-passport,
-  .report-unified-stage > .evidence-stage {
+  .report-unified-stage > .report-side-stack {
     grid-column: 1 / -1;
   }
   .report-analytics > .report-tables,
@@ -1868,9 +1866,14 @@ body { font-size: 15px; }
   transform: translateY(-2px);
 }
 
-.report-unified-stage > .report-export {
-  grid-column: 8 / -1;
+.report-unified-stage > .report-side-stack {
+  display: grid;
+  grid-column: span 5;
+  align-content: start;
+  gap: 16px;
+  min-width: 0;
 }
+.report-unified-stage > .report-side-stack > .report-export { grid-column: auto; }
 .report-export {
   display: block;
   width: auto;
@@ -1911,7 +1914,41 @@ body { font-size: 15px; }
   }
 }
 @media (max-width: 900px) {
-  .report-unified-stage > .report-export {
+  .report-unified-stage > .report-side-stack {
     grid-column: 1 / -1;
+  }
+}
+
+.drawer-tab-panel #drawerEnrollment > [data-enrollment-connect] {
+  margin-inline-start: 6px;
+}
+
+.locale-switch button {
+  transition: transform 180ms ease-out, opacity 180ms ease-out, color 180ms ease-out, background-color 180ms ease-out;
+}
+.locale-switch button:hover {
+  transform: translateY(-1px);
+}
+.locale-switch button:active {
+  transform: translateY(0) scale(.96);
+}
+.locale-switch button:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+.locale-switch button[aria-pressed="true"] {
+  animation: locale-choice-in 220ms ease-out;
+}
+@keyframes locale-choice-in {
+  0% { opacity: .6; transform: scale(.94); }
+  70% { transform: scale(1.04); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .locale-switch button {
+    transition: none;
+  }
+  .locale-switch button[aria-pressed="true"] {
+    animation: none;
   }
 }
