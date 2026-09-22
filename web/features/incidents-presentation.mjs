@@ -82,17 +82,62 @@ export function formatIncidentDuration(minutes, i18n) {
   return remainder ? i18n.t("incident.durationHoursMinutes", { hours, minutes: remainder }) : i18n.t("incident.durationHours", { count: hours });
 }
 
+const TECHNICAL_REASON_PATTERN = /required\s+metric\s+unavailable|no\s+threshold\s+violation|\bNO_INTERNET\b|\b(?:download|upload|ping|jitter|packet_loss|availability)\s+[-+\d.,]+\s*\(\s*[<>]/i;
+const METRIC_VIOLATION_PATTERN = /\b(download|upload|ping|jitter|packet_loss|availability)\s+([-+\d.,]+)\s*\(\s*([<>])\s*([-+\d.,]+)\s*\)/gi;
+
+const METRIC_PRESENTATION = Object.freeze({
+  download: { label: "field.download", unit: "unit.mbps" },
+  upload: { label: "field.upload", unit: "unit.mbps" },
+  ping: { label: "field.ping", unit: "unit.ms" },
+  jitter: { label: "field.jitter", unit: "unit.ms" },
+  packet_loss: { label: "field.loss", unit: "unit.percent" },
+  availability: { label: "reports.availability", unit: "unit.percent" },
+});
+
+function parseReasonNumber(value) {
+  const normalized = String(value ?? "").replace(",", ".");
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : null;
+}
+
+function presentMetricViolation(match, { i18n, presentation }) {
+  const metric = String(match[1]).toLowerCase();
+  const config = METRIC_PRESENTATION[metric];
+  const actual = parseReasonNumber(match[2]);
+  const threshold = parseReasonNumber(match[4]);
+  if (!config || actual == null || threshold == null) return null;
+  const values = {
+    metric: i18n.t(config.label),
+    actual: presentation.formatNumber(actual, i18n.t(config.unit)),
+    threshold: presentation.formatNumber(threshold, i18n.t(config.unit)),
+  };
+  return {
+    key: `${metric}|${actual}|${match[3]}|${threshold}`,
+    text: i18n.t(match[3] === "<" ? "incident.metricBelowMinimum" : "incident.metricAboveMaximum", values),
+  };
+}
+
+function humanTechnicalIncidentDescription(raw, { i18n, presentation }) {
+  const parts = [];
+  if (/required\s+metric\s+unavailable/i.test(raw)) parts.push(i18n.t("incident.requiredMetricsUnavailable"));
+  if (/\bNO_INTERNET\b/i.test(raw)) parts.push(i18n.t("incident.noInternetDetected"));
+
+  const violations = [];
+  const seen = new Set();
+  for (const match of raw.matchAll(METRIC_VIOLATION_PATTERN)) {
+    const violation = presentMetricViolation(match, { i18n, presentation });
+    if (!violation || seen.has(violation.key)) continue;
+    seen.add(violation.key);
+    violations.push(violation.text);
+  }
+  if (violations.length) parts.push(i18n.t("incident.metricViolations", { details: violations.join("; ") }));
+  return parts.join(" ") || i18n.t("incident.technicalDescription");
+}
+
 function humanIncidentDescription(item, { i18n, presentation }) {
   const raw = String(item?.description || item?.summary || "").trim();
   if (!raw) return "";
-  const threshold = raw.match(/no\s+threshold\s+violation\s*download\s*([\d.,]+)\s*\(\s*<\s*[\d.,]+\s*\)\s*;\s*upload\s*([\d.,]+)\s*\(\s*<\s*[\d.,]+\s*\)/i);
-  if (threshold) {
-    return i18n.t("incident.thresholdWithinRange", {
-      download: presentation.formatNumber(threshold[1], i18n.t("unit.mbps")),
-      upload: presentation.formatNumber(threshold[2], i18n.t("unit.mbps")),
-    });
-  }
-  if (/^no\s+threshold\s+violation/i.test(raw)) return i18n.t("incident.technicalDescription");
+  if (TECHNICAL_REASON_PATTERN.test(raw)) return humanTechnicalIncidentDescription(raw, { i18n, presentation });
   return raw;
 }
 

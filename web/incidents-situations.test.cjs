@@ -37,6 +37,23 @@ test("incident detail presents types, recovery, duration, and timeline without r
   assert.doesNotMatch(timeline[0].label, /PROVIDER_REPORTED_FIXED/);
 });
 
+test("incident reason turns evaluation codes into a localized human explanation", async () => {
+  const { createI18n } = await import("./core/i18n.mjs");
+  const { createPresentation } = await import("./core/presentation.mjs");
+  const { presentIncident } = await import("./features/incidents-presentation.mjs");
+  const reason = "Required metric unavailable; NO_INTERNET; packet_loss 100 (> 2); availability 0 (< 99); packet_loss 100 (> 2); availability 0 (< 99)";
+
+  const ruI18n = createI18n({ locale: "ru", storage: null, root: null });
+  const ru = presentIncident({ description: reason }, { i18n: ruI18n, presentation: createPresentation(ruI18n) });
+  assert.equal(ru.description, "Часть обязательных показателей не получена. Мониторинг подтвердил отсутствие доступа в интернет. Зафиксированы показатели вне допустимого диапазона: Потеря пакетов: 100 % (максимум 2 %); Доступность: 0 % (минимум 99 %).");
+  assert.doesNotMatch(ru.description, /Required|NO_INTERNET|packet_loss|availability|\(>/);
+
+  const kkI18n = createI18n({ locale: "kk", storage: null, root: null });
+  const kk = presentIncident({ description: reason }, { i18n: kkI18n, presentation: createPresentation(kkI18n) });
+  assert.equal(kk.description, "Қажетті көрсеткіштердің бір бөлігі алынбады. Мониторинг интернетке қолжетімділіктің жоқ екенін растады. Рұқсат етілген шектен тыс көрсеткіштер анықталды: Пакет жоғалту: 100 % (ең жоғары шек — 2 %); Қолжетімділік: 0 % (ең төменгі шек — 99 %).");
+  assert.doesNotMatch(kk.description, /Required|NO_INTERNET|packet_loss|availability|\(>/);
+});
+
 test("incident and situation actions are capability-gated and pending-aware", async () => {
   const { incidentActions, situationActions } = await import("./features/incidents-presentation.mjs");
   const manager = { has: (name) => name === "incident.update" || name === "situation.manage" };
