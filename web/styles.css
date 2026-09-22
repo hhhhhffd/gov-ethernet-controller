@@ -1460,3 +1460,253 @@ body { font-size: 15px; }
   .factorgrid { grid-template-columns: 1fr; }
   .notification-surface { top: 8px; right: 8px; width: calc(100vw - 16px); max-height: calc(100% - 16px); }
 }
+
+/* Follow-up polish: keep the production data visible, but make each
+   workspace read as one deliberate template composition. */
+.incident-signal, .case-row-icon, .noticeicon {
+  box-sizing: border-box;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  align-content: center;
+  justify-content: center;
+}
+.incident-signal > .lw-icon, .case-row-icon > .lw-icon, .noticeicon > .lw-icon {
+  display: block;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+}
+
+.report-unified-stage {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: start;
+}
+.report-unified-stage > .report-measures,
+.report-unified-stage > .report-analytics,
+.report-unified-stage > .report-export {
+  grid-column: 1 / -1;
+}
+.report-unified-stage > .report-passport { grid-column: span 7; }
+.report-unified-stage > .evidence-stage { grid-column: span 5; }
+.report-unified-stage > .report-measures,
+.report-unified-stage > .report-analytics,
+.report-unified-stage > .report-passport,
+.report-unified-stage > .evidence-stage,
+.report-unified-stage > .report-export {
+  min-width: 0;
+}
+.report-unified-stage .report-panel > h2 {
+  margin: 0 0 16px;
+  color: var(--color-ink);
+  font-size: 17px;
+}
+.report-measures .report-facts,
+.report-passport .report-facts,
+.evidence-stage .report-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.report-facts > div {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 11px;
+  background: var(--color-canvas);
+}
+.report-facts dt {
+  color: var(--color-ink-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.report-facts dd {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+  color: var(--color-ink);
+  font-size: 15px;
+  font-weight: 760;
+  line-height: 1.3;
+}
+.report-measures .report-facts dd {
+  color: var(--color-brand-strong);
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+.report-note {
+  margin-top: 14px;
+  line-height: 1.45;
+}
+.report-analytics > .report-tables {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 2px;
+}
+.report-table-wrap {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.report-table-wrap h2 {
+  margin: 0;
+  padding: 15px 17px 12px;
+  font-size: 14px;
+}
+.report-table-wrap > .surface-state {
+  padding: 0 17px 17px;
+}
+.report-table th, .report-table td {
+  padding: 11px 13px;
+}
+.report-subpanel {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-border);
+}
+.report-subpanel h3 {
+  margin: 0 0 12px;
+  color: var(--color-ink);
+  font-size: 14px;
+}
+.report-passport .report-subpanel .report-facts {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.report-export {
+  width: auto;
+}
+
+.school-onboarding-workspace .onboarding-progress {
+  min-width: 0;
+  padding: 24px;
+  overflow: auto;
+}
+.school-onboarding-workspace .onboarding-progress > .template-panehead {
+  margin: -24px -24px 0;
+}
+.onboarding-school-card {
+  display: grid;
+  gap: 0;
+  margin-top: 20px;
+  padding: 18px;
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  background: var(--color-surface-raised);
+}
+.onboarding-school-label {
+  margin: 0 0 9px;
+}
+.onboarding-school-name {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-ink);
+  font-size: 20px;
+  line-height: 1.25;
+}
+.onboarding-school-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 9px;
+  margin-top: 11px;
+}
+.onboarding-school-meta span {
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: var(--color-surface-strong);
+  color: var(--color-ink-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.onboarding-school-card p {
+  margin: 0;
+  color: var(--color-ink-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.onboarding-school-card .onboarding-school-address { margin-top: 13px; }
+.onboarding-school-card .onboarding-school-coordinates { margin-top: 5px; color: var(--color-ink-muted); }
+.school-onboarding-workspace .admin-editor-pane {
+  min-width: 0;
+  padding: 24px 30px 72px;
+}
+.school-onboarding-form {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+.school-onboarding-form fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 13px;
+  background: var(--color-surface-raised);
+}
+.school-onboarding-form legend {
+  padding: 0 6px;
+  color: var(--color-ink);
+  font-size: 14px;
+  font-weight: 750;
+}
+.school-onboarding-form label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--color-ink-muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+.school-onboarding-form input,
+.school-onboarding-form select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 9px;
+  background: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 13px;
+}
+.school-onboarding-form .form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 2px;
+}
+.onboarding-result {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--color-brand-soft);
+  border-radius: 13px;
+  background: var(--color-brand-soft);
+}
+
+@media (max-width: 900px) {
+  .report-unified-stage > .report-passport,
+  .report-unified-stage > .evidence-stage {
+    grid-column: 1 / -1;
+  }
+  .report-analytics > .report-tables,
+  .report-unified-stage .report-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 620px) {
+  .report-unified-stage .report-facts,
+  .report-passport .report-subpanel .report-facts {
+    grid-template-columns: 1fr;
+  }
+  .school-onboarding-workspace .onboarding-progress,
+  .school-onboarding-workspace .admin-editor-pane {
+    padding: 18px;
+  }
+  .school-onboarding-workspace .onboarding-progress > .template-panehead {
+    margin: -18px -18px 0;
+  }
+}

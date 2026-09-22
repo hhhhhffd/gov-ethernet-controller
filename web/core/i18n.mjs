@@ -60,6 +60,15 @@ const REPORT_NAV_KK = Object.freeze({
   "reports.summary": "Жиынтық", "reports.confirmation": "Растау",
 });
 
+const SITUATION_LABELS_RU = Object.freeze({
+  "situation.timeWindowMinutes": "Окно времени",
+  "situation.timeWindowValue": "{count} мин",
+});
+const SITUATION_LABELS_KK = Object.freeze({
+  "situation.timeWindowMinutes": "Уақыт аралығы",
+  "situation.timeWindowValue": "{count} мин",
+});
+
 const REPORT_RU = Object.freeze({
   "reports.title": "Отчёты", "reports.subtitle": "Исторические наблюдения в доступном вам охвате", "reports.from": "С", "reports.to": "По", "reports.region": "Район", "reports.allRegions": "Все районы", "reports.allProviders": "Все провайдеры", "reports.allLines": "Все линии", "reports.allSchools": "Все школы", "reports.apply": "Показать", "reports.refresh": "Обновить", "reports.loading": "Загружаем исторические данные…", "reports.unavailable": "Этот раздел отчёта временно недоступен.", "reports.empty": "За выбранный период подтверждённых наблюдений нет.", "reports.invalidRange": "Дата начала должна быть не позднее даты окончания.", "reports.measurements": "Наблюдения", "reports.availability": "Доступность", "reports.completeness": "Полнота данных", "reports.analytics": "Аналитика", "reports.trend": "Динамика по дням", "reports.ranking": "Линии", "reports.quality": "Паспорт качества", "reports.baseline": "Соответствие базовой политике", "reports.contract": "Соответствие договору", "reports.incidents": "Инциденты", "reports.evidence": "Доказательная база", "reports.evidenceCount": "Цепочек наблюдений", "reports.evidenceProvenance": "Происхождение", "reports.evidenceStoredSnapshots": "Сохранённые исторические снимки политики, договора и контекста линии", "reports.lastVerified": "Последняя верификация", "reports.valueUnavailable": "Нет подтверждённых данных", "reports.insufficient": "Недостаточно данных для сопоставления периодов.", "reports.export": "Выгрузка", "reports.exportKind": "Состав", "reports.exportRaw": "Наблюдения", "reports.exportAggregate": "По линиям", "reports.exportFormat": "Формат", "reports.preview": "Проверить состав", "reports.download": "Скачать", "reports.previewTitle": "Предпросмотр выгрузки", "reports.previewUnavailable": "Предпросмотр выгрузки недоступен.", "reports.previewRows": "Строк в выгрузке: {count}", "reports.previewLimited": "Превышен лимит выгрузки; сузьте период или фильтры.", "reports.previewColumns": "Поля", "reports.evidencePreview": "Открыть отчёт с доказательствами", "reports.evidenceHtmlOnly": "Отчёт откроется в новой вкладке.", "reports.exportUnavailable": "Выгрузка недоступна для текущего доступа.", "reports.exportFailed": "Не удалось подготовить выгрузку. Данные не были скачаны.", "reports.historicalOnly": "Все показатели основаны на сохранённых наблюдениях; текущее состояние не используется",
 });
@@ -132,7 +141,7 @@ const SHELL_KK = Object.freeze({
   "nav.more": "Тағы", "app.connected": "Жүйе қосылған", "map.quickFilters": "Жылдам сүзгілер", "map.schoolList": "Картадағы мектептер", "map.adjustFilters": "Іздеуді немесе сүзгіні өзгертіңіз", "map.registryOnly": "Тек тізілімде", "map.workspaceEyebrow": "Желі шолуы", "map.live": "Қазір", "map.selection": "Картадағы таңдау", "map.lineDetail": "Желі мәліметтері", "auth.eyebrow": "Операциялық контур", "auth.secureWorkspace": "Деректер тек рұқсаты бар жұмыс тобына қолжетімді",
 });
 
-export const MESSAGES = Object.freeze({ ru: Object.freeze({ ...RU, ...REPORT_NAV_RU, ...REPORT_RU, ...REPORT_PASSPORT_RU, ...ADMIN_ONBOARDING_RU, ...MAP_METRICS_RU, ...SECONDARY_RU, ...PRODUCT_RU, ...SHELL_RU }), kk: Object.freeze({ ...KK, ...REPORT_NAV_KK, ...REPORT_KK, ...REPORT_PASSPORT_KK, ...ADMIN_ONBOARDING_KK, ...MAP_METRICS_KK, ...SECONDARY_KK, ...PRODUCT_KK, ...SHELL_KK }) });
+export const MESSAGES = Object.freeze({ ru: Object.freeze({ ...RU, ...REPORT_NAV_RU, ...REPORT_RU, ...REPORT_PASSPORT_RU, ...SITUATION_LABELS_RU, ...ADMIN_ONBOARDING_RU, ...MAP_METRICS_RU, ...SECONDARY_RU, ...PRODUCT_RU, ...SHELL_RU }), kk: Object.freeze({ ...KK, ...REPORT_NAV_KK, ...REPORT_KK, ...REPORT_PASSPORT_KK, ...SITUATION_LABELS_KK, ...ADMIN_ONBOARDING_KK, ...MAP_METRICS_KK, ...SECONDARY_KK, ...PRODUCT_KK, ...SHELL_KK }) });
 
 function interpolate(template, values) {
   return template.replace(/\{([\w.-]+)\}/g, (_, key) => String(values?.[key] ?? "—"));

@@ -1213,9 +1213,6 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
   $("#drawerSubtitle").textContent = knownValue(school?.address || school?.district);
   drawerState.textContent = selection.detailState === "loading" ? i18n.t("school.detailLoading") : selection.detailState === "error" ? i18n.t("school.detailUnavailable") : "";
   drawerState.className = "selection-state" + (selection.detailState === "error" ? " error" : "");
-  const tabs = [["summary", i18n.t("map.lineDetail")], ["measurements", i18n.t("field.metrics")], ["states", i18n.t("field.status")], ["device", i18n.t("field.device")], ["incidents", i18n.t("nav.incidents")]];
-  const tabsRoot = $("#drawerTabs");
-  if (tabsRoot) tabsRoot.innerHTML = tabs.map(([key, label]) => '<button type="button" class="detail-tab' + (state.drawerTab === key ? " active" : "") + '" data-drawer-tab="' + escapeHtml(key) + '" role="tab" aria-selected="' + String(state.drawerTab === key) + '">' + escapeHtml(label) + '</button>').join("");
   $("#drawerContext").innerHTML = mapFields([
     [i18n.t("field.officialIdentity"), popupSchoolName(school, line)],
     [i18n.t("field.address"), knownValue(school?.address)],
@@ -1269,7 +1266,9 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
     $("#drawerDevice").innerHTML = mapFields([[i18n.t("field.device"), device.id || i18n.t("empty.noData")], [i18n.t("admin.identity"), device.display_name || device.hostname || i18n.t("empty.noData")], [i18n.t("audit.version"), device.agent_version || i18n.t("empty.noData")], [i18n.t("audit.lastSeen"), presentation.formatDate(device.last_seen, true)]]) + (devices.length ? '<div class="sectionhead"><h3>' + escapeHtml(i18n.t("admin.monitoringPoint")) + '</h3><span>' + escapeHtml(String(devices.length)) + '</span></div><ul class="memberlist">' + devices.map((item) => '<li class="member"><span><b>' + escapeHtml(item.display_name || item.hostname || item.id) + '</b><small>' + escapeHtml(item.agent_version || i18n.t("empty.noData")) + '</small></span><span>' + escapeHtml(presentation.formatDate(item.last_seen, true)) + '</span></li>').join("") + '</ul>' : "");
   }
   $("#drawerEnrollment").innerHTML = renderEnrollmentPanel(selected, line);
-  $("#detailDrawer").querySelectorAll("[data-drawer-panel]").forEach((panel) => { panel.hidden = panel.dataset.drawerPanel !== state.drawerTab; });
+  // The detail view is one continuous school/line workspace. Keeping all
+  // sections visible avoids hiding operational actions behind category tabs.
+  $("#detailDrawer").querySelectorAll("[data-drawer-panel]").forEach((panel) => { panel.hidden = false; });
   $("#drawerBackdrop").hidden = false;
   $("#detailDrawer").hidden = false;
   $("#detailDrawer").classList.add("open");
@@ -1281,11 +1280,6 @@ function renderSchoolDrawer(selection = state.selectedSchool) {
     renderSchoolDrawer();
     if (state.mapPopupContext) renderPopup(state.mapPopupContext);
     await openSelectedSchoolDetail();
-  }));
-  $("#detailDrawer").querySelectorAll("[data-drawer-tab]").forEach((button) => button.addEventListener("click", () => {
-    state.drawerTab = button.dataset.drawerTab || "summary";
-    renderSchoolDrawer();
-    if (state.drawerTab === "states") void loadSchoolStates();
   }));
   $("#detailDrawer").querySelector("[data-drawer-load-states]")?.addEventListener("click", loadSchoolStates);
   $("#detailDrawer").querySelector("[data-open-incident-id]")?.addEventListener("click", () => openIncident($("#detailDrawer").querySelector("[data-open-incident-id]").dataset.openIncidentId));
@@ -1657,12 +1651,12 @@ function reportOptions(items, selected, label, value = (item) => item) {
 }
 
 function renderReportTable(title, headers, rows) {
-  if (!rows.length) return '<section class="report-panel"><h2>' + escapeHtml(title) + '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.empty")) + "</p></section>";
+  if (!rows.length) return '<section class="report-panel report-table-wrap"><h2>' + escapeHtml(title) + '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.empty")) + "</p></section>";
   return '<section class="report-panel report-table-wrap"><h2>' + escapeHtml(title) + '</h2><table class="report-table"><thead><tr>' + headers.map((header) => "<th>" + escapeHtml(header) + "</th>").join("") + "</tr></thead><tbody>" + rows.map((row) => "<tr>" + row.map((value) => "<td>" + escapeHtml(value) + "</td>").join("") + "</tr>").join("") + "</tbody></table></section>";
 }
 
 function renderReportFacts(rows) {
-  return '<dl class="report-grid">' + rows.map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(value) + '</dd></div>').join("") + "</dl>";
+  return '<dl class="report-grid report-facts">' + rows.map(([label, value]) => '<div><dt>' + escapeHtml(label) + '</dt><dd>' + escapeHtml(value) + '</dd></div>').join("") + "</dl>";
 }
 
 function reportDynamicsLabel(status) {
@@ -1696,10 +1690,10 @@ function renderReportsSurface() {
   const passport = view.passport;
   const reportDiagnostics = state.reportDiagnostics = [];
   const aggregateMessage = view.aggregateState === "error" ? i18n.t("reports.unavailable") : reportState(aggregate, i18n);
-  const aggregatePanel = aggregateMessage ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.measurements")) + '</h2><p class="surface-state' + (view.aggregateState === "error" ? " error" : "") + '">' + escapeHtml(aggregateMessage) + "</p></section>" : '<section class="report-panel report-measures"><h2>' + escapeHtml(i18n.t("reports.measurements")) + '</h2><dl class="report-grid"><div><dt>' + escapeHtml(i18n.t("reports.measurements")) + "</dt><dd>" + escapeHtml(reportNumber(aggregate.measurement_count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.availability")) + "</dt><dd>" + escapeHtml(reportAvailability(aggregate.availability_pct, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.completeness")) + "</dt><dd>" + escapeHtml(reportAvailability(aggregate.data_completeness_pct, i18n)) + "</dd></div></dl><p class=\"report-note\">" + escapeHtml(i18n.t("reports.historicalOnly")) + "</p></section>";
+  const aggregatePanel = aggregateMessage ? '<section class="report-panel report-measures"><h2>' + escapeHtml(i18n.t("reports.measurements")) + '</h2><p class="surface-state' + (view.aggregateState === "error" ? " error" : "") + '">' + escapeHtml(aggregateMessage) + "</p></section>" : '<section class="report-panel report-measures"><h2>' + escapeHtml(i18n.t("reports.measurements")) + '</h2><dl class="report-grid report-facts"><div><dt>' + escapeHtml(i18n.t("reports.measurements")) + "</dt><dd>" + escapeHtml(reportNumber(aggregate.measurement_count)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.availability")) + "</dt><dd>" + escapeHtml(reportAvailability(aggregate.availability_pct, i18n)) + "</dd></div><div><dt>" + escapeHtml(i18n.t("reports.completeness")) + "</dt><dd>" + escapeHtml(reportAvailability(aggregate.data_completeness_pct, i18n)) + "</dd></div></dl><p class=\"report-note\">" + escapeHtml(i18n.t("reports.historicalOnly")) + "</p></section>";
   const trendRows = Array.isArray(analytics?.trend) ? analytics.trend.map((item) => [item.key, reportNumber(item.measurements, "", reportDiagnostics, "analytics.trend.measurements"), reportNumber(item.valid_evidence, "", reportDiagnostics, "analytics.trend.valid_evidence"), reportPercentage(item.average_availability, reportDiagnostics, "analytics.trend.average_availability")]) : [];
   const rankingRows = Array.isArray(analytics?.ranking) ? analytics.ranking.map((item) => [item.line_id || i18n.t("empty.value"), reportNumber(item.measurements, "", reportDiagnostics, "analytics.ranking.measurements"), reportNumber(item.valid_evidence, "", reportDiagnostics, "analytics.ranking.valid_evidence"), reportPercentage(item.contract_compliance, reportDiagnostics, "analytics.ranking.contract_compliance")]) : [];
-  const analyticsPanel = view.analyticsState === "error" ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.analytics")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<div class="report-tables">' + renderReportTable(i18n.t("reports.trend"), [i18n.t("reports.to"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.availability")], trendRows) + renderReportTable(i18n.t("reports.ranking"), [i18n.t("field.line"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.contract")], rankingRows) + "</div>";
+  const analyticsPanel = view.analyticsState === "error" ? '<section class="report-panel report-analytics"><h2>' + escapeHtml(i18n.t("reports.analytics")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<section class="report-panel report-analytics"><h2>' + escapeHtml(i18n.t("reports.analytics")) + '</h2><div class="report-tables">' + renderReportTable(i18n.t("reports.trend"), [i18n.t("reports.to"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.availability")], trendRows) + renderReportTable(i18n.t("reports.ranking"), [i18n.t("field.line"), i18n.t("reports.measurements"), i18n.t("reports.evidence"), i18n.t("reports.contract")], rankingRows) + "</div></section>";
   const evidence = reportEvidenceSummary(passport, { i18n, presentation });
   const passportIncident = passport?.incidents || {};
   const availabilityPeriod = passport?.availability_period || {};
@@ -1729,13 +1723,13 @@ function renderReportsSurface() {
   if (passportDynamics.current) dynamicsRows.push([i18n.t("reports.availability") + " · " + i18n.t("reports.current"), reportAvailability(passportDynamics.current.availability_pct, i18n)]);
   if (passportDynamics.previous) dynamicsRows.push([i18n.t("reports.availability") + " · " + i18n.t("reports.previous"), reportAvailability(passportDynamics.previous.availability_pct, i18n)]);
   if (passportDynamics.delta?.availability_pct !== undefined) dynamicsRows.push([i18n.t("reports.availability") + " · Δ", reportAvailability(passportDynamics.delta.availability_pct, i18n)]);
-  const passportPanel = view.passportState === "error" ? '<section class="report-panel"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<section class="report-panel report-passport"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2>' + renderReportFacts(passportRows) + '<p class="report-note">' + escapeHtml(i18n.t("reports.historicalOnly")) + '</p><section class="report-subpanel"><h3>' + escapeHtml(i18n.t("reports.dynamics")) + '</h3>' + renderReportFacts(dynamicsRows) + '</section></section>';
+  const passportPanel = view.passportState === "error" ? '<section class="report-panel report-passport"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2><p class="surface-state error">' + escapeHtml(i18n.t("reports.unavailable")) + "</p></section>" : '<section class="report-panel report-passport"><h2>' + escapeHtml(i18n.t("reports.quality")) + '</h2>' + renderReportFacts(passportRows) + '<p class="report-note">' + escapeHtml(i18n.t("reports.historicalOnly")) + '</p><section class="report-subpanel"><h3>' + escapeHtml(i18n.t("reports.dynamics")) + '</h3>' + renderReportFacts(dynamicsRows) + '</section></section>';
   const evidencePanel = '<section class="report-panel evidence-stage"><h2>' + escapeHtml(i18n.t("reports.confirmation")) + '</h2>' + renderReportFacts([[i18n.t("reports.evidenceCount"), reportNumber(evidence.count)], [i18n.t("reports.evidenceProvenance"), evidence.provenance], [i18n.t("reports.lastVerified"), evidence.lastVerified]]) + '<p class="report-note">' + escapeHtml(i18n.t("reports.evidenceHtmlOnly")) + '</p><div class="report-evidence-action"><button class="secondary-action" type="button" data-evidence-preview>' + escapeHtml(i18n.t("reports.evidencePreview")) + '</button></div></section>';
   const canExport = state.capabilities.has("report.export");
   const preview = view.preview;
   const previewText = view.previewState === "error" ? i18n.t("reports.previewUnavailable") : preview ? i18n.t(preview.limited ? "reports.previewLimited" : "reports.previewRows", { count: preview.count }) : "";
   const exportPanel = '<section class="report-panel report-export"><h2>' + escapeHtml(i18n.t("reports.export")) + (canExport ? "</h2><form data-report-export><label>" + escapeHtml(i18n.t("reports.exportKind")) + '<select name="kind"><option value="raw">' + escapeHtml(i18n.t("reports.exportRaw")) + '</option><option value="aggregate">' + escapeHtml(i18n.t("reports.exportAggregate")) + '</select></label><label>' + escapeHtml(i18n.t("reports.exportFormat")) + '<select name="format"><option value="csv">CSV</option><option value="xlsx">XLSX</option><option value="json">JSON</option></select></label><button class="secondary-action" type="button" data-export-preview>' + escapeHtml(i18n.t("reports.preview")) + '</button><button class="primary-action" type="submit">' + escapeHtml(i18n.t("reports.download")) + "</button></form>" + (previewText ? '<p class="surface-state' + (view.previewState === "error" ? " error" : "") + '">' + escapeHtml(previewText) + (preview?.columns?.length ? " " + escapeHtml(i18n.t("reports.previewColumns")) + ": " + escapeHtml(reportColumnLabels(preview.columns).join(", ")) : "") + "</p>" : "") : '</h2><p class="surface-state">' + escapeHtml(i18n.t("reports.exportUnavailable")) + "</p>") + "</section>";
-  const stage = '<div class="report-unified-stage"><div class="report-overview">' + aggregatePanel + '</div>' + analyticsPanel + passportPanel + evidencePanel + exportPanel + '</div>';
+  const stage = '<div class="report-unified-stage">' + aggregatePanel + analyticsPanel + passportPanel + evidencePanel + exportPanel + '</div>';
   reportTechnicalDetails(reportDiagnostics);
   root.innerHTML = '<div class="template-screen structural-surface workspace split template-workspace reports-workspace"><aside class="pane report-query-pane"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.reports")) + '</span><h1>' + escapeHtml(i18n.t("reports.title")) + '</h1><small>' + escapeHtml(i18n.t("reports.subtitle")) + '</small></div><button class="icon-button" type="button" data-reports-refresh aria-label="' + escapeHtml(i18n.t("reports.refresh")) + '">' + iconMarkup("refresh", { size: 17 }) + '</button></header>' + form + '</aside><main class="inspector report-stage" aria-live="polite">' + stage + '</main></div>';
   bindReportSurfaceEvents(root);
@@ -2286,14 +2280,7 @@ function renderAdminOnboardingSurface(root, view, allowedResources, header) {
   const school = onboarding.school || {};
   const relationships = view.relationships || {};
   const providers = Array.isArray(relationships.providers) ? relationships.providers : [];
-  const existingOrganization = onboardingOrganization(relationships.organizations, school.school_id || school.registryId);
-  const steps = ["organization", "provider", "line", "point", "contract", "activation", "enrollment"];
   const currentStep = onboardingStepLabel(onboarding.step);
-  const progress = steps.map((step) => {
-    const complete = onboarding.state === "success" || (step === "organization" && existingOrganization);
-    const current = onboarding.state === "running" && step === onboarding.step;
-    return '<li class="onboarding-step' + (complete ? " complete" : current ? " current" : "") + '"><span>' + (complete ? "✓" : "") + '</span><div><b>' + escapeHtml(onboardingStepLabel(step)) + '</b>' + (current ? '<small>' + escapeHtml(i18n.t("admin.onboardingRunning")) + '</small>' : "") + '</div></li>';
-  }).join("");
   const providerOptions = ['<option value="">' + escapeHtml(i18n.t("admin.onboardingNewProvider")) + '</option>'].concat(providers.filter((provider) => provider?.id).map((provider) => '<option value="' + escapeHtml(String(provider.id)) + '">' + escapeHtml(String(provider.name || provider.id)) + '</option>')).join("");
   const result = onboarding.result;
   const enrollment = result?.enrollment;
@@ -2309,7 +2296,7 @@ function renderAdminOnboardingSurface(root, view, allowedResources, header) {
   } else if (view.state === "error") {
     root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><p class="surface-state error" role="alert">' + escapeHtml(i18n.t("admin.unavailable")) + '</p></section><aside class="inspector admin-editor-pane"></aside></div>';
   } else {
-    root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.admin")) + '</span><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><small>' + escapeHtml(i18n.t("admin.onboardingSubtitle")) + '</small></div></header><section class="onboarding-school-card"><span class="surface-eyebrow">' + escapeHtml(i18n.t("school.registry")) + '</span><h2>' + escapeHtml(popupSchoolName(school)) + '</h2><p>' + escapeHtml(school.school_id || school.registryId || i18n.t("empty.value")) + ' · ' + escapeHtml(school.district || i18n.t("empty.value")) + '</p><p>' + escapeHtml(school.address || i18n.t("empty.value")) + '</p><p>' + escapeHtml(i18n.t("field.coordinates")) + ': ' + escapeHtml(coordinateText(school)) + '</p></section><ol class="onboarding-steps">' + progress + '</ol>' + errorPanel + '</section><aside class="inspector admin-editor-pane">' + form + resultPanel + '</aside></div>';
+    root.innerHTML = '<div class="template-screen structural-surface workspace three template-workspace admin-workspace school-onboarding-workspace"><aside class="pane admin-resource-pane">' + header + nav + '</aside><section class="pane onboarding-progress"><header class="panehead template-panehead"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.admin")) + '</span><h1>' + escapeHtml(i18n.t("admin.onboardingTitle")) + '</h1><small>' + escapeHtml(i18n.t("admin.onboardingSubtitle")) + '</small></div></header><section class="onboarding-school-card"><span class="surface-eyebrow onboarding-school-label">' + escapeHtml(i18n.t("school.registry")) + '</span><h2 class="onboarding-school-name">' + escapeHtml(popupSchoolName(school)) + '</h2><div class="onboarding-school-meta"><span>' + escapeHtml(school.school_id || school.registryId || i18n.t("empty.value")) + '</span><span>' + escapeHtml(school.district || i18n.t("empty.value")) + '</span></div><p class="onboarding-school-address">' + escapeHtml(school.address || i18n.t("empty.value")) + '</p><p class="onboarding-school-coordinates">' + escapeHtml(i18n.t("field.coordinates")) + ': ' + escapeHtml(coordinateText(school)) + '</p></section>' + errorPanel + '</section><aside class="inspector admin-editor-pane">' + form + resultPanel + '</aside></div>';
   }
   root.querySelector("[data-admin-refresh]")?.addEventListener("click", () => loadAdminResource({ force: true, preserveMessage: true }));
   root.querySelector("[data-school-onboarding]")?.addEventListener("submit", runSchoolMonitoringSetup);
@@ -3136,6 +3123,9 @@ function renderSituationContext(incidentId) {
 const SITUATION_FACTOR_LABELS = Object.freeze({
   provider_id: "field.provider",
   provider: "field.provider",
+  district: "field.district",
+  time_window_minutes: "situation.timeWindowMinutes",
+  time_window_minute: "situation.timeWindowMinutes",
   violation_type: "incidents.createType",
   source_type: "field.source",
   manual_review: "situation.manualReview",
@@ -3143,6 +3133,20 @@ const SITUATION_FACTOR_LABELS = Object.freeze({
   affected_participants: "situation.participants",
   evidence_state: "situation.evidence",
 });
+
+function readableSituationValue(value, fallback = i18n.t("empty.noData")) {
+  if (value === undefined || value === null || value === "") return fallback;
+  if (["string", "number", "boolean"].includes(typeof value)) return String(value);
+  if (Array.isArray(value)) {
+    const items = value.map((item) => readableSituationValue(item, "")).filter(Boolean);
+    return items.length ? items.join(", ") : fallback;
+  }
+  if (typeof value === "object") {
+    const candidate = [value.label, value.name, value.title, value.value, value.minutes].find((item) => ["string", "number", "boolean"].includes(typeof item));
+    return candidate === undefined ? fallback : String(candidate);
+  }
+  return fallback;
+}
 
 function situationFactorEntries(situation) {
   const factors = situation?.factors && typeof situation.factors === "object" ? situation.factors : {};
@@ -3160,9 +3164,24 @@ function situationFactorEntries(situation) {
         const type = String(value).toUpperCase();
         display = i18n.has("incidentType." + type) ? i18n.t("incidentType." + type) : value;
       } else if (normalized === "manual_review" && typeof value === "boolean") display = i18n.t(value ? "admin.yes" : "admin.no");
-      else if (typeof value === "object") display = value.label || value.name || value.title || i18n.t("empty.noData");
-      return [label, String(display)];
+      else if (normalized === "time_window_minutes") {
+        const minutes = typeof value === "object" ? value.value : value;
+        display = Number.isFinite(Number(minutes)) ? i18n.t("situation.timeWindowValue", { count: Number(minutes) }) : readableSituationValue(value);
+      } else if (typeof value === "object") display = readableSituationValue(value);
+      return [label, readableSituationValue(display)];
     });
+}
+
+function readableSituationReason(situation) {
+  const reason = situation?.reason;
+  if (["string", "number", "boolean"].includes(typeof reason)) return String(reason);
+  if (reason && typeof reason === "object") {
+    const entries = situationFactorEntries({ ...situation, factors: reason });
+    const noData = i18n.t("empty.noData");
+    const useful = entries.filter(([label, value], index) => value !== noData || !entries.some(([otherLabel, otherValue], otherIndex) => otherIndex !== index && otherLabel === label && otherValue !== noData));
+    if (useful.length) return useful.map(([label, value]) => label + ": " + value).join(" · ");
+  }
+  return i18n.t("situation.readOnly");
 }
 
 function renderSituationActionControls(situation, members) {
@@ -3194,8 +3213,8 @@ function renderSituationComparisonRows(title, rows) {
   if (!Array.isArray(rows) || !rows.length) return "";
   const body = rows.map((row) => {
     const availability = row.average_availability == null ? i18n.t("empty.noData") : formatReportAvailability(row.average_availability, i18n);
-    const completeness = row.completeness?.status || i18n.t("empty.noData");
-    return '<tr><td>' + escapeHtml(row.organization_name || row.school_id || i18n.t("empty.noData")) + '<small>' + escapeHtml(row.line_id || i18n.t("empty.noData")) + '</small></td><td>' + escapeHtml(String(row.measurement_count ?? i18n.t("empty.noData"))) + '</td><td>' + escapeHtml(availability) + '</td><td>' + escapeHtml(String(row.valid_evidence_count ?? i18n.t("empty.noData"))) + '</td><td>' + escapeHtml(completeness) + '</td></tr>';
+    const completeness = readableSituationValue(row.completeness?.status);
+    return '<tr><td>' + escapeHtml(readableSituationValue(row.organization_name || row.school_id)) + '<small>' + escapeHtml(readableSituationValue(row.line_id)) + '</small></td><td>' + escapeHtml(readableSituationValue(row.measurement_count)) + '</td><td>' + escapeHtml(availability) + '</td><td>' + escapeHtml(readableSituationValue(row.valid_evidence_count)) + '</td><td>' + escapeHtml(completeness) + '</td></tr>';
   }).join("");
   return '<div class="comparison-group"><div class="sectionhead"><h4>' + escapeHtml(title) + '</h4><span>' + escapeHtml(String(rows.length)) + '</span></div><div class="comparison-table"><table><thead><tr><th>' + escapeHtml(i18n.t("field.school")) + '</th><th>' + escapeHtml(i18n.t("reports.measurements")) + '</th><th>' + escapeHtml(i18n.t("reports.availability")) + '</th><th>' + escapeHtml(i18n.t("situation.evidenceCount")) + '</th><th>' + escapeHtml(i18n.t("field.status")) + '</th></tr></thead><tbody>' + body + '</tbody></table></div></div>';
 }
@@ -3219,7 +3238,7 @@ function renderSituationDetail() {
         : '<p class="detail-muted">' + escapeHtml(i18n.t("reports.empty")) + '</p>';
   const factorEntries = situationFactorEntries(situation);
   const back = router.getState().view === "incidents" ? '<button class="link-action back-action" type="button" data-situation-back>' + escapeHtml(i18n.t("situation.backToIncident")) + '</button>' : "";
-  return '<article class="inspector">' + back + '<div class="inspector-top"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.situations")) + '</span><h2>' + escapeHtml(i18n.t("situation.detailTitle")) + ' #' + escapeHtml(situation.id) + '</h2><div class="inspector-sub">' + escapeHtml(i18n.t("situation.readOnly")) + '</div></div><span class="status-pill">' + escapeHtml(String(situation.status || evidence)) + '</span></div><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.factors")) + '</h3><span>' + escapeHtml(i18n.t("situation.evidence")) + '</span></div><div class="factorgrid">' + (factorEntries.length ? factorEntries.map(([key, value]) => '<div class="factor"><span>' + escapeHtml(key) + '</span><b>' + escapeHtml(value) + '</b></div>').join('') : '<p class="detail-muted">' + escapeHtml(i18n.t("empty.noData")) + '</p>') + '</div></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.evidence")) + '</h3><span>' + escapeHtml(i18n.has("situation.evidence." + evidence) ? i18n.t("situation.evidence." + evidence) : i18n.t("situation.evidence.UNKNOWN")) + '</span></div><p class="inspector-copy">' + escapeHtml(situation.reason || i18n.t("situation.readOnly")) + '</p></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.memberIncidents")) + '</h3><span>' + escapeHtml(String(members.length)) + '</span></div><div class="memberlist">' + (members.length ? members.map((item) => '<button class="member" type="button" data-situation-incident-id="' + escapeHtml(item.id) + '"><span><b>' + escapeHtml(item.incident_no || item.number || item.id) + '</b><small>' + escapeHtml(item.school_name || item.organization_name || i18n.t("school.noOfficialName")) + '</small></span><span class="status-pill">' + escapeHtml(presentation.incidentStatus(item.status)) + '</span></button>').join('') : '<p class="detail-muted">' + escapeHtml(i18n.t("situation.empty")) + '</p>') + '</div></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("reports.analytics")) + '</h3><button class="secondary-action" type="button" data-situation-comparison>' + escapeHtml(i18n.t("reports.apply")) + '</button></div>' + comparisonBody + '</section>' + renderSituationActionControls(situation, members) + '</article>';
+  return '<article class="inspector">' + back + '<div class="inspector-top"><div><span class="surface-eyebrow">' + escapeHtml(i18n.t("nav.situations")) + '</span><h2>' + escapeHtml(i18n.t("situation.detailTitle")) + ' #' + escapeHtml(readableSituationValue(situation.id)) + '</h2><div class="inspector-sub">' + escapeHtml(i18n.t("situation.readOnly")) + '</div></div><span class="status-pill">' + escapeHtml(readableSituationValue(situation.status || evidence)) + '</span></div><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.factors")) + '</h3><span>' + escapeHtml(i18n.t("situation.evidence")) + '</span></div><div class="factorgrid">' + (factorEntries.length ? factorEntries.map(([key, value]) => '<div class="factor"><span>' + escapeHtml(key) + '</span><b>' + escapeHtml(value) + '</b></div>').join('') : '<p class="detail-muted">' + escapeHtml(i18n.t("empty.noData")) + '</p>') + '</div></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.evidence")) + '</h3><span>' + escapeHtml(i18n.has("situation.evidence." + evidence) ? i18n.t("situation.evidence." + evidence) : i18n.t("situation.evidence.UNKNOWN")) + '</span></div><p class="inspector-copy">' + escapeHtml(readableSituationReason(situation)) + '</p></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("situation.memberIncidents")) + '</h3><span>' + escapeHtml(String(members.length)) + '</span></div><div class="memberlist">' + (members.length ? members.map((item) => '<button class="member" type="button" data-situation-incident-id="' + escapeHtml(readableSituationValue(item.id)) + '"><span><b>' + escapeHtml(readableSituationValue(item.incident_no || item.number || item.id)) + '</b><small>' + escapeHtml(readableSituationValue(item.school_name || item.organization_name, i18n.t("school.noOfficialName"))) + '</small></span><span class="status-pill">' + escapeHtml(presentation.incidentStatus(item.status)) + '</span></button>').join('') : '<p class="detail-muted">' + escapeHtml(i18n.t("situation.empty")) + '</p>') + '</div></section><section class="section"><div class="sectionhead"><h3>' + escapeHtml(i18n.t("reports.analytics")) + '</h3><button class="secondary-action" type="button" data-situation-comparison>' + escapeHtml(i18n.t("reports.apply")) + '</button></div>' + comparisonBody + '</section>' + renderSituationActionControls(situation, members) + '</article>';
 }
 
 function incidentActionAllowed(actions, action) {
