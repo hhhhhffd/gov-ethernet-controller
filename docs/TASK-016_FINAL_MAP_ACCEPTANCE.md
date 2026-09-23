@@ -34,7 +34,7 @@ separate.
 
 | TASK | Owner/evidence | Result |
 |---|---|---|
-| TASK-001 | `3b523c4`, namespace tables in `FINAL_PRODUCT_CONCEPT_ACCEPTANCE.md` | PASS |
+| TASK-001 | `3b523c4`, namespace definitions in this document | PASS |
 | TASK-002 | `d1b814a`, `d9f8fb0`, vendored Leaflet and Stadia Maps Alidade Smooth Dark foundation checks | PASS |
 | TASK-003 | `6a4da86`, `9c818ff`, source adapters and Overpass POST/GET fallback tests | PASS |
 | TASK-004 | `2152ab9`, deterministic matching/coordinate/dedupe tests | PASS |
@@ -66,7 +66,7 @@ sources. No raw source dump or credential was committed.
 | Section | Requirement audited | Evidence/owner | Status |
 |---:|---|---|---|
 | 0 | Scope, no new backend sprint, preserve existing LINKWATCH truth | Plan global rules; TASK-015 server/agent/smoke regression | PASS |
-| 1 | Canonical `BUG-001..006`, `ACC-FIX-001..006`, `EXT-001..004` namespaces | `3b523c4`; final acceptance namespace tables | PASS |
+| 1 | Canonical `BUG-001..006`, `ACC-FIX-001..006`, `EXT-001..004` namespaces | `3b523c4`; namespace definitions in this document | PASS |
 | 2 | Leaflet primary surface, local vendor, replaceable Stadia Maps Alidade Smooth Dark raster config with OSM attribution | `d1b814a`, `d9f8fb0`; `web/vendor/leaflet`; foundation check | PASS |
 | 3 | Official/current source adapters and supported env/file inputs | `6a4da86`; importer source tests | PASS |
 | 4 | Current VKO identity filter and explicit Abai exclusion | importer tests and fixtures | PASS |
